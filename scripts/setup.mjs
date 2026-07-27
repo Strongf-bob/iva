@@ -5,11 +5,12 @@
 // No external dependencies.
 import { createInterface } from "node:readline/promises";
 import { createReadStream, existsSync } from "node:fs";
-import { readFile, writeFile, access } from "node:fs/promises";
+import { readFile, writeFile, access, chmod } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { defaultChecker, PortSelector } from "./lib/ports.mjs";
+import { generateAssistantBearer } from "./lib/assistant-auth.mjs";
 import { authFilePath, readAuth, runDeviceCodeLogin, runBrowserLogin, listCodexModels } from "./lib/codex-oauth.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -149,7 +150,11 @@ async function writeEnv(out) {
     "ASSISTANT_DATA_DIR", "IVA_PORT", "ASSISTANT_HOST", "ASSISTANT_BEARER",
   ];
   const keys = [...order.filter((k) => out[k] != null), ...Object.keys(out).filter((k) => !order.includes(k))];
-  await writeFile(ENV_PATH, keys.map((k) => `${k}=${out[k]}`).join("\n") + "\n", "utf8");
+  await writeFile(ENV_PATH, keys.map((k) => `${k}=${out[k]}`).join("\n") + "\n", {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  await chmod(ENV_PATH, 0o600);
 }
 
 async function ollamaModels(key) {
@@ -336,6 +341,7 @@ async function pickFromList(items, current, recommended) {
 async function main() {
   const existing = await loadExistingEnv();
   const out = { ...existing };
+  out.ASSISTANT_BEARER = existing.ASSISTANT_BEARER?.trim() || generateAssistantBearer();
 
   // ── Language: UI + agent's default reply language ─────────────────
   // install.sh asks for the language FIRST and passes it through the environment (AGENT_LANGUAGE) —
@@ -649,7 +655,6 @@ async function main() {
   // mute. A custom non-localhost host (remote server) is kept as is.
   const localHost = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/i.test(out.ASSISTANT_HOST || "");
   out.ASSISTANT_HOST = !out.ASSISTANT_HOST || localHost ? `http://127.0.0.1:${out.IVA_PORT}` : out.ASSISTANT_HOST;
-
   // ── Write .env ────────────────────────────────────────────────────
   await writeEnv(out);
 
