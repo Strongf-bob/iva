@@ -15,7 +15,7 @@ import { modelSummary } from "../scripts/lib/model-summary.mjs";
 import { createTerminalProgress } from "../scripts/lib/progress.mjs";
 import { quarantineDir } from "../scripts/lib/wf-store.mjs";
 import { createTelegramUpdateReporter, loadTelegramJob, removeTelegramJob } from "../scripts/lib/telegram-status.mjs";
-import { generateAssistantBearer } from "../scripts/lib/assistant-auth.mjs";
+import { generateAssistantBearer, isAssistantBearer } from "../scripts/lib/assistant-auth.mjs";
 import { writeEnvAtomicSync } from "../scripts/lib/env-file.mjs";
 import { classifyAgentListeners } from "../scripts/lib/listener-security.mjs";
 import {
@@ -114,7 +114,7 @@ function ensureAssistantBearer({ quiet = false } = {}) {
   let changed = false;
   const bearer = (readEnv().ASSISTANT_BEARER || "").trim();
   const bearerLines = readFileSync(ENV_PATH, "utf8").match(/^\s*ASSISTANT_BEARER\s*=/gm)?.length || 0;
-  if (!bearer) {
+  if (!isAssistantBearer(bearer)) {
     writeEnvVars({ ASSISTANT_BEARER: generateAssistantBearer() });
     changed = true;
   } else if (bearerLines !== 1) {
@@ -540,7 +540,8 @@ async function cmdDoctor() {
     warnN = 0,
     fixN = 0,
     badN = 0;
-  if (ensureAssistantBearer()) fixN++;
+  const bearerChanged = ensureAssistantBearer();
+  if (bearerChanged) fixN++;
   const env = readEnv();
 
   // 1. Node ≥24
@@ -621,6 +622,14 @@ async function cmdDoctor() {
       if (scQ("is-active", svc).out === "active") (ok(`${svc} brought up`), fixN++);
       else (bad(`${svc} won't start — journalctl --user -u ${svc} -e`), badN++);
     }
+  }
+  // A newly generated bearer is read only at process start. Without this restart,
+  // doctor would fix the file while leaving the live Eve process unable to accept it.
+  if (bearerChanged) {
+    warn("iva.service needs one restart to load the new internal bearer");
+    sc("restart", "iva.service");
+    if (scQ("is-active", "iva.service").out === "active") (ok("iva.service loaded the internal bearer"), fixN++);
+    else (bad("iva.service did not restart with the internal bearer"), badN++);
   }
   // A refreshed unit does not move an already-running old process off 0.0.0.0.
   // Detect the actual socket and restart once so doctor repairs that upgrade state too.

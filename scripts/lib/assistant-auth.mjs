@@ -4,3 +4,8 @@ import { randomBytes } from "node:crypto";
 export function generateAssistantBearer() {
   return randomBytes(32).toString("base64url");
 }
+
+/** Generated Iva bearers encode exactly 32 random bytes as base64url. */
+export function isAssistantBearer(value) {
+  return /^[A-Za-z0-9_-]{43}$/.test(String(value || "").trim());
+}

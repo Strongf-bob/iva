@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
+const STABLE_BEARER = "a".repeat(43);
 
 test("old install migration deduplicates a stable bearer and writes a loopback unit", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "iva-security-migration-"));
@@ -39,7 +40,7 @@ test("old install migration deduplicates a stable bearer and writes a loopback u
       "MODEL_PROVIDER=codex",
       "ASSISTANT_BEARER=",
       "IVA_PORT=9123",
-      "ASSISTANT_BEARER=stable-existing-token",
+      `ASSISTANT_BEARER=${STABLE_BEARER}`,
       "ASSISTANT_HOST=http://127.0.0.1:9123",
       "",
     ].join("\n"),
@@ -69,7 +70,7 @@ test("old install migration deduplicates a stable bearer and writes a loopback u
     1,
     "duplicate bearer entries are collapsed",
   );
-  assert.match(migrated, /^ASSISTANT_BEARER=stable-existing-token$/m);
+  assert.match(migrated, new RegExp(`^ASSISTANT_BEARER=${STABLE_BEARER}$`, "m"));
   assert.equal((await stat(envPath)).mode & 0o777, 0o600);
 
   const unit = await readFile(join(home, ".config/systemd/user/iva.service"), "utf8");

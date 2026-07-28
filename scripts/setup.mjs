@@ -5,12 +5,12 @@
 // No external dependencies.
 import { createInterface } from "node:readline/promises";
 import { createReadStream, existsSync } from "node:fs";
-import { readFile, access } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { defaultChecker, PortSelector } from "./lib/ports.mjs";
-import { generateAssistantBearer } from "./lib/assistant-auth.mjs";
+import { generateAssistantBearer, isAssistantBearer } from "./lib/assistant-auth.mjs";
 import { writeEnvAtomicSync } from "./lib/env-file.mjs";
 import { authFilePath, readAuth, runDeviceCodeLogin, runBrowserLogin, listCodexModels } from "./lib/codex-oauth.mjs";
 
@@ -125,10 +125,10 @@ function parseEnv(text) {
 }
 async function loadExistingEnv() {
   try {
-    await access(ENV_PATH);
     return parseEnv(await readFile(ENV_PATH, "utf8"));
-  } catch {
-    return {};
+  } catch (error) {
+    if (error?.code === "ENOENT") return {};
+    throw error;
   }
 }
 
@@ -338,7 +338,9 @@ async function pickFromList(items, current, recommended) {
 async function main() {
   const existing = await loadExistingEnv();
   const out = { ...existing };
-  out.ASSISTANT_BEARER = existing.ASSISTANT_BEARER?.trim() || generateAssistantBearer();
+  out.ASSISTANT_BEARER = isAssistantBearer(existing.ASSISTANT_BEARER)
+    ? existing.ASSISTANT_BEARER.trim()
+    : generateAssistantBearer();
 
   // ── Language: UI + agent's default reply language ─────────────────
   // install.sh asks for the language FIRST and passes it through the environment (AGENT_LANGUAGE) —

@@ -8,7 +8,6 @@ import {
   fchmodSync,
   fsyncSync,
   openSync,
-  readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -34,8 +33,9 @@ export function parseEnvText(text) {
 export async function readEnvValues(path) {
   try {
     return parseEnvText(await readFile(path, "utf8"));
-  } catch {
-    return {};
+  } catch (error) {
+    if (error?.code === "ENOENT") return {};
+    throw error;
   }
 }
 
@@ -94,8 +94,9 @@ export async function upsertEnv(path, updates) {
   let text = "";
   try {
     text = await readFile(path, "utf8");
-  } catch {
-    /* no file yet — create from scratch */
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    /* no file yet - create from scratch */
   }
   const lines = text.length ? text.split("\n") : [];
   if (lines.length && lines[lines.length - 1] === "") lines.pop(); // trailing newline re-added below
