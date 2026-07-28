@@ -490,6 +490,19 @@ const getWizard = (chatId, userId) => flows.get(chatId, userId);
 const newWizard = (chatId, userId, flow, extra) => flows.start(chatId, userId, flow, extra);
 const wizScreen = (st, text, rows) => flows.screen(st, text, rows);
 const endWizard = (st, text, rows) => flows.end(st, text, rows);
+const wizardIsCurrent = (st) => flows.get(st.chatId, st.userId) === st;
+
+// A network result belongs to the wizard object that started it. The slot can be
+// replaced while the request is pending (Cancel, /menu, another /model), so both
+// success and error must be discarded before either path mutates or renders state.
+export async function runWizardRequest(st, request, isCurrent = wizardIsCurrent) {
+  try {
+    const value = await request();
+    return isCurrent(st) ? { ok: true, value } : { stale: true };
+  } catch (error) {
+    return isCurrent(st) ? { ok: false, error } : { stale: true };
+  }
+}
 
 const EFFORT_SET = new Set(EFFORTS);
 // effortLabel — функция (tr на месте вызова): язык не замораживается в module-level const.
@@ -598,8 +611,17 @@ async function handleThinkCmd(chatId, from, { msgId } = {}) {
     `Loading thinking levels for ${model}…`,
     `Загружаю уровни размышлений для ${model}…`,
   ), [cancelRow()]);
-  const options = await fetchModelOptions("codex", undefined, { dataDir: DATA_DIR_ABS });
-  if (flows.get(st.chatId, st.userId) !== st) return;
+  if (!wizardIsCurrent(st)) return;
+  const loaded = await runWizardRequest(
+    st,
+    () => fetchModelOptions("codex", undefined, { dataDir: DATA_DIR_ABS }),
+  );
+  if (loaded.stale) return;
+  if (!loaded.ok) return endWizard(st, tr(
+    "Couldn't load thinking levels. Send /think to try again.",
+    "Не удалось загрузить уровни размышлений. Отправь /think, чтобы попробовать снова.",
+  ), menuRow());
+  const options = loaded.value;
   const option = options.find((candidate) => candidate.id === model)
     || { id: model, reasoningLevels: [...FALLBACK_EFFORTS] };
   st.modelOptions = [option];
@@ -627,17 +649,17 @@ async function pickProvider(st, provider) {
       "Checking the OpenAI subscription…",
       "Проверяю подписку OpenAI…",
     ), [cancelRow()]);
+    if (!wizardIsCurrent(st)) return;
     // File presence is not enough — a revoked/expired refresh token would let the wizard
     // finish into a config that 401s every turn. getAccessToken refreshes a stale token
     // and throws when there is no usable auth → device-link login.
-    try {
-      await getAccessToken(DATA_DIR_ABS);
-    } catch {
-      return startCodexLogin(st);
-    }
+    const auth = await runWizardRequest(st, () => getAccessToken(DATA_DIR_ABS));
+    if (auth.stale) return;
+    if (!auth.ok) return startCodexLogin(st);
     return showModelScreen(st);
   }
   const env = await readEnvValues(ENV_PATH);
+  if (!wizardIsCurrent(st)) return;
   if (!env[cat.keyVar]) {
     // В группе ключ вводить нельзя (его не удалить) — отказ до установки awaitText.
     if (!isPrivateChat(st)) return refuseSecretInGroup(st);
@@ -661,15 +683,19 @@ async function pickProvider(st, provider) {
 async function showModelScreen(st) {
   const cat = CATALOG[st.provider];
   const env = await readEnvValues(ENV_PATH);
+  if (!wizardIsCurrent(st)) return;
   st.step = "loading";
   await wizScreen(st, tr(
     `Loading models for ${cat.label}…`,
     `Загружаю модели ${cat.label}…`,
   ), [cancelRow()]);
-  let options;
-  try {
-    options = await fetchModelOptions(st.provider, cat.keyVar ? env[cat.keyVar] : undefined, { dataDir: DATA_DIR_ABS });
-  } catch {
+  if (!wizardIsCurrent(st)) return;
+  const loaded = await runWizardRequest(
+    st,
+    () => fetchModelOptions(st.provider, cat.keyVar ? env[cat.keyVar] : undefined, { dataDir: DATA_DIR_ABS }),
+  );
+  if (loaded.stale) return;
+  if (!loaded.ok) {
     // fetchModelOptions only throws when the live /models probe rejected the stored key (401/403) —
     // re-enter the key flow instead of offering a list the dead key can't use.
     // В группе новый ключ вводить нельзя (его не удалить) — отказ до установки awaitText.
@@ -684,7 +710,7 @@ async function showModelScreen(st) {
       [cancelRow()]);
     return;
   }
-  if (flows.get(st.chatId, st.userId) !== st) return;
+  const options = loaded.value;
   // Keep the currently configured model selectable even when the live list is long.
   const current = env[cat.modelVar];
   const currentOption = current
@@ -734,7 +760,11 @@ function startCodexLogin(st) {
 async function handleKeyMessage(msg, st) {
   const chatId = msg.chat.id;
   const del = await tg("deleteMessage", { chat_id: chatId, message_id: msg.message_id });
-  if (!del.ok) await reply(chatId, tr("Couldn't delete the message with the key — delete it manually.", "Не смог удалить сообщение с ключом — удали его вручную."));
+  if (!wizardIsCurrent(st)) return true;
+  if (!del.ok) {
+    await reply(chatId, tr("Couldn't delete the message with the key — delete it manually.", "Не смог удалить сообщение с ключом — удали его вручную."));
+    if (!wizardIsCurrent(st)) return true;
+  }
   const key = msg.text.trim();
   // Not key-shaped (whitespace / too short) — most likely an ordinary message typed
   // while the prompt was pending. Don't store it; end the wait so the chat works again.
@@ -749,13 +779,23 @@ async function handleKeyMessage(msg, st) {
     return true;
   }
   const cat = CATALOG[st.provider];
-  const err = await checkKey(st.provider, key);
+  const checked = await runWizardRequest(st, () => checkKey(st.provider, key));
+  if (checked.stale) return true;
+  if (!checked.ok) {
+    await endWizard(st, tr(
+      "Couldn't validate the key. Start again with /model.",
+      "Не удалось проверить ключ. Начни заново через /model.",
+    ), menuRow());
+    return true;
+  }
+  const err = checked.value;
   if (err) {
     await wizScreen(st, tr(`Key rejected (${err}). Send another key or tap «Cancel».`, `Ключ не принят (${err}). Пришли другой ключ или нажми «Отмена».`), [cancelRow()]);
     return true;
   }
   st.awaitText = null;
   await upsertEnv(ENV_PATH, { [cat.keyVar]: key }); // persist immediately — the chat copy is gone
+  if (!wizardIsCurrent(st)) return true;
   await showModelScreen(st);
   return true;
 }
@@ -771,6 +811,7 @@ async function saveWizard(st) {
 
 async function showSaved(st) {
   const { provider, model, effort } = await currentConfig();
+  if (!wizardIsCurrent(st)) return;
   let text = tr(`Saved: ${provider} · ${model} · thinking: ${effortLabel(effort)}.`, `Сохранил: ${provider} · ${model} · размышления: ${effortLabel(effort)}.`);
   text += tr("\nRestart the agent to apply?", "\nПерезапустить агента, чтобы применить?");
   st.step = "saved";
@@ -818,9 +859,11 @@ async function handleWizardCallback(cq) {
       try {
         await saveWizard(st);
       } catch (e) {
+        if (!wizardIsCurrent(st)) return true;
         await endWizard(st, tr("Couldn't save .env: " + e.message, "Не удалось сохранить .env: " + e.message), menuRow());
         return true;
       }
+      if (!wizardIsCurrent(st)) return true;
       await showSaved(st);
       return true;
     }
@@ -836,9 +879,11 @@ async function handleWizardCallback(cq) {
     try {
       await saveWizard(st);
     } catch (e) {
+      if (!wizardIsCurrent(st)) return true;
       await endWizard(st, tr("Couldn't save .env: " + e.message, "Не удалось сохранить .env: " + e.message), menuRow());
       return true;
     }
+    if (!wizardIsCurrent(st)) return true;
     await showSaved(st);
     return true;
   }

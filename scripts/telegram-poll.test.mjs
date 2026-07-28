@@ -11,6 +11,7 @@ const {
   wizardActionAllowed,
   selectWizardModel,
   selectWizardEffort,
+  runWizardRequest,
 } = await import("./telegram-poll.mjs");
 
 const enc = new TextEncoder();
@@ -116,4 +117,19 @@ test("model switch carries that model's levels; unknown effort never clears stat
   assert.equal(st.effort, "max");
   assert.equal(selectWizardEffort(st, "unset"), true);
   assert.equal(st.effort, null);
+});
+
+test("Cancel during a rejected model fetch discards the stale error path", async () => {
+  const st = { chatId: 1, userId: "2" };
+  let active = st;
+  let rejectFetch;
+  const pending = runWizardRequest(
+    st,
+    () => new Promise((_resolve, reject) => { rejectFetch = reject; }),
+    (candidate) => active === candidate,
+  );
+
+  active = null; // Cancel removed this object from the flow slot while fetch was pending.
+  rejectFetch(Object.assign(new Error("key rejected"), { auth: true }));
+  assert.deepEqual(await pending, { stale: true });
 });
