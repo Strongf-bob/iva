@@ -16,8 +16,8 @@ export interface ModelOption {
   reasoningLevels: string[];
 }
 
-export const EFFORTS: string[];
-export const FALLBACK_EFFORTS: string[];
+export const EFFORTS: readonly string[];
+export const FALLBACK_EFFORTS: readonly string[];
 export const CATALOG: Record<string, ProviderCatalogEntry>;
 
 export function fetchModels(provider: string, key?: string, opts?: { dataDir?: string }): Promise<string[]>;
