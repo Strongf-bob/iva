@@ -309,13 +309,13 @@ async function finishStatus(
   },
   sessionId: string,
   mode: "completed" | "cancelled" | "failed",
-): Promise<void> {
+): Promise<boolean> {
   const tg = channel.telegram;
   const key = chatKeyOf(tg.chatId, tg.messageThreadId);
   const st = getChatStatus(key);
   // A reset removes sessionId from the idle tombstone. A late terminal event
   // from that retired session must not mutate a fresh conversation's status.
-  if (st?.sessionId !== sessionId) return;
+  if (st?.sessionId !== sessionId) return false;
   setChatStatus(key, {
     status: "idle",
     continuationToken: channel.continuationToken,
@@ -324,7 +324,7 @@ async function finishStatus(
     ...(mode === "cancelled" ? { wasCancelled: true } : {}),
   });
   const msgId = st?.statusMessageId;
-  if (!msgId) return;
+  if (!msgId) return true;
   try {
     if (mode === "cancelled") {
       await tg.request("editMessageText", { chat_id: tg.chatId, message_id: msgId, text: stoppedText() });
@@ -334,6 +334,7 @@ async function finishStatus(
   } catch {
     /* статус-сообщение не убралось — не критично */
   }
+  return true;
 }
 
 const telegram = telegramChannel({
@@ -488,7 +489,7 @@ const telegram = telegramChannel({
     },
     // Ход упал (в т.ч. переполнение контекста / HookConflict) — даём пользователю escape.
     async "turn.failed"(_data, channel, ctx) {
-      await finishStatus(channel, ctx.session.id, "failed");
+      if (!(await finishStatus(channel, ctx.session.id, "failed"))) return;
       try {
         await channel.telegram.sendMessage(
           tr(

@@ -17,7 +17,7 @@ test("stored Eve token wins for groups and forum topics", () => {
   assert.equal(
     continuationTokenForControl(update, {
       continuationToken: "-1001:77:42",
-    }),
+    }, "777"),
     "-1001:77:42",
   );
 });
@@ -45,11 +45,45 @@ test("group upgrade fallback requires a reply to Iva", () => {
         ...base,
         reply_to_message: {
           message_id: 55,
-          from: { is_bot: true },
+          from: { id: 777, is_bot: true },
         },
       },
-    }, null),
+    }, null, "777"),
     "-1001:7:55",
+  );
+});
+
+test("explicit Iva reply wins over the last topic token", () => {
+  const token = continuationTokenForControl({
+    message: {
+      chat: { id: -1001, type: "supergroup" },
+      message_thread_id: 7,
+      message_id: 91,
+      reply_to_message: {
+        message_id: 55,
+        from: { id: 777, is_bot: true },
+      },
+    },
+  }, {
+    continuationToken: "-1001:7:42",
+  }, "777");
+  assert.equal(token, "-1001:7:55");
+});
+
+test("reply to a different bot never selects the stored Iva conversation", () => {
+  assert.equal(
+    continuationTokenForControl({
+      message: {
+        chat: { id: -1001, type: "supergroup" },
+        message_thread_id: 7,
+        message_id: 91,
+        reply_to_message: {
+          message_id: 55,
+          from: { id: 888, is_bot: true },
+        },
+      },
+    }, { continuationToken: "-1001:7:42" }, "777"),
+    null,
   );
 });
 

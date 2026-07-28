@@ -34,6 +34,8 @@ iva reset   # stop services, clear .workflow-data, restart
 
 From Telegram, `/new` resets only the current chat or forum topic. `/restart` resets that same conversation and then restarts the agent process. Both are handled out-of-band and work while the agent is busy. Use server-side `iva reset` only when the entire workflow store is damaged.
 
+After upgrading a legacy group with no recorded Eve token, send `/new` as a reply to Iva's latest message once. Future resets use the exact token stored by the new channel events.
+
 ### Model changed in .env but nothing happened
 
 Cause: the model is read once, at process start.

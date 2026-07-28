@@ -28,6 +28,11 @@
 - Successful resets keep an idle token tombstone. This makes a replayed group `/new`
   idempotent after a bridge crash while removing the old session id so late terminal events
   cannot mutate the new conversation state.
+- In a group/topic, an explicit reply to Iva's own numeric bot id selects that reply anchor
+  ahead of the last stored topic token. Replies to other bots are rejected.
+- Telegram queues are keyed by chat/topic, while Eve group sessions also include a reply
+  `conversationId`. Private reset clears its queue before publishing idle state; group/forum
+  reset preserves the shared queue so messages for other anchors are not lost.
 - Legacy private chats can reconstruct their stable token immediately. A legacy group with
   no stored event token must send `/new` as a reply to Iva's latest message once; future
   events persist the exact token automatically.

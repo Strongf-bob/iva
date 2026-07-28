@@ -39,6 +39,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const NODE = process.execPath;
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const BOT_USER_ID = /^(\d+):/.exec(TOKEN ?? "")?.[1] ?? null;
 const SECRET = process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN;
 const PORT = process.env.IVA_PORT ?? "8723";
 const HOST = (process.env.ASSISTANT_HOST ?? `http://127.0.0.1:${PORT}`).replace(/\/$/, "");
@@ -335,11 +336,24 @@ async function clearChatQueue(chatKey) {
   await writeFile(QUEUE_FILE, JSON.stringify(q), "utf8");
 }
 
-export async function completeScopedResetState(chatKey, continuationToken) {
+export async function completeScopedResetState(
+  chatKey,
+  continuationToken,
+  {
+    clearQueue = false,
+    clearQueueImpl = clearChatQueue,
+    setStatusImpl = setChatStatus,
+  } = {},
+) {
+  // For private chats the queue belongs to the reset session, so clear it
+  // before exposing an idle tombstone. A failed cleanup leaves the old running
+  // status in place and lets a repeated /new retry safely.
+  if (clearQueue) await clearQueueImpl(chatKey);
+
   // Keep an idle token tombstone: Telegram updates are at-least-once. If the
   // same group /new is replayed after a crash, the second reset remains an
   // idempotent no_active_session instead of losing the group anchor.
-  setChatStatus(chatKey, {
+  setStatusImpl(chatKey, {
     status: "idle",
     continuationToken,
     sessionId: null,
@@ -348,7 +362,6 @@ export async function completeScopedResetState(chatKey, continuationToken) {
     wasCancelled: null,
     resetAt: Date.now(),
   });
-  await clearChatQueue(chatKey);
 }
 
 // One queued message → one context line. Media can't be re-fed later (the channel
@@ -1128,7 +1141,7 @@ async function handleControl(update) {
   // then restarts the agent process; histories and queues of other chats survive.
   const key = chatKey(update);
   const continuationToken = key
-    ? continuationTokenForControl(update, getChatStatus(key))
+    ? continuationTokenForControl(update, getChatStatus(key), BOT_USER_ID)
     : null;
   const resetCopy = resetMessageCopy(cmd, await readEnvFresh(ENV_PATH));
   const status = await reply(chatId, resetCopy.pending);
@@ -1168,7 +1181,12 @@ async function handleControl(update) {
   }
 
   try {
-    await completeScopedResetState(key, continuationToken);
+    await completeScopedResetState(key, continuationToken, {
+      // Group/forum queues are keyed only by chat/topic while Eve sessions also
+      // include conversationId. Clearing the shared queue here would lose
+      // messages belonging to other group conversation anchors.
+      clearQueue: msg?.chat?.type === "private",
+    });
   } catch (e) {
     log(`scoped reset cleanup failed for ${key}:`, e.message);
     if (status) {
@@ -1176,8 +1194,8 @@ async function handleControl(update) {
         chatId,
         status.message_id,
         tr(
-          "⚠️ Conversation reset, but its queued messages could not be cleared.",
-          "⚠️ Диалог сброшен, но не удалось очистить его очередь сообщений.",
+          "⚠️ Conversation reset, but local cleanup failed. Send /new again before sending anything else.",
+          "⚠️ Диалог сброшен, но локальная очистка не завершилась. Отправьте /new ещё раз до новых сообщений.",
         ),
       );
     }

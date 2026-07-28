@@ -14,7 +14,7 @@ const [{ completeScopedResetState }, status] = await Promise.all([
   import(`./lib/run-status.mjs?reset-test=${Date.now()}`),
 ]);
 
-test("scoped reset clears only the target chat status and queue", async () => {
+test("private reset clears only the target chat status and queue", async () => {
   status.setChatStatus("chat-a:", {
     status: "running",
     continuationToken: "chat-a::",
@@ -35,7 +35,7 @@ test("scoped reset clears only the target chat status and queue", async () => {
     }),
   );
 
-  await completeScopedResetState("chat-a:", "chat-a::");
+  await completeScopedResetState("chat-a:", "chat-a::", { clearQueue: true });
 
   const reset = status.getChatStatus("chat-a:");
   assert.equal(reset.status, "idle");
@@ -52,4 +52,52 @@ test("scoped reset clears only the target chat status and queue", async () => {
     JSON.parse(readFileSync(join(dataDir, "telegram-queue.json"), "utf8")),
     { "chat-b:7": ["keep me"] },
   );
+});
+
+test("group reset preserves the shared topic queue", async () => {
+  status.setChatStatus("group:7", {
+    status: "running",
+    continuationToken: "group:7:reply-a",
+    sessionId: "session-a",
+  });
+  writeFileSync(
+    join(dataDir, "telegram-queue.json"),
+    JSON.stringify({
+      "group:7": ["future standalone conversation"],
+      "other:9": ["keep me too"],
+    }),
+  );
+
+  await completeScopedResetState("group:7", "group:7:reply-a", {
+    clearQueue: false,
+  });
+
+  assert.equal(status.getChatStatus("group:7").status, "idle");
+  assert.deepEqual(
+    JSON.parse(readFileSync(join(dataDir, "telegram-queue.json"), "utf8")),
+    {
+      "group:7": ["future standalone conversation"],
+      "other:9": ["keep me too"],
+    },
+  );
+});
+
+test("failed private queue cleanup does not expose an idle tombstone", async () => {
+  status.setChatStatus("chat-c:", {
+    status: "running",
+    continuationToken: "chat-c::",
+    sessionId: "session-c",
+  });
+
+  await assert.rejects(
+    completeScopedResetState("chat-c:", "chat-c::", {
+      clearQueue: true,
+      clearQueueImpl: async () => {
+        throw new Error("disk full");
+      },
+    }),
+    /disk full/,
+  );
+  assert.equal(status.getChatStatus("chat-c:").status, "running");
+  assert.equal(status.getChatStatus("chat-c:").sessionId, "session-c");
 });

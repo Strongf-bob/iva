@@ -5,30 +5,49 @@ import { telegramContinuationToken } from "eve/channels/telegram";
  * New installs persist it from the Telegram event context. The private-chat
  * fallback makes upgrades from pre-0.27 Eve work before the first new turn.
  */
-export function continuationTokenForControl(update, status) {
-  if (typeof status?.continuationToken === "string" && status.continuationToken.length > 0) {
-    return status.continuationToken;
-  }
-
+export function continuationTokenForControl(update, status, botUserId) {
   const message = update?.message ?? update?.callback_query?.message;
+  if (!message) {
+    return typeof status?.continuationToken === "string" &&
+      status.continuationToken.length > 0
+      ? status.continuationToken
+      : null;
+  }
   const chatId = message?.chat?.id;
   if (chatId === undefined) return null;
   const messageThreadId = message?.message_thread_id;
+
+  // In groups, a reply explicitly selects one Eve conversation anchor and
+  // therefore takes precedence over the last active token for this topic.
+  // Match Iva's own numeric bot id, not just any Telegram bot.
+  const reply = message.reply_to_message;
+  if (message.chat?.type !== "private" && reply !== undefined) {
+    if (
+      reply.from?.is_bot === true &&
+      String(reply.from.id) === String(botUserId) &&
+      reply.message_id !== undefined
+    ) {
+      return telegramContinuationToken({
+        chatId,
+        messageThreadId,
+        conversationId: reply.message_id,
+      });
+    }
+    // An explicit reply to another actor must not silently reset the last Iva
+    // conversation merely because that topic still has a stored status token.
+    return null;
+  }
+
+  if (typeof status?.continuationToken === "string" && status.continuationToken.length > 0) {
+    return status.continuationToken;
+  }
 
   if (message.chat?.type === "private") {
     return telegramContinuationToken({ chatId, messageThreadId });
   }
 
-  // Upgrade fallback for a group command sent as a reply to Iva's last message.
-  // A standalone group command cannot reconstruct the old conversation anchor.
-  const reply = message.reply_to_message;
-  if (reply?.from?.is_bot === true && reply.message_id !== undefined) {
-    return telegramContinuationToken({
-      chatId,
-      messageThreadId,
-      conversationId: reply.message_id,
-    });
-  }
+  // A standalone legacy group command cannot reconstruct the old conversation
+  // anchor until the new event handler has persisted its exact token.
   return null;
 }
 
