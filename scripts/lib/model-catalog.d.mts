@@ -11,8 +11,15 @@ export interface ProviderCatalogEntry {
   models: string[];
 }
 
+export interface ModelOption {
+  id: string;
+  reasoningLevels: string[];
+}
+
 export const EFFORTS: string[];
+export const FALLBACK_EFFORTS: string[];
 export const CATALOG: Record<string, ProviderCatalogEntry>;
 
 export function fetchModels(provider: string, key?: string, opts?: { dataDir?: string }): Promise<string[]>;
+export function fetchModelOptions(provider: string, key?: string, opts?: { dataDir?: string }): Promise<ModelOption[]>;
 export function checkKey(provider: string, key: string): Promise<string | null>;

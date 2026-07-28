@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 import { readEntries, summarize, formatUsageReport, parseWindow } from "./lib/usage.mjs";
 import { readEnvFresh, readEnvValues, upsertEnv } from "./lib/env-file.mjs";
-import { CATALOG, EFFORTS, fetchModels, checkKey } from "./lib/model-catalog.mjs";
+import { CATALOG, EFFORTS, FALLBACK_EFFORTS, fetchModelOptions, checkKey } from "./lib/model-catalog.mjs";
 import { getAccessToken, runDeviceCodeLogin } from "./lib/codex-oauth.mjs";
 import { compactNumber, modelSummary } from "./lib/model-summary.mjs";
 import { acquireUpdateLock, releaseUpdateLock } from "./lib/update-safety.mjs";
@@ -495,6 +495,41 @@ const EFFORT_SET = new Set(EFFORTS);
 // effortLabel — функция (tr на месте вызова): язык не замораживается в module-level const.
 const effortLabel = (v) => (v && EFFORT_SET.has(v) ? v : tr("not set", "не задан"));
 
+export function isStaleWizard(st, messageId) {
+  return !st || (st.msgId != null && messageId != null && st.msgId !== messageId);
+}
+
+export function wizardActionAllowed(st, action) {
+  if (!st || action === "cancel") return Boolean(st);
+  if (action === "keep") return st.step === "intro" || st.step === "effort";
+  if (action === "chg") return st.step === "intro";
+  if (action.startsWith("prov:")) return st.step === "provider";
+  if (action.startsWith("m:")) return st.step === "models";
+  if (action.startsWith("eff:")) return st.step === "effort";
+  if (action.startsWith("rs:")) return st.step === "saved";
+  return false;
+}
+
+export function selectWizardModel(st, rawIndex) {
+  const index = Number(rawIndex);
+  if (!Number.isInteger(index) || index < 0) return null;
+  const option = st.modelOptions?.[index];
+  if (!option) return null;
+  st.model = option.id;
+  st.efforts = [...option.reasoningLevels];
+  return option;
+}
+
+export function selectWizardEffort(st, value) {
+  if (value === "unset") {
+    st.effort = null;
+    return true;
+  }
+  if (!EFFORT_SET.has(value) || !st.efforts?.includes(value)) return false;
+  st.effort = value;
+  return true;
+}
+
 async function currentConfig() {
   const env = await readEnvValues(ENV_PATH);
   const provider = CATALOG[env.MODEL_PROVIDER] ? env.MODEL_PROVIDER : "ollama";
@@ -502,7 +537,7 @@ async function currentConfig() {
   return {
     provider,
     model: env[cat.modelVar] || cat.def,
-    effort: (env.THINKING_EFFORT ?? "").toLowerCase(),
+    effort: provider === "codex" ? (env.THINKING_EFFORT ?? "").toLowerCase() : "",
   };
 }
 
@@ -524,11 +559,13 @@ const refuseSecretInGroup = (st) =>
     "Ключи — это секрет. Открой личный чат со мной и введи ключ там.",
   ), menuRow());
 
-function effortRows(ns, withKeep) {
-  return [
-    EFFORTS.map((e) => btn(e, `${ns}:eff:${e}`)),
-    [btn(tr("Don't set", "Не задавать"), `${ns}:eff:unset`), withKeep ? btn(tr("Keep", "Оставить"), `${ns}:keep`) : cancelRow()[0]],
-  ];
+function effortRows(ns, withKeep, efforts) {
+  const rows = [];
+  for (let i = 0; i < efforts.length; i += 3) {
+    rows.push(efforts.slice(i, i + 3).map((effort) => btn(effort, `${ns}:eff:${effort}`)));
+  }
+  rows.push([btn(tr("Don't set", "Не задавать"), `${ns}:eff:unset`), withKeep ? btn(tr("Keep", "Оставить"), `${ns}:keep`) : cancelRow()[0]]);
+  return rows;
 }
 
 // {msgId} (опц.) — хендофф из /menu: визард заменяет flow-слот и рисует в ТО ЖЕ сообщение меню.
@@ -536,6 +573,7 @@ async function handleModelCmd(chatId, from, { msgId } = {}) {
   const { provider, model, effort } = await currentConfig();
   const st = newWizard(chatId, from, "model");
   st.msgId = msgId ?? null;
+  st.step = "intro";
   await wizScreen(st, tr(
     `Now: provider ${provider} · model ${model} · thinking: ${effortLabel(effort)}.`,
     `Сейчас: провайдер ${provider} · модель ${model} · размышления: ${effortLabel(effort)}.`,
@@ -545,13 +583,36 @@ async function handleModelCmd(chatId, from, { msgId } = {}) {
 }
 
 async function handleThinkCmd(chatId, from, { msgId } = {}) {
-  const { effort } = await currentConfig();
+  const { provider, model, effort } = await currentConfig();
   const st = newWizard(chatId, from, "think");
   st.msgId = msgId ?? null;
-  await wizScreen(st, tr(`Thinking level: ${effortLabel(effort)}.`, `Уровень размышлений: ${effortLabel(effort)}.`), effortRows("iva_think", true));
+  if (provider !== "codex") {
+    await endWizard(st, tr(
+      `Thinking level is unavailable for ${CATALOG[provider].label}. Choose OpenAI subscription via /model first.`,
+      `Уровень размышлений недоступен для ${CATALOG[provider].label}. Сначала выбери подписку OpenAI через /model.`,
+    ), menuRow());
+    return;
+  }
+  st.step = "loading";
+  await wizScreen(st, tr(
+    `Loading thinking levels for ${model}…`,
+    `Загружаю уровни размышлений для ${model}…`,
+  ), [cancelRow()]);
+  const options = await fetchModelOptions("codex", undefined, { dataDir: DATA_DIR_ABS });
+  if (flows.get(st.chatId, st.userId) !== st) return;
+  const option = options.find((candidate) => candidate.id === model)
+    || { id: model, reasoningLevels: [...FALLBACK_EFFORTS] };
+  st.modelOptions = [option];
+  st.model = model;
+  st.efforts = [...option.reasoningLevels];
+  st.step = "effort";
+  await wizScreen(st,
+    tr(`Thinking level for ${model}: ${effortLabel(effort)}.`, `Уровень размышлений для ${model}: ${effortLabel(effort)}.`),
+    effortRows("iva_think", true, st.efforts));
 }
 
 async function showProviderScreen(st) {
+  st.step = "provider";
   const rows = Object.entries(CATALOG).map(([id, c]) => [btn(c.label, `iva_model:prov:${id}`)]);
   rows.push(cancelRow());
   await wizScreen(st, tr("Pick a provider:", "Выбери провайдера:"), rows);
@@ -561,6 +622,11 @@ async function pickProvider(st, provider) {
   st.provider = provider;
   const cat = CATALOG[provider];
   if (cat.auth === "oauth") {
+    st.step = "loading";
+    await wizScreen(st, tr(
+      "Checking the OpenAI subscription…",
+      "Проверяю подписку OpenAI…",
+    ), [cancelRow()]);
     // File presence is not enough — a revoked/expired refresh token would let the wizard
     // finish into a config that 401s every turn. getAccessToken refreshes a stale token
     // and throws when there is no usable auth → device-link login.
@@ -578,6 +644,7 @@ async function pickProvider(st, provider) {
     // awaitText обобщает старый awaitKey (см. handleControl): диспатчер по pending.awaitText
     // отдаёт следующий текст этому визарду (handleKeyMessage), а не eve.
     st.awaitText = { kind: "apikey", secret: true, data: {} };
+    st.step = "awaiting_key";
     await wizScreen(st,
       tr(
         `Need a ${cat.label} API key. Send it in the next message — I'll delete it from the chat right away.\n` +
@@ -594,15 +661,21 @@ async function pickProvider(st, provider) {
 async function showModelScreen(st) {
   const cat = CATALOG[st.provider];
   const env = await readEnvValues(ENV_PATH);
-  let models;
+  st.step = "loading";
+  await wizScreen(st, tr(
+    `Loading models for ${cat.label}…`,
+    `Загружаю модели ${cat.label}…`,
+  ), [cancelRow()]);
+  let options;
   try {
-    models = await fetchModels(st.provider, cat.keyVar ? env[cat.keyVar] : undefined, { dataDir: DATA_DIR_ABS });
+    options = await fetchModelOptions(st.provider, cat.keyVar ? env[cat.keyVar] : undefined, { dataDir: DATA_DIR_ABS });
   } catch {
-    // fetchModels only throws when the live /models probe rejected the stored key (401/403) —
+    // fetchModelOptions only throws when the live /models probe rejected the stored key (401/403) —
     // re-enter the key flow instead of offering a list the dead key can't use.
     // В группе новый ключ вводить нельзя (его не удалить) — отказ до установки awaitText.
     if (!isPrivateChat(st)) return refuseSecretInGroup(st);
     st.awaitText = { kind: "apikey", secret: true, data: {} };
+    st.step = "awaiting_key";
     await wizScreen(st,
       tr(
         `The saved ${cat.label} key was rejected. Send a new key in the next message — I'll delete it from the chat right away.`,
@@ -611,10 +684,19 @@ async function showModelScreen(st) {
       [cancelRow()]);
     return;
   }
+  if (flows.get(st.chatId, st.userId) !== st) return;
   // Keep the currently configured model selectable even when the live list is long.
   const current = env[cat.modelVar];
-  st.models = [...new Set([...(current ? [current] : []), ...models])].slice(0, 30);
-  const rows = st.models.map((m, i) => [btn(m, `iva_model:m:${i}`)]);
+  const currentOption = current
+    ? options.find((option) => option.id === current)
+      || { id: current, reasoningLevels: st.provider === "codex" ? [...FALLBACK_EFFORTS] : [] }
+    : null;
+  st.modelOptions = [
+    ...(currentOption ? [currentOption] : []),
+    ...options.filter((option) => option.id !== current),
+  ].slice(0, 30);
+  st.step = "models";
+  const rows = st.modelOptions.map((option, i) => [btn(option.id, `iva_model:m:${i}`)]);
   rows.push(cancelRow());
   await wizScreen(st, tr(`Model (${cat.label}):`, `Модель (${cat.label}):`), rows);
 }
@@ -623,6 +705,7 @@ async function showModelScreen(st) {
 // awaited, so the getUpdates loop keeps running; the continuation discards itself
 // when this state object is no longer the current wizard (cancelled/replaced).
 function startCodexLogin(st) {
+  st.step = "login";
   // Serialize device-code log lines (link, one-time code) into ordered chat messages.
   let q = Promise.resolve();
   const tlog = (m) => { q = q.then(() => reply(st.chatId, String(m).trim())); };
@@ -689,13 +772,8 @@ async function saveWizard(st) {
 async function showSaved(st) {
   const { provider, model, effort } = await currentConfig();
   let text = tr(`Saved: ${provider} · ${model} · thinking: ${effortLabel(effort)}.`, `Сохранил: ${provider} · ${model} · размышления: ${effortLabel(effort)}.`);
-  if (EFFORT_SET.has(effort) && provider !== "codex") {
-    text += tr(
-      "\nThe thinking level is saved in the profile, but natively applies only on codex.",
-      "\nУровень размышлений сохранён в профиле, но нативно применяется только на codex.",
-    );
-  }
   text += tr("\nRestart the agent to apply?", "\nПерезапустить агента, чтобы применить?");
+  st.step = "saved";
   await wizScreen(st, text, [[btn(tr("Restart now", "Перезапустить сейчас"), "iva_model:rs:now"), btn(tr("Later", "Позже"), "iva_model:rs:later")]]);
 }
 
@@ -710,10 +788,11 @@ async function handleWizardCallback(cq) {
   const action = cq.data.replace(/^iva_(model|think):/, "");
   const st = getWizard(chatId, from);
   // No state (bridge restarted / TTL) or a tap on an older wizard message → stale.
-  if (!st || (st.msgId && messageId && st.msgId !== messageId)) {
+  if (isStaleWizard(st, messageId)) {
     await tg("editMessageText", { chat_id: chatId, message_id: messageId, text: tr("This dialog has expired — send /model again.", "Диалог устарел — отправь /model заново.") });
     return true;
   }
+  if (!wizardActionAllowed(st, action)) return true;
   if (action === "keep") {
     await endWizard(st, st.flow === "think" ? tr("Kept the current thinking level.", "Оставил текущий уровень размышлений.") : tr("Kept the current configuration.", "Оставил текущую конфигурацию."), menuRow());
     return true;
@@ -732,15 +811,28 @@ async function handleWizardCallback(cq) {
     return true;
   }
   if (action.startsWith("m:")) {
-    const m = st.models?.[Number(action.slice("m:".length))];
-    if (!m) return true;
-    st.model = m;
-    await wizScreen(st, tr("Thinking level:", "Уровень размышлений:"), effortRows("iva_model", false));
+    const option = selectWizardModel(st, action.slice("m:".length));
+    if (!option) return true;
+    if (st.provider !== "codex") {
+      st.effort = null;
+      try {
+        await saveWizard(st);
+      } catch (e) {
+        await endWizard(st, tr("Couldn't save .env: " + e.message, "Не удалось сохранить .env: " + e.message), menuRow());
+        return true;
+      }
+      await showSaved(st);
+      return true;
+    }
+    st.step = "effort";
+    await wizScreen(st,
+      tr(`Thinking level for ${option.id}:`, `Уровень размышлений для ${option.id}:`),
+      effortRows("iva_model", false, st.efforts));
     return true;
   }
   if (action.startsWith("eff:")) {
     const v = action.slice("eff:".length);
-    st.effort = EFFORT_SET.has(v) ? v : null; // "unset" and anything unknown ⇒ drop
+    if (!selectWizardEffort(st, v)) return true;
     try {
       await saveWizard(st);
     } catch (e) {
