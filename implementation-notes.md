@@ -42,6 +42,10 @@
   Per-chat O_EXCL locks have bounded waiting and stale-owner recovery; atomic conditional
   updates keep late Eve terminal events from overwriting a reset or a fresh session.
   A malformed per-chat file is quarantined alone, so neighboring chats keep working.
+- Global `iva reset` uses one collision-safe quarantine operation stamp for both Eve
+  workflow locations, `run-status.d`, legacy `run-status.json`, and
+  `telegram-queue.json`. Services are already stopped, every file/directory keeps private
+  permissions, and any target failure participates in the existing incomplete reset report.
 - Legacy private chats can reconstruct their stable token immediately. A legacy group with
   no stored event token must send `/new` as a reply to Iva's latest message once; future
   events persist the exact token automatically.

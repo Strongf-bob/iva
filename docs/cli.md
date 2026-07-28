@@ -54,7 +54,7 @@ The installer puts `iva` in `~/.local/bin`. Commands that touch systemd need a L
 | `iva doctor` | Checks Node ≥ 24, `.env` keys, build, units, both services, 5 memory timers, vault git origin — auto-repairs what's safe |
 | `iva status` | Status of both services + the memory-timer schedule |
 | `iva restart` | Regenerates units (keeps the port in sync with `IVA_PORT`), restarts agent + bridge |
-| `iva reset` | Stop, wipe `.workflow-data`, restart — cures stuck turns that a plain restart brings right back |
+| `iva reset` | Stop, quarantine workflow plus Telegram busy/queue state, restart — cures stuck turns that a plain restart brings right back |
 | `iva usage [window]` | Same windows as `/usage`, plus `tail [N]` — the last N raw log lines (default 10) |
 | `iva start` / `iva stop` | Start both services and enable at boot / stop them |
 | `iva logs [poll]` | Follow agent logs, last 50 lines; `poll` follows the Telegram bridge instead |
