@@ -33,6 +33,15 @@
 - Telegram queues are keyed by chat/topic, while Eve group sessions also include a reply
   `conversationId`. Private reset clears its queue before publishing idle state; group/forum
   reset preserves the shared queue so messages for other anchors are not lost.
+- Queue rewrites use a unique same-directory temp file plus atomic rename. A failed reset
+  queue write is reported and leaves the old running status in place; malformed queue JSON
+  is strict during reset and quarantined during ordinary polling so the bridge stays live
+  without silently overwriting the damaged bytes.
+- Run status is stored per chat under `data/run-status.d/`. The old whole-map
+  `data/run-status.json` remains a read fallback and each touched key migrates lazily.
+  Per-chat O_EXCL locks have bounded waiting and stale-owner recovery; atomic conditional
+  updates keep late Eve terminal events from overwriting a reset or a fresh session.
+  A malformed per-chat file is quarantined alone, so neighboring chats keep working.
 - Legacy private chats can reconstruct their stable token immediately. A legacy group with
   no stored event token must send `/new` as a reply to Iva's latest message once; future
   events persist the exact token automatically.

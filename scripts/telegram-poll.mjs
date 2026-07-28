@@ -8,7 +8,7 @@
 // so we fetch updates from Telegram ourselves (getUpdates, long-poll) and POST them to
 // the local eve route with the same secret — Telegram sees an ordinary bot, no proxy needed.
 // The channel/agent are unchanged. Webhook and polling are mutually exclusive → deleteWebhook on start.
-import { readFile, writeFile, mkdir, rm, readdir, stat } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rename, rm, readdir, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { join, dirname } from "node:path";
@@ -21,7 +21,7 @@ import { getAccessToken, runDeviceCodeLogin } from "./lib/codex-oauth.mjs";
 import { compactNumber, modelSummary } from "./lib/model-summary.mjs";
 import { acquireUpdateLock, releaseUpdateLock } from "./lib/update-safety.mjs";
 import { inspectUpstream, markVersionNotified, updateOffer } from "./lib/update-check.mjs";
-// ESC-остановка: канал пишет в data/run-status.json, идёт ли сейчас ход по чату;
+// ESC-остановка: канал пишет в data/run-status.d, идёт ли сейчас ход по чату;
 // мост по нему буферизует входящие (см. очередь ниже) и обслуживает /stop.
 import { getChatStatus, isRunning, setChatStatus } from "./lib/run-status.mjs";
 import { classifyDeliverStatus } from "./lib/deliver-policy.mjs";
@@ -308,19 +308,57 @@ const sc = (...args) =>
 // (the channel turns it into context lines).
 const QUEUE_FILE = join(DATA_DIR, "telegram-queue.json");
 
-async function loadQueue() {
+export async function loadQueue({ strict = false } = {}) {
+  let raw;
   try {
-    const q = JSON.parse(await readFile(QUEUE_FILE, "utf8"));
-    return typeof q === "object" && q !== null ? q : {};
-  } catch {
+    raw = await readFile(QUEUE_FILE, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") return {};
+    throw error;
+  }
+  try {
+    const queue = JSON.parse(raw);
+    if (typeof queue !== "object" || queue === null || Array.isArray(queue)) {
+      throw new Error(`${QUEUE_FILE} does not contain a JSON object`);
+    }
+    return queue;
+  } catch (error) {
+    if (strict) throw error;
+    const backup = `${QUEUE_FILE}.corrupt-${Date.now()}-${randomBytes(4).toString("hex")}`;
+    // Ordinary polling must stay live, but returning {} before the damaged
+    // bytes are safely moved would let the next save overwrite evidence/data.
+    await rename(QUEUE_FILE, backup);
+    log(`damaged Telegram queue moved to ${backup}:`, error.message);
     return {};
+  }
+}
+
+export async function writeQueueAtomic(
+  queue,
+  {
+    writeFileImpl = writeFile,
+    renameImpl = rename,
+    rmImpl = rm,
+    nonce = randomBytes(8).toString("hex"),
+  } = {},
+) {
+  await mkdir(DATA_DIR, { recursive: true });
+  const tmp = `${QUEUE_FILE}.tmp-${process.pid}-${nonce}`;
+  try {
+    await writeFileImpl(tmp, JSON.stringify(queue), {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    await renameImpl(tmp, QUEUE_FILE);
+  } finally {
+    await rmImpl(tmp, { force: true }).catch(() => {});
   }
 }
 
 async function saveQueue(q) {
   try {
-    await mkdir(DATA_DIR, { recursive: true });
-    await writeFile(QUEUE_FILE, JSON.stringify(q), "utf8");
+    await writeQueueAtomic(q);
   } catch (e) {
     log("queue save failed:", e.message);
   }
@@ -329,11 +367,12 @@ async function saveQueue(q) {
 // A scoped reset intentionally discards only messages queued for this chat/topic.
 // Other conversations keep both their queues and their Eve histories.
 async function clearChatQueue(chatKey) {
-  const q = await loadQueue();
+  const q = await loadQueue({ strict: true });
   if (!(chatKey in q)) return;
   delete q[chatKey];
-  await mkdir(DATA_DIR, { recursive: true });
-  await writeFile(QUEUE_FILE, JSON.stringify(q), "utf8");
+  // Reset cleanup must fail loudly: completeScopedResetState keeps the old
+  // running status until this atomic rename succeeds.
+  await writeQueueAtomic(q);
 }
 
 export async function completeScopedResetState(

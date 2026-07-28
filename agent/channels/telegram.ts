@@ -8,9 +8,14 @@ import { join } from "node:path";
 import { toTelegramHtmlChunks, htmlToPlain, needsRichMessage } from "../../scripts/lib/telegram-format.mjs";
 import { describeImage } from "../vision.js";
 import { sanitizeInbound, scanOutbound } from "../lib/security-gate.js";
-// Состояние «идёт ли ход» — общий файл data/run-status.json с мостом telegram-poll.mjs:
-// мост по нему буферизует входящие, канал хранит sessionId/turnId для отмены.
-import { chatKeyOf, getChatStatus, setChatStatus } from "../../scripts/lib/run-status.mjs";
+// Состояние «идёт ли ход» — per-chat файлы data/run-status.d с мостом telegram-poll.mjs:
+// мост по ним буферизует входящие, канал хранит sessionId/turnId для отмены.
+import {
+  chatKeyOf,
+  getChatStatus,
+  setChatStatus,
+  setChatStatusIf,
+} from "../../scripts/lib/run-status.mjs";
 // Двуязычие: tr(en, ru) отдаёт строку по текущему языку (data/settings.json → env
 // AGENT_LANGUAGE). Тот же кросс-импорт scripts/lib в eve-бандл, что и telegram-format выше.
 import { tr } from "../../scripts/lib/i18n.mjs";
@@ -313,16 +318,24 @@ async function finishStatus(
   const tg = channel.telegram;
   const key = chatKeyOf(tg.chatId, tg.messageThreadId);
   const st = getChatStatus(key);
-  // A reset removes sessionId from the idle tombstone. A late terminal event
-  // from that retired session must not mutate a fresh conversation's status.
-  if (st?.sessionId !== sessionId) return false;
-  setChatStatus(key, {
-    status: "idle",
-    continuationToken: channel.continuationToken,
-    turnId: null,
-    statusMessageId: null,
-    ...(mode === "cancelled" ? { wasCancelled: true } : {}),
-  });
+  // Compare and update happen under one per-chat lock. A reset can remove
+  // sessionId after this read; a late terminal event then becomes a no-op.
+  if (
+    !setChatStatusIf(
+      key,
+      { sessionId },
+      {
+        status: "idle",
+        continuationToken: channel.continuationToken,
+        sessionId: null,
+        turnId: null,
+        statusMessageId: null,
+        ...(mode === "cancelled" ? { wasCancelled: true } : {}),
+      },
+    )
+  ) {
+    return false;
+  }
   const msgId = st?.statusMessageId;
   if (!msgId) return true;
   try {
@@ -410,14 +423,15 @@ const telegram = telegramChannel({
     "session.waiting"(_data, channel, ctx) {
       const tg = channel.telegram;
       const key = chatKeyOf(tg.chatId, tg.messageThreadId);
-      const status = getChatStatus(key);
-      if (status?.status === "running" && status.sessionId === ctx.session.id) {
-        setChatStatus(key, {
+      setChatStatusIf(
+        key,
+        { status: "running", sessionId: ctx.session.id },
+        {
           status: "idle",
           continuationToken: channel.continuationToken,
           turnId: null,
-        });
-      }
+        },
+      );
     },
     // Ответ модели → красивый Telegram-HTML. Переопределяет дефолтную plain-доставку
     // eve. Промежуточный текст перед tool-calls не шлём (зеркалим дефолт). Конвертер
