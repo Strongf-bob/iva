@@ -32,7 +32,7 @@ Cause: a wedged turn lives in `.workflow-data`, and eve re-enqueues it on every 
 iva reset   # stop services, clear .workflow-data, restart
 ```
 
-From Telegram, `/restart` does the same. The poll bridge handles it out-of-band, so it works even while the agent is busy.
+From Telegram, `/new` resets only the current chat or forum topic. `/restart` resets that same conversation and then restarts the agent process. Both are handled out-of-band and work while the agent is busy. Use server-side `iva reset` only when the entire workflow store is damaged.
 
 ### Model changed in .env but nothing happened
 
