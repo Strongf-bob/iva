@@ -40,7 +40,8 @@ For a direct smoke test, load the secret without printing it and pass the header
 ```bash
 ASSISTANT_BEARER="$(node --env-file=.env -p 'process.env.ASSISTANT_BEARER')"
 IVA_PORT="$(node --env-file=.env -p 'process.env.IVA_PORT || 8723')"
-curl --fail-with-body --config <(printf 'header = "Authorization: Bearer %s"\n' "$ASSISTANT_BEARER") \
+printf 'header = "Authorization: Bearer %s"\n' "$ASSISTANT_BEARER" |
+  curl --fail-with-body --config - \
   -X POST "http://127.0.0.1:${IVA_PORT}/eve/v1/session" \
   -H "content-type: application/json" \
   -d '{"message":"Reply with exactly: auth ok"}'

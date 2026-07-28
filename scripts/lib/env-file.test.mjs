@@ -51,6 +51,24 @@ assert.throws(
 assert.equal(await readFile(p, "utf8"), "ORIGINAL=still-here\n");
 assert.deepEqual((await readdir(dir)).filter((name) => name.includes(".tmp-")), []);
 
+// A directory-fsync failure happens after rename: report that state honestly and
+// keep the complete replacement visible rather than pretending the old bytes remain.
+await writeFile(p, "ORIGINAL=will-be-replaced\n");
+assert.throws(
+  () =>
+    writeEnvAtomicSync(p, "REPLACEMENT=is-live\n", {
+      beforeDirectorySync() {
+        throw new Error("injected directory sync failure");
+      },
+    }),
+  (error) =>
+    error.code === "EENV_DURABILITY" &&
+    /file was replaced/.test(error.message) &&
+    /durability is unconfirmed/.test(error.message),
+);
+assert.equal(await readFile(p, "utf8"), "REPLACEMENT=is-live\n");
+assert.deepEqual((await readdir(dir)).filter((name) => name.includes(".tmp-")), []);
+
 // fresh read: file values win over the (stale) base snapshot; base-only keys survive.
 await writeFile(p, "MODEL_PROVIDER=codex\nCODEX_MODEL=gpt-5.6\n");
 assert.deepEqual(

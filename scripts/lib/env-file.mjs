@@ -50,31 +50,45 @@ export async function readEnvFresh(path, base = process.env) {
  * Replace an env file atomically.
  *
  * The old file is protected before any secret is staged. The replacement is a
- * unique 0600 file in the same directory, fsynced before rename. A write,
- * fsync, or rename failure therefore leaves the old bytes in place.
+ * unique 0600 file in the same directory. The file is fsynced before rename,
+ * then the parent directory is fsynced so the rename survives a crash.
  */
-export function writeEnvAtomicSync(path, text, { beforeRename } = {}) {
+export function writeEnvAtomicSync(path, text, { beforeRename, beforeDirectorySync } = {}) {
   if (existsSync(path)) chmodSync(path, 0o600);
+  const parent = dirname(path);
   const tmp = join(
-    dirname(path),
+    parent,
     `.${basename(path)}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`,
   );
-  let fd;
   try {
-    fd = openSync(tmp, "wx", 0o600);
-    fchmodSync(fd, 0o600);
-    writeFileSync(fd, String(text), "utf8");
-    fsyncSync(fd);
-    closeSync(fd);
-    fd = undefined;
+    const fileFd = openSync(tmp, "wx", 0o600);
+    try {
+      fchmodSync(fileFd, 0o600);
+      writeFileSync(fileFd, String(text), "utf8");
+      fsyncSync(fileFd);
+    } finally {
+      closeSync(fileFd);
+    }
     beforeRename?.(tmp);
     renameSync(tmp, path);
-  } catch (error) {
-    if (fd !== undefined) {
+
+    try {
+      beforeDirectorySync?.(parent);
+      const directoryFd = openSync(parent, "r");
       try {
-        closeSync(fd);
-      } catch {}
+        fsyncSync(directoryFd);
+      } finally {
+        closeSync(directoryFd);
+      }
+    } catch (cause) {
+      const error = new Error(
+        `env file was replaced, but parent directory fsync failed; new bytes are live and crash durability is unconfirmed: ${cause.message}`,
+        { cause },
+      );
+      error.code = "EENV_DURABILITY";
+      throw error;
     }
+  } catch (error) {
     try {
       rmSync(tmp);
     } catch {}
