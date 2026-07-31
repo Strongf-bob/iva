@@ -227,9 +227,34 @@ test("normalization strips the channel prefix and nothing else", () => {
   assert.equal(toChannelLocalToken("123::"), "123::");
   assert.equal(toChannelLocalToken(""), "");
 
-  // Идемпотентность: второй вызов — no-op, поэтому нормализовать можно где угодно.
+  // Срезается ровно ОДИН префикс. Двойной "telegram:telegram:…" в персисте невозможен —
+  // eve неймспейсит токен ровно один раз, а довфиксные значения одинарные, — но именно
+  // такую строку собирал reset-роут из нашего токена, и она обязана схлопываться в один
+  // проход, а не превращаться в "telegram:…" от повторной нормализации.
+  const warnings = [];
   assert.equal(
-    toChannelLocalToken(toChannelLocalToken("telegram:7091451031::")),
-    "7091451031::",
+    toChannelLocalToken("telegram:telegram:7091451031::", { warn: (m) => warnings.push(m) }),
+    "telegram:7091451031::",
   );
+  assert.equal(warnings.length, 1, "нераспознанная форма обязана попасть в журнал");
+});
+
+test("an unexpected token shape is reported instead of silently passed on", () => {
+  // Не throw: поведение не меняем, но следующая смена формы токена станет громкой
+  // строкой в journalctl, а не тихим повторением #110.
+  const warnings = [];
+  const warn = (message) => warnings.push(message);
+
+  assert.equal(toChannelLocalToken("slack:C123:456", { warn }), "slack:C123:456");
+  assert.equal(toChannelLocalToken("telegram:not-a-chat-id", { warn }), "not-a-chat-id");
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0], /unexpected shape: "slack:C123:456"/);
+  assert.match(warnings[1], /unexpected shape: "telegram:not-a-chat-id"/);
+
+  // Нормальные токены молчат, включая групповые с минусом и пустое значение.
+  const quiet = [];
+  for (const token of ["7091451031::", "-1001:77:42", "telegram:-1001:77:42", "123", ""]) {
+    toChannelLocalToken(token, { warn: (m) => quiet.push(m) });
+  }
+  assert.deepEqual(quiet, []);
 });

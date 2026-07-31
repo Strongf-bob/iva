@@ -12,11 +12,21 @@
 // контракт eve, а не наша эвристика.
 const NAMESPACE = "telegram:";
 
+// Channel-local токен всегда начинается с chat id: целое, у групп со знаком минус, дальше
+// либо конец строки, либо разделитель. Проверка не меняет поведение — она нужна, чтобы
+// следующая смена формы токена (бамп eve, переименование канала) стала громкой строкой
+// в journalctl, а не тихим повторением #110.
+const CHANNEL_LOCAL_SHAPE = /^-?\d+(:|$)/;
+
 /**
  * Приводит continuationToken к channel-local виду: срезает префикс канала, если он есть.
  * Идемпотентна — на уже локальном токене ("123::", "-1001:7:42") это no-op.
  */
-export function toChannelLocalToken(token) {
-  if (typeof token !== "string" || !token.startsWith(NAMESPACE)) return token;
-  return token.slice(NAMESPACE.length);
+export function toChannelLocalToken(token, { warn = console.error } = {}) {
+  if (typeof token !== "string" || token.length === 0) return token;
+  const local = token.startsWith(NAMESPACE) ? token.slice(NAMESPACE.length) : token;
+  if (!CHANNEL_LOCAL_SHAPE.test(local)) {
+    warn(`[telegram] continuation token has an unexpected shape: ${JSON.stringify(token)}`);
+  }
+  return local;
 }
