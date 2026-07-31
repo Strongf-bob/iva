@@ -291,3 +291,27 @@
 - Legacy private chats can reconstruct their stable token immediately. A legacy group with
   no stored event token must send `/new` as a reply to Iva's latest message once; future
   events persist the exact token automatically.
+
+## Continuation-token namespace on reset (#110)
+
+- Eve exposes the same continuation token in two shapes, and only a real reset tells them
+  apart. Event `data` for `session.waiting` carries the channel-local token
+  (`<chatId>:<thread>:<conv>`); `channel.continuationToken` inside event handlers carries the
+  namespaced one (`telegram:<chatId>:<thread>:<conv>`), because Eve builds it from
+  `ctx.session.continuationToken`.
+- The channel-owned reset route prepends the channel name itself. A namespaced token reaching
+  `/eve/v1/telegram/reset` therefore resolves as `telegram:telegram:…`, finds no owner and
+  returns the idempotent `no_active_session` — which the bridge correctly treats as success.
+  That is how `/new` reported a cleared context while the session kept its whole history.
+- Everything Iva persists in `data/run-status.d/` and sends to reset must be channel-local.
+  `channelLocalContinuationToken()` strips a leading non-numeric segment (a Telegram chat id
+  is always `-?\d+`) and is applied both where the channel writes status and where the bridge
+  reads it, so statuses poisoned by earlier versions heal on the next `/new` instead of
+  waiting for a rewrite.
+- On an Eve bump: re-check what `channel.continuationToken` yields in event handlers. If Eve
+  ever hands out the channel-local token there, the helper stays correct (it is idempotent),
+  but `scripts/lib/telegram-reset.test.mjs` is the place that pins the expectation.
+- `scripts/replica-smoke.mjs` runs a reset canary against the real framework: seed a marker,
+  `session.reset()`, return with the same continuation token and assert the marker is gone.
+  It guards Eve's documented contract ("reset retires a session so its continuation starts
+  fresh"), which 0.27.13 honours — the `/new` failure was Iva's token shape, not Eve's reset.
