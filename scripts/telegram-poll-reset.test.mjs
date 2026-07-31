@@ -267,3 +267,43 @@ test("ordinary queue load quarantines corrupt bytes and continues", async () => 
   assert.equal(backups.length, 1);
   assert.equal(readFileSync(join(dataDir, backups[0]), "utf8"), corrupt);
 });
+
+test("reset tombstone stores the token channel-local (#110)", async () => {
+  // Токен приходит из статуса, а тот до фикса заполнялся namespaced-значением eve.
+  // Надгробие переживает рестарт и потом само уходит в reset — сохранить его как есть
+  // значило бы законсервировать «telegram:telegram:…» и молчаливый no_active_session.
+  await completeScopedResetState("7091451031:", "telegram:7091451031::", { clearQueue: true });
+
+  const tombstone = status.getChatStatus("7091451031:");
+  assert.equal(tombstone.status, "idle");
+  assert.equal(tombstone.continuationToken, "7091451031::");
+});
+
+test("a reset intent written before the fix is retried channel-local (#110)", async () => {
+  const key = "429888768:";
+  await persistPrivateResetIntent(key, "telegram:429888768::");
+
+  const requested = [];
+  await reconcileScopedResetIntents({
+    requestResetImpl: async ({ continuationToken }) => {
+      // Точка выхода наружу — то, что реально уедет в /eve/v1/telegram/reset.
+      requested.push(continuationToken);
+    },
+  });
+
+  assert.deepEqual(requested, ["429888768::"]);
+  assert.equal(status.getChatStatus(key).continuationToken, "429888768::");
+});
+
+test("/new sends the reset channel-local even from a namespaced status (#110)", async () => {
+  const requested = [];
+  await performScopedReset("7091451031:", "telegram:7091451031::", {
+    clearQueue: true,
+    persistIntentImpl: async () => {},
+    requestResetImpl: async ({ continuationToken }) => requested.push(continuationToken),
+    completeStateImpl: async () => {},
+    clearIntentImpl: async () => {},
+  });
+
+  assert.deepEqual(requested, ["7091451031::"]);
+});
