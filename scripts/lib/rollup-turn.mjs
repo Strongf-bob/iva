@@ -39,6 +39,22 @@ export class RollupTurnTimeoutError extends Error {
   }
 }
 
+export const DEFAULT_CANCEL_TIMEOUT_MS = 30_000;
+
+// Отмена проигравшего гонку хода. Таймаут не останавливает ход на сервере — тот продолжает
+// писать в vault, — поэтому перед retry в свежей сессии старый ход надо погасить, иначе два
+// писателя правят одни и те же карточки и CORE.md под одним флоком.
+// Best-effort по определению: у заклинившей сессии cancel сам может висеть или ответить 500,
+// а у не начатой — бросить. Любой исход проглатывается, наверх идёт только признак успеха.
+export async function cancelTurnQuietly(session, { timeoutMs = DEFAULT_CANCEL_TIMEOUT_MS } = {}) {
+  try {
+    await withTurnTimeout(() => session.cancel(), { timeoutMs, label: "cancel" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Выполняет fn() и отклоняется RollupTurnTimeoutError, если тот не уложился в timeoutMs.
 // Проигравшая сторона гонки не отменяется (у eve-хода нет abort) — она просто повисает
 // в фоне; вызывающий должен считать сессию непригодной и завести новую.

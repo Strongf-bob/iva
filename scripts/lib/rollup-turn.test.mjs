@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  cancelTurnQuietly,
   DEFAULT_TURN_TIMEOUT_MS,
   RollupTurnTimeoutError,
   resolveTurnTimeoutMs,
@@ -43,4 +44,22 @@ test("a malformed timeout falls back to the default and warns", () => {
     assert.equal(resolveTurnTimeoutMs(raw, { warn: (m) => warnings.push(m) }), DEFAULT_TURN_TIMEOUT_MS);
     if (raw.trim() !== "") assert.equal(warnings.length, 1, `expected a warning for ${JSON.stringify(raw)}`);
   }
+});
+
+test("a hung cancel is swallowed instead of blocking the retry", async () => {
+  const session = { cancel: () => new Promise(() => {}) };
+  assert.equal(await cancelTurnQuietly(session, { timeoutMs: 30 }), false);
+});
+
+test("a refused cancel is swallowed too", async () => {
+  // Не начатая сессия бросает синхронно, заклинившая может ответить 500 — оба исхода не наши.
+  const throws = { cancel: () => { throw new Error("session has not started"); } };
+  const rejects = { cancel: async () => { throw new Error("500 cancel-turn"); } };
+  assert.equal(await cancelTurnQuietly(throws, { timeoutMs: 30 }), false);
+  assert.equal(await cancelTurnQuietly(rejects, { timeoutMs: 30 }), false);
+});
+
+test("an accepted cancel reports success", async () => {
+  const session = { cancel: async () => ({ status: "accepted" }) };
+  assert.equal(await cancelTurnQuietly(session, { timeoutMs: 30 }), true);
 });

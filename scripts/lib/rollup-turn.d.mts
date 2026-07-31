@@ -16,3 +16,10 @@ export function resolveTurnTimeoutMs(
   raw: string | undefined | null,
   options?: { warn?: (message: string) => void },
 ): number;
+
+export const DEFAULT_CANCEL_TIMEOUT_MS: number;
+
+export function cancelTurnQuietly(
+  session: { cancel: (options?: { turnId?: string }) => Promise<unknown> },
+  options?: { timeoutMs?: number },
+): Promise<boolean>;
