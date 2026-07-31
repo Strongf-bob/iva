@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { Client, type SessionState } from "eve/client";
 import { CORE_CAP } from "../lib/core-cap.mjs";
 import { notificationChat } from "../lib/notification-chat.mjs";
-import { DEFAULT_TURN_TIMEOUT_MS, withTurnTimeout } from "../lib/rollup-turn.mjs";
+import { resolveTurnTimeoutMs, withTurnTimeout } from "../lib/rollup-turn.mjs";
 import { sendTelegramHtml } from "../lib/telegram-send.mjs";
 
 type Period = "daily" | "weekly" | "monthly" | "yearly";
@@ -199,7 +199,9 @@ function logAbandoned(state: SessionState, reason: string): void {
 
 // Ход целиком (send + result) под таймаутом: резюм припаркованной сессии после рестарта
 // сервера умеет виснуть молча (#104), и без гонки с таймером ночь просто не заканчивается.
-const TURN_TIMEOUT_MS = Number(process.env.ROLLUP_TURN_TIMEOUT_MS ?? DEFAULT_TURN_TIMEOUT_MS);
+const TURN_TIMEOUT_MS = resolveTurnTimeoutMs(process.env.ROLLUP_TURN_TIMEOUT_MS, {
+  warn: (message) => console.error(`rollup ${period}: ${message}`),
+});
 const guardedTurn = (session: ReturnType<typeof client.session>, prompt: string, label: string) =>
   withTurnTimeout(
     async () => {

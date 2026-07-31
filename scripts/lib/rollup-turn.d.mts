@@ -11,3 +11,8 @@ export function withTurnTimeout<T>(
   fn: () => Promise<T>,
   options?: { timeoutMs?: number; label?: string },
 ): Promise<T>;
+
+export function resolveTurnTimeoutMs(
+  raw: string | undefined | null,
+  options?: { warn?: (message: string) => void },
+): number;

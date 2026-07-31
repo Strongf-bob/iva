@@ -11,6 +11,25 @@
 
 export const DEFAULT_TURN_TIMEOUT_MS = 10 * 60_000;
 
+// Node держит таймер в 32-битном знаковом диапазоне: всё сверх этого молча схлопывается в 1 мс.
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
+// Разбор ROLLUP_TURN_TIMEOUT_MS. Пустая строка (частый случай — `ROLLUP_TURN_TIMEOUT_MS=` в .env)
+// и мусор дают Number() → 0/NaN, а это таймер на 1 мс: каждый ход «зависал» бы мгновенно и ночь
+// уходила бы в фолбэк. Мусор не роняет ночь — падаем на дефолт и громко пишем в stderr.
+export function resolveTurnTimeoutMs(raw, { warn = () => {} } = {}) {
+  if (raw === undefined || raw === null || String(raw).trim() === "") return DEFAULT_TURN_TIMEOUT_MS;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0 || n > MAX_TIMER_MS) {
+    warn(
+      `ROLLUP_TURN_TIMEOUT_MS=${String(raw)} is not a positive integer of milliseconds (max ${MAX_TIMER_MS}) — ` +
+        `falling back to ${DEFAULT_TURN_TIMEOUT_MS}`,
+    );
+    return DEFAULT_TURN_TIMEOUT_MS;
+  }
+  return n;
+}
+
 export class RollupTurnTimeoutError extends Error {
   constructor(label, timeoutMs) {
     super(`rollup turn "${label}" timed out after ${Math.round(timeoutMs / 1000)}s`);
