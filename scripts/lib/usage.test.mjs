@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { summarize, formatUsageReport, parseWindow } from "./usage.mjs";
+import { summarize, formatUsageReport, parseWindow, subagentTurnId } from "./usage.mjs";
 
 const step = (over = {}) => ({
   ts: "2026-07-31T01:23:14.343Z",
@@ -161,4 +161,41 @@ test("a subagent step is not counted as a separate turn in windowed summaries", 
   const agg = summarize(entries, { window: "today", now: Date.parse("2026-07-31T12:00:00Z"), tz: "UTC" });
   assert.equal(agg.totals.turns, 1);
   assert.equal(agg.totals.steps, 2);
+});
+
+test("the subagent turn key falls back the way Eve itself does", () => {
+  // Обычный случай: ход родителя известен.
+  assert.equal(subagentTurnId({ id: "turn_5", sequence: 5 }, "planner", "turn_0"), "turn_5#planner");
+
+  // eve держит turnId ПУСТОЙ строкой между ходами и сам восстанавливает его как
+  // turn_<sequence> (`turnId.length > 0 ? turnId : ...`). Через `??` пустая строка прошла бы
+  // насквозь и дала ключ "#planner", склеивающий разные ходы в один.
+  assert.equal(subagentTurnId({ id: "", sequence: 7 }, "planner", "turn_0"), "turn_7#planner");
+  assert.equal(subagentTurnId({ sequence: 0 }, "planner", "turn_3"), "turn_0#planner");
+
+  // Ни id, ни sequence — последнее звено — turnId ребёнка: ключ всё равно не пустой.
+  assert.equal(subagentTurnId(undefined, "planner", "turn_3"), "turn_3#planner");
+  assert.equal(subagentTurnId({}, "planner", "turn_3"), "turn_3#planner");
+
+  // Безымянный субагент всё равно даёт суффикс — иначе запись выглядела бы как основная.
+  assert.equal(subagentTurnId({ id: "turn_5" }, undefined, "turn_0"), "turn_5#subagent");
+});
+
+test("a fallback key still groups into the parent turn and keeps context clean", () => {
+  // Ключ, собранный по sequence, читается тем же правилом: ход turn_7, контекст — из записи
+  // без суффикса.
+  const entries = [
+    step({ turnId: "turn_7", in: 105_537, out: 300, total: 105_837 }),
+    step({
+      turnId: subagentTurnId({ id: "", sequence: 7 }, "planner", "turn_0"),
+      subagent: "planner",
+      in: 19_800,
+      out: 90,
+      total: 19_890,
+    }),
+  ];
+  const { last } = summarize(entries, { window: "last" });
+  assert.equal(last.in, 105_537);
+  assert.equal(last.steps, 2);
+  assert.equal(last.contextFromSubagent, false);
 });

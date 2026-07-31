@@ -77,6 +77,21 @@ function inWindow(e, window, now, tz) {
 const baseTurnId = (turnId) => String(turnId ?? "").split("#")[0];
 const turnKey = (e) => `${e.sessionId}:${baseTurnId(e.turnId)}`;
 
+/**
+ * Ключ хода для записи инлайн-субагента: ход РОДИТЕЛЯ плюс суффикс с именем субагента.
+ * Живёт здесь, а не в хуке, чтобы правило и его чтение не разъезжались.
+ *
+ * Фолбэки повторяют канон самого eve (`turnId.length > 0 ? turnId : turn_<sequence>`):
+ * `ctx.session.turn.id` бывает ПУСТОЙ строкой между ходами, поэтому `??` тут не годится —
+ * пустая строка дала бы ключ "#planner" и склеила бы разные ходы в один.
+ */
+export function subagentTurnId(turn, subagentName, childTurnId) {
+  const bySequence =
+    typeof turn?.sequence === "number" ? `turn_${turn.sequence}` : "";
+  const parentTurnId = turn?.id || bySequence || childTurnId || "";
+  return `${parentTurnId}#${subagentName || "subagent"}`;
+}
+
 const blank = () => ({ in: 0, out: 0, cacheRead: 0, cacheWrite: 0, total: 0, steps: 0, turns: new Set() });
 function add(acc, e) {
   acc.in += e.in || 0;
@@ -110,7 +125,10 @@ export function summarize(entries, { window = "last", now = Date.now(), tz } = {
     // Инвариант ключа (agent/hooks/usage.ts): запись субагента несёт turnId вида
     // "<ход родителя>#<субагент>". Поэтому ход собирается по части до "#" (расход субагента
     // входит в итог хода), а контекст берётся из записи БЕЗ суффикса — это шаг основной
-    // сессии. Поле subagent проверяем заодно: страховка для записей, сделанных до инварианта.
+    // сессии. Поле subagent проверяем заодно, но лечит оно не всё: довинвариантная запись
+    // субагента несла turnId ребёнка, и если ИМЕННО она оказалась последней, ход определится
+    // по её номеру — то есть, возможно, по давнему одноимённому ходу родителя. Поле спасает
+    // только когда шаг основной сессии попал в ту же группу. В проде таких записей нет.
     //
     // Оговорка про кэш: у провайдеров с anthropic-семантикой cacheRead не входит в inputTokens,
     // и тогда context занижен на величину cacheRead. Оба живых провайдера ивы включают кэш в in,

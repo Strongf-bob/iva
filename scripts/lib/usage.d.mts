@@ -21,6 +21,11 @@ export interface UsageRecord {
   total: number;
 }
 
+export function subagentTurnId(
+  turn: { id?: string; sequence?: number } | undefined,
+  subagentName: string | undefined,
+  childTurnId?: string,
+): string;
 export function usageFilePath(dataDir?: string): string;
 export function appendUsage(record: UsageRecord, dataDir?: string): void;
 export function readEntries(dataDir?: string): UsageRecord[];
