@@ -4,6 +4,7 @@ import {
   continuationTokenForControl,
   requestTelegramReset,
 } from "./telegram-reset.mjs";
+import { channelLocalContinuationToken } from "./telegram-continuation-token.mjs";
 import { handleTelegramResetRequest } from "./telegram-reset-route.mjs";
 
 test("stored Eve token wins for groups and forum topics", () => {
@@ -187,4 +188,41 @@ test("Telegram reset route rejects bad auth and bad input before reset", async (
   );
   assert.equal(malformed.status, 400);
   assert.equal(called, false);
+});
+
+test("namespaced stored token is normalized before reset (#110)", () => {
+  // Реальная запись с прода: обработчики событий eve отдают токен с именем канала
+  // впереди, и он попадал в data/run-status.d как есть. Reset-роут клеил "telegram:"
+  // второй раз → no_active_session, мост печатал «контекст очищен» вхолостую.
+  const privateUpdate = { message: { chat: { id: 7091451031, type: "private" }, message_id: 5 } };
+  assert.equal(
+    continuationTokenForControl(privateUpdate, { continuationToken: "telegram:7091451031::" }, "777"),
+    "7091451031::",
+  );
+
+  const groupUpdate = {
+    message: { chat: { id: -1001, type: "supergroup" }, message_thread_id: 77, message_id: 91 },
+  };
+  assert.equal(
+    continuationTokenForControl(groupUpdate, { continuationToken: "telegram:-1001:77:42" }, "777"),
+    "-1001:77:42",
+  );
+
+  const callbackOnly = { callback_query: { id: "cb" } };
+  assert.equal(
+    continuationTokenForControl(callbackOnly, { continuationToken: "telegram:7091451031::" }, "777"),
+    "7091451031::",
+  );
+});
+
+test("channel-local tokens survive normalization untouched", () => {
+  assert.equal(channelLocalContinuationToken("7091451031::"), "7091451031::");
+  assert.equal(channelLocalContinuationToken("-1001:77:42"), "-1001:77:42");
+  assert.equal(channelLocalContinuationToken("telegram:-1001:77:42"), "-1001:77:42");
+  // Идемпотентность: повторный прогон уже нормализованного токена ничего не режет.
+  assert.equal(
+    channelLocalContinuationToken(channelLocalContinuationToken("telegram:7091451031::")),
+    "7091451031::",
+  );
+  assert.equal(channelLocalContinuationToken(""), "");
 });
