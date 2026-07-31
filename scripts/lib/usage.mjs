@@ -101,16 +101,41 @@ export function summarize(entries, { window = "last", now = Date.now(), tz } = {
     // и сумма (104 632 + 105 537 = 210 169) выглядит как «контекст вырос вдвое». Решение
     // «пора ли /new» принимают по актуальному размеру контекста — это вход ПОСЛЕДНЕГО
     // шага хода. Выход суммируется честно: эти токены сгенерированы все.
-    let context = 0;
+    //
+    // Шаги субагента пишутся с РОДИТЕЛЬСКИМ sessionId (agent/hooks/usage.ts), а turnId у них
+    // свой: eve нумерует ходы внутри каждой сессии как turn_<sequence>, и у субагента счётчик
+    // начинается заново. Сразу после /new ключ `<родитель>:turn_0` совпадает у обоих, и без
+    // фильтра «context» показал бы вход субагента (~20k) вместо родительского (~105k).
+    // Поэтому контекст берём из последней записи БЕЗ поля subagent.
+    //
+    // Оговорка про кэш: у провайдеров с anthropic-семантикой cacheRead не входит в inputTokens,
+    // и тогда context занижен на величину cacheRead. Оба живых провайдера ивы включают кэш в in,
+    // надёжно отличить одну семантику от другой по логу нельзя — не усложняем.
+    let mainContext;
+    let anyContext;
     for (const e of entries) {
       if (`${e.sessionId}:${e.turnId}` !== key) continue;
       add(acc, e);
       model = e.model;
-      // Шаги субагентов пишутся своей сессией; ход основной сессии здесь один и по порядку.
-      context = e.in || 0;
+      anyContext = e.in || 0;
       if (e.subagent) subagent = e.subagent;
+      else mainContext = e.in || 0;
     }
-    return { window, last: { ...finalize(acc), in: context, model, source, subagent, when } };
+    // Ход целиком из субагентских записей (родительский шаг не дошёл до лога) — показываем
+    // что есть, но помечаем: это не размер контекста основной сессии.
+    const context = mainContext ?? anyContext ?? 0;
+    return {
+      window,
+      last: {
+        ...finalize(acc),
+        in: context,
+        contextFromSubagent: mainContext === undefined && anyContext !== undefined,
+        model,
+        source,
+        subagent,
+        when,
+      },
+    };
   }
   if (window === "by-model" || window === "by-source") {
     const keyFn = window === "by-model" ? (e) => e.model || "?" : (e) => e.source || "?";
@@ -160,7 +185,8 @@ export function formatUsageReport(agg) {
     const sub = l.subagent ? ` (+subagent ${l.subagent})` : "";
     return [
       `Last turn: ${num(l.total)} tokens${sub}`,
-      `context ${num(l.in)} · out ${num(l.out)}${l.cacheRead ? ` · cached ${num(l.cacheRead)}` : ""}`,
+      `context ${l.contextFromSubagent ? "~" : ""}${num(l.in)}${l.contextFromSubagent ? " (subagent step)" : ""}` +
+        ` · out ${num(l.out)}${l.cacheRead ? ` · cached ${num(l.cacheRead)}` : ""}`,
       `${plural(l.steps, "step")} · ${l.model} · ${src(l.source)}`,
     ].join("\n");
   }
