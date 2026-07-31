@@ -34,7 +34,7 @@ import { buildTelegramReplyContext } from "../../scripts/lib/telegram-reply-cont
 import { handleTelegramResetRequest } from "../../scripts/lib/telegram-reset-route.mjs";
 // Eve отдаёт обработчикам событий токен с именем канала впереди, а reset-роут клеит его
 // сам. Сохраняем только channel-local вид, иначе /new сбрасывает несуществующий токен (#110).
-import { channelLocalContinuationToken } from "../../scripts/lib/telegram-continuation-token.mjs";
+import { toChannelLocalToken } from "../../scripts/lib/telegram-continuation-token.mjs";
 import {
   handleAcceptedTelegramWebhook,
   TELEGRAM_ACCEPTANCE_ROUTE,
@@ -538,7 +538,7 @@ async function finishStatus(
       { sessionId },
       {
         status: "idle",
-        continuationToken: channelLocalContinuationToken(channel.continuationToken),
+        continuationToken: toChannelLocalToken(channel.continuationToken),
         sessionId: null,
         turnId: null,
         statusMessageId: null,
@@ -658,7 +658,7 @@ const telegram = telegramChannel({
       const tg = channel.telegram;
       await publishTelegramTurnStarted({
         chatKey: chatKeyOf(tg.chatId, tg.messageThreadId),
-        continuationToken: channelLocalContinuationToken(channel.continuationToken),
+        continuationToken: toChannelLocalToken(channel.continuationToken),
         sessionId: ctx.session.id,
         turnId: data.turnId,
         getStatusImpl: getChatStatus,
@@ -692,7 +692,7 @@ const telegram = telegramChannel({
         { status: "running", sessionId: ctx.session.id },
         {
           status: "idle",
-          continuationToken: channelLocalContinuationToken(channel.continuationToken),
+          continuationToken: toChannelLocalToken(channel.continuationToken),
           turnId: null,
           ingressId: null,
           ingressAt: null,

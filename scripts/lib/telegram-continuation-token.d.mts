@@ -1,1 +1,1 @@
-export function channelLocalContinuationToken(token: string): string;
+export function toChannelLocalToken(token: string): string;

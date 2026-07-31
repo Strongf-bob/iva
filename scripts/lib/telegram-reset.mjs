@@ -1,12 +1,12 @@
 import { telegramContinuationToken } from "eve/channels/telegram";
-import { channelLocalContinuationToken } from "./telegram-continuation-token.mjs";
+import { toChannelLocalToken } from "./telegram-continuation-token.mjs";
 
 function storedToken(status) {
   const token = status?.continuationToken;
   if (typeof token !== "string" || token.length === 0) return null;
   // Статусы, записанные до фикса #110, хранят токен с именем канала впереди.
   // Нормализация на чтении лечит их без ожидания следующей перезаписи.
-  return channelLocalContinuationToken(token);
+  return toChannelLocalToken(token);
 }
 
 /**

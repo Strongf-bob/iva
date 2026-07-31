@@ -4,7 +4,7 @@ import {
   continuationTokenForControl,
   requestTelegramReset,
 } from "./telegram-reset.mjs";
-import { channelLocalContinuationToken } from "./telegram-continuation-token.mjs";
+import { toChannelLocalToken } from "./telegram-continuation-token.mjs";
 import { handleTelegramResetRequest } from "./telegram-reset-route.mjs";
 
 test("stored Eve token wins for groups and forum topics", () => {
@@ -215,14 +215,21 @@ test("namespaced stored token is normalized before reset (#110)", () => {
   );
 });
 
-test("channel-local tokens survive normalization untouched", () => {
-  assert.equal(channelLocalContinuationToken("7091451031::"), "7091451031::");
-  assert.equal(channelLocalContinuationToken("-1001:77:42"), "-1001:77:42");
-  assert.equal(channelLocalContinuationToken("telegram:-1001:77:42"), "-1001:77:42");
-  // Идемпотентность: повторный прогон уже нормализованного токена ничего не режет.
+test("normalization strips the channel prefix and nothing else", () => {
+  // Срезается ровно известное имя канала. Числовую проверку первого сегмента делать
+  // нельзя: у групп chatId отрицательный, и форма токена — контракт eve, не наша догадка.
+  assert.equal(toChannelLocalToken("telegram:7091451031::"), "7091451031::");
+  assert.equal(toChannelLocalToken("telegram:-1001:77:42"), "-1001:77:42");
+
+  // Уже локальные токены не трогаем — в том числе групповые с минусом.
+  assert.equal(toChannelLocalToken("7091451031::"), "7091451031::");
+  assert.equal(toChannelLocalToken("-1001:77:42"), "-1001:77:42");
+  assert.equal(toChannelLocalToken("123::"), "123::");
+  assert.equal(toChannelLocalToken(""), "");
+
+  // Идемпотентность: второй вызов — no-op, поэтому нормализовать можно где угодно.
   assert.equal(
-    channelLocalContinuationToken(channelLocalContinuationToken("telegram:7091451031::")),
+    toChannelLocalToken(toChannelLocalToken("telegram:7091451031::")),
     "7091451031::",
   );
-  assert.equal(channelLocalContinuationToken(""), "");
 });
