@@ -90,38 +90,75 @@ test("parseWindow falls back to the last turn", () => {
   assert.equal(parseWindow("нечто"), "last");
 });
 
-test("subagent steps never masquerade as the main session's context", () => {
-  // Хук пишет шаг субагента с РОДИТЕЛЬСКИМ sessionId, а turnId у субагента свой:
-  // eve нумерует ходы как turn_<sequence> внутри каждой сессии, и у ребёнка счётчик
-  // начинается заново. Сразу после /new оба ключа — "wrun_1:turn_0", и последняя запись
-  // хода оказывается субагентской: контекст показал бы 20 100 вместо 105 537.
+test("a subagent step never masquerades as the main session's context", () => {
+  // Инвариант записи (agent/hooks/usage.ts): субагентский шаг несёт turnId вида
+  // "<ход родителя>#<субагент>". Ход собирается по части до "#", контекст — по записи
+  // без суффикса, поэтому последний (субагентский) шаг контекст не перетирает.
   const entries = [
-    step({ step: 0, in: 104_632, out: 160, total: 104_792 }),
-    step({ step: 1, in: 105_537, out: 300, total: 105_837 }),
-    step({ step: 0, subagent: "planner", in: 19_800, out: 90, total: 19_890 }),
-    step({ step: 1, subagent: "planner", in: 20_100, out: 120, total: 20_220 }),
+    step({ turnId: "turn_5", step: 0, in: 104_632, out: 160, total: 104_792 }),
+    step({ turnId: "turn_5", step: 1, in: 105_537, out: 300, total: 105_837 }),
+    step({ turnId: "turn_5#planner", subagent: "planner", step: 0, in: 19_800, out: 90, total: 19_890 }),
+    step({ turnId: "turn_5#planner", subagent: "planner", step: 1, in: 20_100, out: 120, total: 20_220 }),
   ];
   const { last } = summarize(entries, { window: "last" });
   assert.equal(last.in, 105_537);
   assert.equal(last.contextFromSubagent, false);
   assert.equal(last.subagent, "planner");
-  // Расход по-прежнему считается по всем шагам хода, включая субагентские.
+  // Расход субагента остаётся частью хода: ключ уникален, но принадлежит ходу родителя.
   assert.equal(last.out, 670);
   assert.equal(last.steps, 4);
+  assert.equal(last.total, 250_739);
+});
+
+test("an old turn with the same number can never be picked up (#110 review)", () => {
+  // Ключ sessionId:turnId неуникален сам по себе: turn_0 недельной давности и turn_0
+  // сегодняшней сессии выглядят одинаково. Суффикс субагента снимает и это: последняя
+  // запись хода задаёт базовый ход turn_5, и давний turn_0 в него не попадает.
+  const entries = [
+    step({ ts: "2026-07-24T10:00:00.000Z", turnId: "turn_0", in: 5_000, out: 50, total: 5_050 }),
+    step({ turnId: "turn_5", step: 0, in: 105_537, out: 300, total: 105_837 }),
+    step({ turnId: "turn_5#planner", subagent: "planner", step: 0, in: 19_800, out: 90, total: 19_890 }),
+  ];
+  const { last } = summarize(entries, { window: "last" });
+  assert.equal(last.in, 105_537);
+  assert.equal(last.contextFromSubagent, false);
+  assert.equal(last.steps, 2, "давний одноимённый ход в текущий не входит");
 });
 
 test("main-session step after a subagent still wins the context", () => {
   const entries = [
-    step({ step: 0, subagent: "planner", in: 19_800, out: 90, total: 19_890 }),
-    step({ step: 1, in: 105_537, out: 300, total: 105_837 }),
+    step({ turnId: "turn_5#planner", subagent: "planner", in: 19_800, out: 90, total: 19_890 }),
+    step({ turnId: "turn_5", in: 105_537, out: 300, total: 105_837 }),
   ];
   assert.equal(summarize(entries, { window: "last" }).last.in, 105_537);
 });
 
 test("a turn made only of subagent steps is reported as approximate", () => {
-  const entries = [step({ step: 0, subagent: "planner", in: 19_800, out: 90, total: 19_890 })];
+  const entries = [
+    step({ turnId: "turn_5#planner", subagent: "planner", in: 19_800, out: 90, total: 19_890 }),
+  ];
   const agg = summarize(entries, { window: "last" });
   assert.equal(agg.last.in, 19_800);
   assert.equal(agg.last.contextFromSubagent, true);
   assert.match(formatUsageReport(agg), /context ~19 800 \(subagent step\)/);
+});
+
+test("legacy records without the turn suffix are still filtered by the subagent field", () => {
+  // Защита в глубину: до инварианта субагентский шаг писался с turnId ребёнка. В проде
+  // таких записей нет, но если найдутся — поле subagent всё равно уводит их от контекста.
+  const entries = [
+    step({ turnId: "turn_0", in: 105_537, out: 300, total: 105_837 }),
+    step({ turnId: "turn_0", subagent: "planner", in: 19_800, out: 90, total: 19_890 }),
+  ];
+  assert.equal(summarize(entries, { window: "last" }).last.in, 105_537);
+});
+
+test("a subagent step is not counted as a separate turn in windowed summaries", () => {
+  const entries = [
+    step({ turnId: "turn_5", in: 105_537, out: 300, total: 105_837 }),
+    step({ turnId: "turn_5#planner", subagent: "planner", in: 19_800, out: 90, total: 19_890 }),
+  ];
+  const agg = summarize(entries, { window: "today", now: Date.parse("2026-07-31T12:00:00Z"), tz: "UTC" });
+  assert.equal(agg.totals.turns, 1);
+  assert.equal(agg.totals.steps, 2);
 });

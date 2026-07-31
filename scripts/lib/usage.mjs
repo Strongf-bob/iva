@@ -72,6 +72,11 @@ function inWindow(e, window, now, tz) {
   return true; // lifetime — by-model/by-source
 }
 
+// Ход субагента пишется как "<ход родителя>#<субагент>" (agent/hooks/usage.ts): ключ
+// уникален, но принадлежит ходу родителя — для группировки берём часть до "#".
+const baseTurnId = (turnId) => String(turnId ?? "").split("#")[0];
+const turnKey = (e) => `${e.sessionId}:${baseTurnId(e.turnId)}`;
+
 const blank = () => ({ in: 0, out: 0, cacheRead: 0, cacheWrite: 0, total: 0, steps: 0, turns: new Set() });
 function add(acc, e) {
   acc.in += e.in || 0;
@@ -80,7 +85,7 @@ function add(acc, e) {
   acc.cacheWrite += e.cacheWrite || 0;
   acc.total += e.total || 0;
   acc.steps += 1;
-  acc.turns.add(`${e.sessionId}:${e.turnId}`);
+  acc.turns.add(turnKey(e));
 }
 const finalize = (a) => ({
   in: a.in, out: a.out, cacheRead: a.cacheRead, cacheWrite: a.cacheWrite,
@@ -94,19 +99,18 @@ export function summarize(entries, { window = "last", now = Date.now(), tz } = {
   if (window === "last") {
     if (!entries.length) return { window, last: null };
     const lastE = entries[entries.length - 1];
-    const key = `${lastE.sessionId}:${lastE.turnId}`;
+    const key = turnKey(lastE);
     const acc = blank();
     let model = lastE.model, source = lastE.source, subagent = null, when = lastE.ts;
     // Вход по шагам хода складывать нельзя: каждый шаг заново отправляет весь контекст,
     // и сумма (104 632 + 105 537 = 210 169) выглядит как «контекст вырос вдвое». Решение
     // «пора ли /new» принимают по актуальному размеру контекста — это вход ПОСЛЕДНЕГО
-    // шага хода. Выход суммируется честно: эти токены сгенерированы все.
+    // шага основной сессии. Выход суммируется честно: эти токены сгенерированы все.
     //
-    // Шаги субагента пишутся с РОДИТЕЛЬСКИМ sessionId (agent/hooks/usage.ts), а turnId у них
-    // свой: eve нумерует ходы внутри каждой сессии как turn_<sequence>, и у субагента счётчик
-    // начинается заново. Сразу после /new ключ `<родитель>:turn_0` совпадает у обоих, и без
-    // фильтра «context» показал бы вход субагента (~20k) вместо родительского (~105k).
-    // Поэтому контекст берём из последней записи БЕЗ поля subagent.
+    // Инвариант ключа (agent/hooks/usage.ts): запись субагента несёт turnId вида
+    // "<ход родителя>#<субагент>". Поэтому ход собирается по части до "#" (расход субагента
+    // входит в итог хода), а контекст берётся из записи БЕЗ суффикса — это шаг основной
+    // сессии. Поле subagent проверяем заодно: страховка для записей, сделанных до инварианта.
     //
     // Оговорка про кэш: у провайдеров с anthropic-семантикой cacheRead не входит в inputTokens,
     // и тогда context занижен на величину cacheRead. Оба живых провайдера ивы включают кэш в in,
@@ -114,14 +118,14 @@ export function summarize(entries, { window = "last", now = Date.now(), tz } = {
     let mainContext;
     let anyContext;
     for (const e of entries) {
-      if (`${e.sessionId}:${e.turnId}` !== key) continue;
+      if (turnKey(e) !== key) continue;
       add(acc, e);
       model = e.model;
       anyContext = e.in || 0;
-      if (e.subagent) subagent = e.subagent;
+      if (e.subagent || String(e.turnId ?? "").includes("#")) subagent = e.subagent ?? subagent;
       else mainContext = e.in || 0;
     }
-    // Ход целиком из субагентских записей (родительский шаг не дошёл до лога) — показываем
+    // Ход целиком из субагентских записей (шаг основной сессии не дошёл до лога) — показываем
     // что есть, но помечаем: это не размер контекста основной сессии.
     const context = mainContext ?? anyContext ?? 0;
     return {

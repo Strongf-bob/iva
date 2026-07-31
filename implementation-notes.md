@@ -323,6 +323,31 @@
 - The reaper fixture in `scripts/telegram-poll.test.mjs` deliberately keeps a namespaced
   `continuationToken`: that is what pre-fix versions wrote, and the assertion pins that a
   reset goes out channel-local anyway.
+- A token that does not look channel-local after the strip (`^-?\d+(:|$)`) is reported to the
+  bridge log instead of throwing, so the next change of token shape shows up in `journalctl`
+  rather than repeating #110 silently. `CHANNEL_LOCAL_SHAPE` and `NAMESPACE` describe the same
+  contract — change them together.
+- The bridge logs every reset outcome (`reset for chat <key> -> <status> (token <token>)`) on
+  both the `/new` path and intent reconciliation. `reset` and `no_active_session` deliberately
+  share one user-facing message — the second status is the legitimate idempotent repeat — so
+  the log is where the two are told apart.
+
+## Usage accounting keys (#110)
+
+- One line per model step in `data/usage.jsonl`, grouped into turns. `sessionId:turnId` is not
+  unique on its own: Eve numbers turns per session as `turn_<sequence>`, so a week-old `turn_0`
+  and today's `turn_0` look identical, and an inline subagent restarts the counter while the
+  hook records its steps under the *parent* `sessionId`.
+- The write side removes the ambiguity: a subagent step is logged with the parent's turn id and
+  a suffix, `<parent turnId>#<subagentName>` (`agent/hooks/usage.ts`). The key is unique by
+  construction, and the part before `#` keeps the step attached to the parent turn, so the
+  subagent's spend still counts towards that turn's total.
+- The reader groups by the part before `#` and takes the context from the last record without a
+  suffix — the main session's own step. The `subagent` field is checked too, as defence in depth
+  for records written before this invariant (there are none in production).
+- `contextFromSubagent` marks the honest fallback: a turn made only of subagent records (the
+  outer turn was cancelled or failed) renders as `context ~19 800 (subagent step)` instead of
+  passing a subagent's input off as the chat context.
 - `scripts/replica-smoke.mjs` runs a reset canary against the real framework: seed a marker,
   `session.reset()`, return with the same continuation token and assert the marker is gone.
   It guards Eve's documented contract ("reset retires a session so its continuation starts
