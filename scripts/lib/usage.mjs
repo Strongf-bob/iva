@@ -97,13 +97,20 @@ export function summarize(entries, { window = "last", now = Date.now(), tz } = {
     const key = `${lastE.sessionId}:${lastE.turnId}`;
     const acc = blank();
     let model = lastE.model, source = lastE.source, subagent = null, when = lastE.ts;
+    // Вход по шагам хода складывать нельзя: каждый шаг заново отправляет весь контекст,
+    // и сумма (104 632 + 105 537 = 210 169) выглядит как «контекст вырос вдвое». Решение
+    // «пора ли /new» принимают по актуальному размеру контекста — это вход ПОСЛЕДНЕГО
+    // шага хода. Выход суммируется честно: эти токены сгенерированы все.
+    let context = 0;
     for (const e of entries) {
       if (`${e.sessionId}:${e.turnId}` !== key) continue;
       add(acc, e);
       model = e.model;
+      // Шаги субагентов пишутся своей сессией; ход основной сессии здесь один и по порядку.
+      context = e.in || 0;
       if (e.subagent) subagent = e.subagent;
     }
-    return { window, last: { ...finalize(acc), model, source, subagent, when } };
+    return { window, last: { ...finalize(acc), in: context, model, source, subagent, when } };
   }
   if (window === "by-model" || window === "by-source") {
     const keyFn = window === "by-model" ? (e) => e.model || "?" : (e) => e.source || "?";
@@ -153,7 +160,7 @@ export function formatUsageReport(agg) {
     const sub = l.subagent ? ` (+subagent ${l.subagent})` : "";
     return [
       `Last turn: ${num(l.total)} tokens${sub}`,
-      `in ${num(l.in)} · out ${num(l.out)}${l.cacheRead ? ` · cached ${num(l.cacheRead)}` : ""}`,
+      `context ${num(l.in)} · out ${num(l.out)}${l.cacheRead ? ` · cached ${num(l.cacheRead)}` : ""}`,
       `${plural(l.steps, "step")} · ${l.model} · ${src(l.source)}`,
     ].join("\n");
   }
