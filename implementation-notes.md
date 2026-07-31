@@ -304,13 +304,25 @@
   returns the idempotent `no_active_session` — which the bridge correctly treats as success.
   That is how `/new` reported a cleared context while the session kept its whole history.
 - Everything Iva persists in `data/run-status.d/` and sends to reset must be channel-local.
-  `channelLocalContinuationToken()` strips a leading non-numeric segment (a Telegram chat id
-  is always `-?\d+`) and is applied both where the channel writes status and where the bridge
-  reads it, so statuses poisoned by earlier versions heal on the next `/new` instead of
-  waiting for a rewrite.
+  `toChannelLocalToken()` strips exactly the known `telegram:` prefix — not a guessed leading
+  segment, because group chat ids are negative and the token shape is Eve's contract, not our
+  heuristic. It is idempotent, so it can be applied at every boundary:
+  - on write — `agent/channels/telegram.ts` (turn start, turn finish, `session.waiting`),
+    `scripts/lib/telegram-turn-start.mjs` (both the claim and the adoption path) and the
+    reset tombstone in `completeScopedResetState`;
+  - on read — `continuationTokenForControl`, the stale-run reaper (which reads
+    `status.continuationToken` directly) and `reconcileScopedResetIntents` (a durable intent
+    may have been written by an older version).
+  Statuses poisoned by earlier versions therefore heal on the next turn or `/new` instead of
+  needing a migration.
 - On an Eve bump: re-check what `channel.continuationToken` yields in event handlers. If Eve
   ever hands out the channel-local token there, the helper stays correct (it is idempotent),
-  but `scripts/lib/telegram-reset.test.mjs` is the place that pins the expectation.
+  but `scripts/lib/telegram-reset.test.mjs` is the place that pins the expectation. If the
+  channel name ever changes, `NAMESPACE` in `scripts/lib/telegram-continuation-token.mjs`
+  must change with it.
+- The reaper fixture in `scripts/telegram-poll.test.mjs` deliberately keeps a namespaced
+  `continuationToken`: that is what pre-fix versions wrote, and the assertion pins that a
+  reset goes out channel-local anyway.
 - `scripts/replica-smoke.mjs` runs a reset canary against the real framework: seed a marker,
   `session.reset()`, return with the same continuation token and assert the marker is gone.
   It guards Eve's documented contract ("reset retires a session so its continuation starts
