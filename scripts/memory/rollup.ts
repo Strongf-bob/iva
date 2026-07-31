@@ -234,19 +234,33 @@ try {
 } catch (e) {
   // The parked session may be gone (iva reset quarantined the store) or hung on resume —
   // fall back to a fresh one once instead of failing the night.
-  if (!saved) throw e;
   const hung = (e as { code?: string }).code === "ROLLUP_TURN_TIMEOUT";
+  // Выход наверх роняет процесс и отпускает .memory.lock, а зависший ход продолжает писать
+  // в vault — уже без всякой защиты от параллельного роллапа. Гасим и на терминальных путях.
+  if (!saved) {
+    if (hung) await cancelTurnQuietly(session);
+    throw e;
+  }
   console.error(
     `rollup ${period}: parked session ${hung ? "hung" : "unusable"} (${(e as Error).message}) — starting fresh`,
   );
   logAbandoned(saved.state, hung ? "resume-timeout" : "unusable-cursor");
   // «Медленный», а не мёртвый ход продолжил бы писать в vault параллельно с retry — гасим его
   // до создания второго писателя (оба идут под одним флоком, конфликт не поймать иначе).
-  await cancelTurnQuietly(session);
+  if (!(await cancelTurnQuietly(session))) {
+    // Отмена — best-effort: у заклинившей сессии она сама может не подтвердиться. Retry всё
+    // равно делаем (иначе ночь без роллапа), но след для разбора полётов оставляем.
+    console.error(`rollup ${period}: could not confirm cancellation of the timed-out turn — retrying anyway`);
+  }
   session = client.session();
   sessionCreatedAt = Date.now();
   // Ровно одна попытка: второй сбой уходит наверх и роняет юнит с ненулевым кодом.
-  result = await guardedTurn(session, buildPrompt(period, today), "main-turn");
+  try {
+    result = await guardedTurn(session, buildPrompt(period, today), "main-turn");
+  } catch (retryError) {
+    if ((retryError as { code?: string }).code === "ROLLUP_TURN_TIMEOUT") await cancelTurnQuietly(session);
+    throw retryError;
+  }
 }
 saveSession(session.state, sessionCreatedAt);
 
