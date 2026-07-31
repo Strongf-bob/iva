@@ -594,14 +594,32 @@ const requestResetFromIntent = ({ continuationToken }) =>
 export async function releaseScopedContinuation(
   chatKey,
   continuationToken,
-  { requestResetImpl = requestResetFromIntent } = {},
+  { requestResetImpl = requestResetFromIntent, logImpl = log } = {},
 ) {
+  // Наружу уходит только channel-local токен: reset-роут клеит имя канала сам (#110).
+  const token = toChannelLocalToken(continuationToken);
+  let result;
   try {
-    // Наружу уходит только channel-local токен: reset-роут клеит имя канала сам (#110).
-    await requestResetImpl({ chatKey, continuationToken: toChannelLocalToken(continuationToken) });
+    result = await requestResetImpl({ chatKey, continuationToken: token });
   } catch (error) {
     error.resetPhase = "remote";
     throw error;
+  }
+  // Ответ no_active_session идемпотентен и для реплея апдейта нормален, но именно он
+  // маскировал #110: сброс «удавался», ничего не сбрасывая. В журнале исход виден.
+  logResetOutcome(logImpl, chatKey, token, result);
+  return result;
+}
+
+function logResetOutcome(logImpl, chatKey, continuationToken, result) {
+  try {
+    // chatKey сам оканчивается двоеточием (chat:topic) — отделяем явным словом, иначе
+    // строка читается как «reset 7091451031:: …» и ключ путается с токеном.
+    logImpl(
+      `reset for chat ${chatKey} -> ${result?.status ?? "unknown"} (token ${continuationToken})`,
+    );
+  } catch {
+    // Журналирование не должно ронять сброс.
   }
 }
 
@@ -614,6 +632,7 @@ export async function performScopedReset(
     requestResetImpl = requestResetFromIntent,
     completeStateImpl = completeScopedResetState,
     clearIntentImpl = clearPrivateResetIntent,
+    logImpl = log,
   } = {},
 ) {
   const intent = { chatKey, continuationToken };
@@ -626,7 +645,7 @@ export async function performScopedReset(
     }
   }
   try {
-    await releaseScopedContinuation(chatKey, continuationToken, { requestResetImpl });
+    await releaseScopedContinuation(chatKey, continuationToken, { requestResetImpl, logImpl });
   } catch (error) {
     throw error;
   }
@@ -651,12 +670,14 @@ export async function reconcileScopedResetIntents({
   requestResetImpl = requestResetFromIntent,
   completeStateImpl = completeScopedResetState,
   clearIntentImpl = clearPrivateResetIntent,
+  logImpl = log,
 } = {}) {
   const intents = await loadIntentsImpl();
   for (const intent of intents) {
     // Интент мог быть записан версией до фикса #110 — с именем канала в токене.
     const continuationToken = toChannelLocalToken(intent.continuationToken);
-    await requestResetImpl({ ...intent, continuationToken });
+    const result = await requestResetImpl({ ...intent, continuationToken });
+    logResetOutcome(logImpl, intent.chatKey, continuationToken, result);
     await completeStateImpl(intent.chatKey, continuationToken, { clearQueue: true });
     await clearIntentImpl(intent.chatKey);
   }
