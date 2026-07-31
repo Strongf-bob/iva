@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { Client, type SessionState } from "eve/client";
 import { CORE_CAP } from "../lib/core-cap.mjs";
 import { notificationChat } from "../lib/notification-chat.mjs";
+import { DEFAULT_TURN_TIMEOUT_MS, withTurnTimeout } from "../lib/rollup-turn.mjs";
 import { sendTelegramHtml } from "../lib/telegram-send.mjs";
 
 type Period = "daily" | "weekly" | "monthly" | "yearly";
@@ -196,24 +197,39 @@ function logAbandoned(state: SessionState, reason: string): void {
   }
 }
 
+// Ход целиком (send + result) под таймаутом: резюм припаркованной сессии после рестарта
+// сервера умеет виснуть молча (#104), и без гонки с таймером ночь просто не заканчивается.
+const TURN_TIMEOUT_MS = Number(process.env.ROLLUP_TURN_TIMEOUT_MS ?? DEFAULT_TURN_TIMEOUT_MS);
+const guardedTurn = (session: ReturnType<typeof client.session>, prompt: string, label: string) =>
+  withTurnTimeout(
+    async () => {
+      const response = await session.send(prompt);
+      return await response.result();
+    },
+    { timeoutMs: TURN_TIMEOUT_MS, label },
+  );
+
 const today = localDate();
 const saved = loadSession();
 let sessionCreatedAt = saved?.createdAt ?? Date.now();
 let session = saved ? client.session(saved.state) : client.session();
-let response;
+let result;
 try {
-  response = await session.send(buildPrompt(period, today));
+  result = await guardedTurn(session, buildPrompt(period, today), "main-turn");
 } catch (e) {
-  // The parked session may be gone (iva reset quarantined the store) — fall back to a
-  // fresh one once instead of failing the night.
+  // The parked session may be gone (iva reset quarantined the store) or hung on resume —
+  // fall back to a fresh one once instead of failing the night.
   if (!saved) throw e;
-  console.error(`rollup ${period}: parked session unusable (${(e as Error).message}) — starting fresh`);
-  logAbandoned(saved.state, "unusable-cursor");
+  const hung = (e as { code?: string }).code === "ROLLUP_TURN_TIMEOUT";
+  console.error(
+    `rollup ${period}: parked session ${hung ? "hung" : "unusable"} (${(e as Error).message}) — starting fresh`,
+  );
+  logAbandoned(saved.state, hung ? "resume-timeout" : "unusable-cursor");
   session = client.session();
   sessionCreatedAt = Date.now();
-  response = await session.send(buildPrompt(period, today));
+  // Ровно одна попытка: второй сбой уходит наверх и роняет юнит с ненулевым кодом.
+  result = await guardedTurn(session, buildPrompt(period, today), "main-turn");
 }
-const result = await response.result();
 saveSession(session.state, sessionCreatedAt);
 
 // An interactive turn ends with status "waiting" (the session is ready for the next message),
@@ -234,13 +250,20 @@ if (period === "daily") {
     console.error(
       `rollup daily: CORE.md still exceeds the cap (${oldLength}/${CORE_CAP}); requesting one correction`,
     );
-    const correction = await session.send(
-      `Re-open ${corePath}: it is ${oldLength} characters, above the hard ${CORE_CAP}-character cap. ` +
-        "Compress it now per the core-format rule. Preserve every heading and the Pointers/Указатели " +
-        "section; remove stale Preferences/Предпочтения first. Do not return until the file itself is within the cap.",
-    );
-    await correction.result();
-    saveSession(session.state, sessionCreatedAt);
+    // Таймаут здесь не заводит новую сессию: это просто «коррекция не удалась» — файл
+    // перечитывается как есть, и дальше срабатывает существующая проверка капа.
+    try {
+      await guardedTurn(
+        session,
+        `Re-open ${corePath}: it is ${oldLength} characters, above the hard ${CORE_CAP}-character cap. ` +
+          "Compress it now per the core-format rule. Preserve every heading and the Pointers/Указатели " +
+          "section; remove stale Preferences/Предпочтения first. Do not return until the file itself is within the cap.",
+        "core-correction",
+      );
+      saveSession(session.state, sessionCreatedAt);
+    } catch (e) {
+      console.error(`rollup daily: CORE.md correction turn failed (${(e as Error).message})`);
+    }
     core = readFileSync(corePath, "utf8");
     if (core.length > CORE_CAP) {
       console.error(
@@ -270,12 +293,19 @@ if (POST_TO_TELEGRAM[period]) {
     // session so it formats the next report more simply (one turn, no resend).
     // ВАЖНО: дождаться конца хода и пересохранить курсор — иначе следующий ночной send
     // поедет со старым continuation-токеном недочитанного хода.
-    const fb = await session.send(
-      `The last report failed Telegram parse_mode=HTML (${r.error}) and went out as flat text. ` +
-        "Next time format it more simply: **bold**, `code`, lists — no raw HTML.",
-    );
-    await fb.result();
-    saveSession(session.state, sessionCreatedAt);
+    // Best-effort ход: отчёт уже доставлен, поэтому сбой или таймаут здесь только логируем —
+    // ронять из-за подсказки о форматировании всю ночь незачем.
+    try {
+      await guardedTurn(
+        session,
+        `The last report failed Telegram parse_mode=HTML (${r.error}) and went out as flat text. ` +
+          "Next time format it more simply: **bold**, `code`, lists — no raw HTML.",
+        "format-feedback",
+      );
+      saveSession(session.state, sessionCreatedAt);
+    } catch (e) {
+      console.error(`rollup ${period}: format-feedback turn failed (${(e as Error).message})`);
+    }
   }
   if (!r.ok) {
     console.error(`rollup ${period}: Telegram send failed:`, r.error);
