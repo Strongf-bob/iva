@@ -6,13 +6,13 @@
 //
 // Requires: a running agent (eve start) and a vault to write into. The processing rules
 // (scripts/memory/instructions/) ship with the repo. Date is in ASSISTANT_TIMEZONE.
-import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client, type SessionState } from "eve/client";
 import { CORE_CAP } from "../lib/core-cap.mjs";
 import { notificationChat } from "../lib/notification-chat.mjs";
-import { resolveTurnTimeoutMs, withTurnTimeout } from "../lib/rollup-turn.mjs";
+import { cancelTurnQuietly, resolveTurnTimeoutMs, withTurnTimeout } from "../lib/rollup-turn.mjs";
 import { sendTelegramHtml } from "../lib/telegram-send.mjs";
 
 type Period = "daily" | "weekly" | "monthly" | "yearly";
@@ -211,6 +211,19 @@ const guardedTurn = (session: ReturnType<typeof client.session>, prompt: string,
     { timeoutMs: TURN_TIMEOUT_MS, label },
   );
 
+// Зависший ход на сервере не останавливается сам, а его курсор в SESSION_FILE описывает
+// недочитанный ход: следующая ночь резюмнулась бы об него и повисла снова. Поэтому ход
+// гасим, сессию помечаем брошенной и выбрасываем курсор — завтра стартуем со свежей.
+async function dropHungSession(label: string): Promise<void> {
+  await cancelTurnQuietly(session);
+  logAbandoned(session.state, `${label}-timeout`);
+  try {
+    rmSync(SESSION_FILE, { force: true });
+  } catch {
+    /* курсор — кэш, его потеря не должна ронять ночь */
+  }
+}
+
 const today = localDate();
 const saved = loadSession();
 let sessionCreatedAt = saved?.createdAt ?? Date.now();
@@ -227,6 +240,9 @@ try {
     `rollup ${period}: parked session ${hung ? "hung" : "unusable"} (${(e as Error).message}) — starting fresh`,
   );
   logAbandoned(saved.state, hung ? "resume-timeout" : "unusable-cursor");
+  // «Медленный», а не мёртвый ход продолжил бы писать в vault параллельно с retry — гасим его
+  // до создания второго писателя (оба идут под одним флоком, конфликт не поймать иначе).
+  await cancelTurnQuietly(session);
   session = client.session();
   sessionCreatedAt = Date.now();
   // Ровно одна попытка: второй сбой уходит наверх и роняет юнит с ненулевым кодом.
@@ -265,6 +281,7 @@ if (period === "daily") {
       saveSession(session.state, sessionCreatedAt);
     } catch (e) {
       console.error(`rollup daily: CORE.md correction turn failed (${(e as Error).message})`);
+      if ((e as { code?: string }).code === "ROLLUP_TURN_TIMEOUT") await dropHungSession("core-correction");
     }
     core = readFileSync(corePath, "utf8");
     if (core.length > CORE_CAP) {
@@ -307,6 +324,7 @@ if (POST_TO_TELEGRAM[period]) {
       saveSession(session.state, sessionCreatedAt);
     } catch (e) {
       console.error(`rollup ${period}: format-feedback turn failed (${(e as Error).message})`);
+      if ((e as { code?: string }).code === "ROLLUP_TURN_TIMEOUT") await dropHungSession("format-feedback");
     }
   }
   if (!r.ok) {
