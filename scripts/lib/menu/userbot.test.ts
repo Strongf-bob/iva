@@ -5,7 +5,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runSetupCommand } from "./userbot.ts";
+import { runSetupCommand, userbotAllowed } from "./userbot.ts";
 import userbot from "./userbot.ts";
 
 type ExecCallback = (
@@ -14,6 +14,13 @@ type ExecCallback = (
   stderr?: string,
 ) => void;
 type Rendered = { text: string; rows: unknown };
+
+test("multi-user userbot capability is owner-only", () => {
+  assert.equal(userbotAllowed(true, "owner"), true);
+  assert.equal(userbotAllowed(true, "user"), false);
+  assert.equal(userbotAllowed(true, undefined), false);
+  assert.equal(userbotAllowed(false, undefined), true);
+});
 
 test("userbot menu setup rejects exit 1 with a redacted error", async () => {
   const secret = "setup-stderr-secret";

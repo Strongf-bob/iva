@@ -18,6 +18,7 @@ import {
   gwsBin,
   childEnv,
   AUTH_SERVICES,
+  authSessionBelongsToUser,
 } from "./gws-auth.ts";
 
 const SID = "gws";
@@ -28,7 +29,12 @@ const CACHE_TTL_MS = 60_000;
 const SCOPES = AUTH_SERVICES.split(",").join(", ");
 type AuthStatus = "missing" | "unauth" | "ok";
 type Button = { text: string; callback_data: string };
-type GwsAuth = { pid?: number; port?: number; logPath?: string };
+type GwsAuth = {
+  pid?: number;
+  port?: number;
+  logPath?: string;
+  userId?: string;
+};
 type AwaitText = {
   kind: string;
   secret: boolean;
@@ -37,6 +43,7 @@ type AwaitText = {
 };
 type MenuState = {
   chatId: number;
+  userId?: string;
   awaitText: AwaitText | null;
   gwsAuth?: GwsAuth | null;
 };
@@ -271,6 +278,7 @@ export default {
         pid: challenge.pid,
         port: challenge.port,
         logPath: challenge.logPath,
+        userId: String(st.userId ?? st.chatId),
       };
       // secret:true — движок удалит сообщение с одноразовым code из чата после приёма.
       st.awaitText = { kind: "gwsauthcode", secret: true };
@@ -387,7 +395,11 @@ export default {
       const T = ctx.tr;
       const auth = st.gwsAuth;
       const cancelRow = [[ctx.btn(T("Cancel", "Отмена"), `iva_menu:${SID}:o`)]];
-      if (!auth?.port) {
+      const stateUserId = String(st.userId ?? st.chatId);
+      if (
+        !auth?.port ||
+        !authSessionBelongsToUser(auth.userId, stateUserId)
+      ) {
         st.awaitText = null;
         return ctx.flows.screen(
           st,

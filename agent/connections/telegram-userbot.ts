@@ -10,15 +10,23 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const port = process.env.TELEGRAM_MCP_PORT ?? "8724";
+const ownerWorker =
+  process.env.ASSISTANT_MULTI_USER !== "1" ||
+  process.env.ASSISTANT_ROLE === "owner";
 
 // Токен пишет `iva userbot setup` в data/telegram-userbot.token (тот же файл читает прокси).
 // Читаем при КАЖДОМ вызове (getToken), а не на старте: iva не нужно перезапускать после
 // того, как агент поднял прокси и создал токен — Eve и так ретраит соединение.
 function proxyToken(): string {
+  if (!ownerWorker) return "";
   if (process.env.TELEGRAM_MCP_TOKEN) return process.env.TELEGRAM_MCP_TOKEN;
   try {
     return readFileSync(
-      join(process.cwd(), "data", "telegram-userbot.token"),
+      join(
+        process.env.ASSISTANT_APP_DIR || process.cwd(),
+        "data",
+        "telegram-userbot.token",
+      ),
       "utf8",
     ).trim();
   } catch {
@@ -27,7 +35,9 @@ function proxyToken(): string {
 }
 
 export default defineMcpClientConnection({
-  url: `http://127.0.0.1:${port}/mcp`,
+  url: ownerWorker
+    ? `http://127.0.0.1:${port}/mcp`
+    : "http://127.0.0.1:1/disabled-userbot",
   description:
     "Личный Telegram владельца (userbot, НЕ бот-аккаунт): читать диалоги/историю/поиск " +
     "и отправлять сообщения от его имени. Требует подключения аккаунта через QR " +

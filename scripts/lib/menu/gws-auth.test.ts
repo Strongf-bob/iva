@@ -1,7 +1,17 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registration promises. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseAuthChallenge, extractCallbackQuery } from "./gws-auth.ts";
+import {
+  authSessionBelongsToUser,
+  parseAuthChallenge,
+  extractCallbackQuery,
+} from "./gws-auth.ts";
+
+test("OAuth relay state is bound to the fixed personal worker", () => {
+  assert.equal(authSessionBelongsToUser("101", "101", "101"), true);
+  assert.equal(authSessionBelongsToUser("101", "202", "202"), false);
+  assert.equal(authSessionBelongsToUser("101", "101", "202"), false);
+});
 
 test("parseAuthChallenge extracts the Google URL and loopback port", () => {
   const log = [

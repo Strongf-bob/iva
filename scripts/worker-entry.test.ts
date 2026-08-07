@@ -50,7 +50,9 @@ void test("bootstrap fixes personal cwd and filters the child environment", asyn
   assert.equal(prepared.env.ASSISTANT_USER_ID, "123");
   assert.equal(prepared.env.ASSISTANT_MULTI_USER, "1");
   assert.equal(prepared.env.ASSISTANT_USER_ROLE, "owner");
+  assert.equal(prepared.env.ASSISTANT_ROLE, "owner");
   assert.equal(prepared.env.IVA_USER_CONTROL_DIR, paths.controlDir);
+  assert.equal(prepared.env.ASSISTANT_APP_DIR, paths.appRoot);
   assert.equal(prepared.env.ASSISTANT_DATA_DIR, join(prepared.cwd, "data"));
   assert.equal(
     prepared.env.ASSISTANT_VAULT_DIR,

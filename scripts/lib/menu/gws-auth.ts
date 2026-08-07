@@ -32,6 +32,17 @@ export interface RelayResult {
   error?: string;
 }
 
+export function authSessionBelongsToUser(
+  authUserId: string | undefined,
+  stateUserId: string,
+  workerUserId = process.env.ASSISTANT_USER_ID,
+): boolean {
+  return (
+    authUserId === stateUserId &&
+    (workerUserId === undefined || workerUserId === stateUserId)
+  );
+}
+
 interface StartAuthOptions {
   services?: string;
   timeoutMs?: number;

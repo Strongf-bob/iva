@@ -78,10 +78,27 @@ function fixture(
       calls.push(`quarantine:${layout.root}:${userId}`);
       return `/srv/iva/data/quarantine/user-${userId}-stamp`;
     },
+    migrateOwner: (explicitOwner) => {
+      calls.push(`migrate-owner:${explicitOwner ?? "auto"}`);
+      return Promise.resolve(record());
+    },
     print: (line) => calls.push(`print:${line}`),
     ...overrides,
   };
 }
+
+void test("migrate-owner switches the verified owner before starting its worker", async () => {
+  const calls: string[] = [];
+  const command = createUsersCommands(fixture(calls));
+
+  await command.cmdUsers(["migrate-owner", "123"]);
+
+  assert.deepEqual(calls, [
+    "migrate-owner:123",
+    "worker-start:123",
+    "print:Migrated legacy owner 123; rollback backup retained",
+  ]);
+});
 
 void test("add creates a blocked candidate and activates only after layout health", async () => {
   const calls: string[] = [];

@@ -1,4 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, renameSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import {
@@ -20,6 +21,10 @@ import {
   type UserLayout,
 } from "../lib/user-layout.ts";
 import type { createCliRuntime } from "./runtime.ts";
+import {
+  applyOwnerMigration,
+  planOwnerMigration,
+} from "../lib/user-migration.ts";
 
 export type UsersCommandDependencies = {
   readonly appRoot: string;
@@ -38,12 +43,13 @@ export type UsersCommandDependencies = {
   readonly stopWorker: (user: UserRecord) => Promise<void>;
   readonly workerStatus?: (user: UserRecord) => Promise<string>;
   readonly quarantineUser: (layout: UserLayout, id: TelegramUserId) => string;
+  readonly migrateOwner?: (explicitOwner?: string) => Promise<UserRecord>;
   readonly print: (line: string) => void;
 };
 
 type CliRuntime = Pick<
   ReturnType<typeof createCliRuntime>,
-  "ROOT" | "dataDirAbs" | "ok"
+  "ROOT" | "dataDirAbs" | "ok" | "readEnv"
 >;
 type WorkerLifecycle = {
   startWorker: (user: UserRecord) => void;
@@ -131,6 +137,7 @@ export function createUsersCommandDependencies(
   lifecycle?: WorkerLifecycle,
 ): UsersCommandDependencies {
   const dataDir = runtime.dataDirAbs();
+  const env = runtime.readEnv();
   const quarantineDir = join(dataDir, "quarantine");
   return {
     appRoot: runtime.ROOT,
@@ -158,6 +165,25 @@ export function createUsersCommandDependencies(
       Promise.resolve(lifecycle?.workerStatus(user) ?? "not-managed"),
     quarantineUser: (layout, id) =>
       defaultQuarantine(quarantineDir, new Date(), layout, id),
+    migrateOwner: async (explicitOwner) => {
+      const plan = await planOwnerMigration({
+        appRoot: runtime.ROOT,
+        dataDir,
+        controlDir: join(dataDir, "control"),
+        usersDir: join(dataDir, "users"),
+        vaultDir: env.ASSISTANT_VAULT_DIR?.startsWith("/")
+          ? env.ASSISTANT_VAULT_DIR
+          : join(runtime.ROOT, env.ASSISTANT_VAULT_DIR || "vault"),
+        homeDir: homedir(),
+        allowedUserIds: (env.TELEGRAM_ALLOWED_USER_IDS || "")
+          .split(/[,\s]+/u)
+          .filter(Boolean),
+        ownerId: explicitOwner,
+      });
+      await applyOwnerMigration(plan);
+      const registry = await defaultReadUserRegistry(join(dataDir, "control"));
+      return registry.users.find((user) => user.id === plan.ownerId)!;
+    },
     print: runtime.ok,
   };
 }
@@ -257,6 +283,15 @@ export function createUsersCommands(dependencies: UsersCommandDependencies) {
     if (verb === "list") {
       requireNoTail(args.slice(1));
       return listUsers();
+    }
+    if (verb === "migrate-owner") {
+      requireNoTail(tail);
+      if (!deps.migrateOwner)
+        throw new Error("owner migration is unavailable");
+      const owner = await deps.migrateOwner(rawId);
+      await deps.startWorker(owner);
+      deps.print(`Migrated legacy owner ${owner.id}; rollback backup retained`);
+      return;
     }
     const id = requireId(rawId);
     if (verb === "add") return add(id, tail);

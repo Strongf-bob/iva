@@ -52,6 +52,7 @@ const SHARED_ENV_KEYS = new Set([
   "TAVILY_API_KEY",
   "TELEGRAM_BOT_TOKEN",
   "TELEGRAM_BOT_USERNAME",
+  "TELEGRAM_MCP_PORT",
   "TELEGRAM_WEBHOOK_SECRET_TOKEN",
   "THINKING_EFFORT",
 ]);
@@ -91,6 +92,7 @@ function filteredEnvironment(
   user: UserRecord,
   layout: UserLayout,
   controlDir: string,
+  appRoot: string,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const key of SHARED_ENV_KEYS) {
@@ -111,8 +113,10 @@ function filteredEnvironment(
     ASSISTANT_MULTI_USER: "1",
     ASSISTANT_USER_ID: user.id,
     ASSISTANT_USER_ROLE: user.role,
+    ASSISTANT_ROLE: user.role,
     IVA_USER_CONTROL_DIR: controlDir,
     ASSISTANT_PERSONAL_ROOT: layout.root,
+    ASSISTANT_APP_DIR: appRoot,
     ASSISTANT_RUNTIME_ROOT: layout.runtime,
     ASSISTANT_DATA_DIR: layout.data,
     ASSISTANT_VAULT_DIR: layout.vault,
@@ -149,6 +153,7 @@ export async function prepareWorker(
     user,
     layout,
     resolve(input.controlDir),
+    appRoot,
   );
   return {
     user,
