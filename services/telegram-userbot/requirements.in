@@ -7,3 +7,6 @@ starlette>=0.37
 # Pure-python PNG writer for QR rendering (no native deps; lighter than pillow).
 pypng>=0.20
 httpx>=0.28  # already transitive via telegram-mcp; pinned here for the bot sendPhoto call
+# Telethon's SOCKS support is optional upstream; production needs it when direct
+# MTProto egress is blocked and the userbot is routed through the local VPN.
+python-socks>=2.7,<3
