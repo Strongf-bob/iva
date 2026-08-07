@@ -24,12 +24,14 @@
 ### Task 1: Lock the production routing contract
 
 **Files:**
+
 - Modify: `scripts/production/release-contract.test.ts`
 - Modify: `deploy/container/runtime.env.example`
 - Modify: `docs/production-deployment-security-review.md`
 - Modify: `docs/superpowers/specs/2026-08-07-opencode-deepseek-routing-design.md`
 
 **Interfaces:**
+
 - Consumes: existing `MODEL_PROVIDER`, `OPENCODE_MODEL`, `OPENCODE_CONTEXT_WINDOW`, `THINKING_EFFORT`, and `providerConfig.visionModel` configuration.
 - Produces: a checked-in non-secret production configuration contract and current security status.
 
@@ -105,9 +107,11 @@ git commit -m "feat(models): route production through DeepSeek Flash" -m "Set th
 ### Task 2: Validate and install the production credential
 
 **Files:**
+
 - Modify on server only: `/home/strongf/iva-runtime/.env`
 
 **Interfaces:**
+
 - Consumes: the OpenCode Go key supplied in the current owner task and the model IDs from Task 1.
 - Produces: an atomic, mode-`0600` server configuration with the five production model variables.
 
@@ -148,10 +152,12 @@ Check mode `600`, exactly one occurrence of each required key, expected non-secr
 ### Task 3: Publish, deploy, and verify real replies
 
 **Files:**
+
 - Modify after postflight: `docs/production-deployment-security-review.md`
 - Modify after postflight: `docs/superpowers/specs/2026-08-07-opencode-deepseek-routing-design.md`
 
 **Interfaces:**
+
 - Consumes: committed routing contract and validated server configuration.
 - Produces: protected-main release, immutable production image, verified Telegram text/image behavior, and fresh audit evidence.
 
@@ -204,4 +210,3 @@ Verify:
 - [ ] **Step 7: Finalize evidence and commit if documentation changed**
 
 Set the design status to implemented and update the security review with run IDs, merge SHA, model/vision smoke results, SHAD statuses, unknowns, and residual risk. Commit with a multi-line Conventional Commit message, repeat focused verification, and publish through the same protected-main path if the evidence update changes tracked files.
-
