@@ -7,7 +7,7 @@ import type { createCliSystemd } from "./systemd.ts";
 type Runtime = ReturnType<typeof createCliRuntime>;
 type SystemdLifecycle = Pick<
   ReturnType<typeof createCliSystemd>,
-  "activateUnits" | "restartServices"
+  "activateUnits" | "restartServices" | "managedServices"
 >;
 type Dependencies = NonNullable<Parameters<typeof createServiceCommands>[2]>;
 
@@ -65,10 +65,38 @@ function lifecycleFixture(
   {
     activateUnits = () => events.push("lifecycle.activateUnits"),
     restartServices = () => events.push("lifecycle.restartServices"),
+    managedServices = () => ["iva.service", "iva-telegram-poll.service"],
   }: Partial<SystemdLifecycle> = {},
 ): SystemdLifecycle {
-  return { activateUnits, restartServices };
+  return { activateUnits, restartServices, managedServices };
 }
+
+void test("multi-user status and stop operate on the gateway and exact workers", () => {
+  const events: string[] = [];
+  const managedServices = () => [
+    "iva-telegram-poll.service",
+    "iva-worker-123.service",
+    "iva-worker-456.service",
+  ];
+  const commands = createServiceCommands(
+    runtimeFixture(events),
+    lifecycleFixture(events, { managedServices }),
+  );
+
+  commands.cmdStatus();
+  commands.cmdStop();
+
+  assert.ok(
+    events.includes(
+      "runtime.run:systemctl:--user|status|--no-pager|-n|5|iva-telegram-poll.service|iva-worker-123.service|iva-worker-456.service",
+    ),
+  );
+  assert.ok(
+    events.includes(
+      "systemd.stop:iva-telegram-poll.service,iva-worker-123.service,iva-worker-456.service",
+    ),
+  );
+});
 
 function dependencyFixture(
   events: string[],

@@ -17,6 +17,13 @@ import { writeEnvAtomicSync } from "../lib/env-file.ts";
 import { LEGACY_MEMORY_UNITS } from "../lib/schedule-migration.ts";
 import { cleanupSystemdUnits } from "../lib/systemd-control.ts";
 import { validateTimeZone } from "../lib/timezone.ts";
+import { readUserRegistrySync, type UserRecord } from "../lib/user-registry.ts";
+import { resolveUserLayout, verifyUserLayout } from "../lib/user-layout.ts";
+import {
+  desiredWorkerUnits,
+  workerServiceName,
+  type WorkerUnitRuntime,
+} from "../lib/worker-units.ts";
 import type { createCliRuntime } from "./runtime.ts";
 
 type CliRuntime = ReturnType<typeof createCliRuntime>;
@@ -88,6 +95,54 @@ export function createCliSystemd(runtime: CliRuntime) {
     }
     warn(`invalid ASSISTANT_TIMEZONE=${JSON.stringify(raw)}; using UTC`);
     return "UTC";
+  }
+
+  function workerRuntime(): WorkerUnitRuntime {
+    const dataDir = dataDirAbs();
+    return {
+      appRoot: ROOT,
+      nodePath: NODE,
+      envFile: ENV_PATH,
+      controlDir: join(dataDir, "control"),
+      dataDir,
+      usersDir: join(dataDir, "users"),
+      timezone: configuredTimezone(),
+    };
+  }
+
+  function workerUnits(): string[] {
+    const runtime = workerRuntime();
+    const registry = readUserRegistrySync(runtime.controlDir);
+    return registry.users
+      .filter((user) => user.status === "active")
+      .map((user) => workerServiceName(user.id));
+  }
+
+  function managedServices(): string[] {
+    const workers = workerUnits();
+    return workers.length
+      ? ["iva-telegram-poll.service", ...workers]
+      : [...SERVICES];
+  }
+
+  function removeStaleWorkerUnits(desired: ReadonlySet<string>): void {
+    if (!existsSync(UNIT_DIR)) return;
+    const stale = readdirSync(UNIT_DIR).filter(
+      (file) =>
+        /^iva-worker-[1-9][0-9]*\.service$/u.test(file) && !desired.has(file),
+    );
+    if (!stale.length) return;
+    if (!hasSystemd()) {
+      for (const unit of stale) rmSync(join(UNIT_DIR, unit));
+      return;
+    }
+    cleanupSystemdUnits({
+      units: stale,
+      disable: (unit) => systemd.disableNow([unit]),
+      remove: (unit) => rmSync(join(UNIT_DIR, unit)),
+      reload: () => systemd.daemonReload(),
+      reset: () => systemd.resetFailed(),
+    });
   }
 
   // ── systemd units: single source of truth ───────────────────────────────
@@ -193,6 +248,21 @@ export function createCliSystemd(runtime: CliRuntime) {
       writeFileSync(join(UNIT_DIR, file), template);
       written.push(file);
     }
+    const runtime = workerRuntime();
+    const registry = readUserRegistrySync(runtime.controlDir);
+    const workerBodies = desiredWorkerUnits(registry, runtime);
+    for (const user of registry.users) {
+      if (user.status !== "active") continue;
+      verifyUserLayout(
+        resolveUserLayout(runtime.usersDir, user.id),
+        runtime.appRoot,
+      );
+    }
+    for (const [unit, body] of workerBodies) {
+      writeFileSync(join(UNIT_DIR, unit), body);
+      written.push(unit);
+    }
+    removeStaleWorkerUnits(new Set(workerBodies.keys()));
     if (hasSystemd()) systemd.daemonReload();
     removeLegacyMemoryUnits();
     return written;
@@ -300,7 +370,7 @@ export function createCliSystemd(runtime: CliRuntime) {
   }
 
   function activateUnits(): void {
-    systemd.activate([...SERVICES, ...TIMERS]);
+    systemd.activate([...managedServices(), ...TIMERS]);
   }
 
   function removeUnits(): string[] {
@@ -353,7 +423,24 @@ export function createCliSystemd(runtime: CliRuntime) {
   // on the old port (the unit was already baked) while clients read the new one — the same desync.
   function restartServices(): void {
     writeUnits();
-    systemd.restart(SERVICES);
+    systemd.restart(managedServices());
+  }
+
+  function startWorker(user: UserRecord): void {
+    writeUnits();
+    systemd.activate([workerServiceName(user.id)]);
+  }
+
+  function stopWorker(user: UserRecord): void {
+    const unit = workerServiceName(user.id);
+    if (systemd.isEnabled(unit) || systemd.isActive(unit)) {
+      systemd.disableNow([unit]);
+    }
+  }
+
+  function workerStatus(user: UserRecord): string {
+    if (!hasSystemd()) return "systemd-unavailable";
+    return systemd.isActive(workerServiceName(user.id)) ? "active" : "stopped";
   }
 
   return {
@@ -363,5 +450,9 @@ export function createCliSystemd(runtime: CliRuntime) {
     removeUnits,
     migrateEnv,
     restartServices,
+    managedServices,
+    startWorker,
+    stopWorker,
+    workerStatus,
   };
 }

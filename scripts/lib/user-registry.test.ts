@@ -16,6 +16,7 @@ import {
   defaultUserLimits,
   parseTelegramUserId,
   readUserRegistry,
+  readUserRegistrySync,
   removeUser,
   setUserStatus,
   updateUserLimits,
@@ -89,6 +90,7 @@ void test("registry serializes concurrent additions and keeps private file modes
   assert.equal(statSync(control).mode & 0o777, 0o700);
   assert.equal(statSync(join(control, "users.json")).mode & 0o777, 0o600);
   assert.equal(existsSync(join(control, "users.json.lock")), false);
+  assert.deepEqual(readUserRegistrySync(control), registry);
 });
 
 void test("registry permits at most ten active users and reuses a blocked slot", async (t) => {

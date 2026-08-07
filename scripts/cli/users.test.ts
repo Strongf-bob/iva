@@ -66,6 +66,10 @@ function fixture(
       calls.push(`worker-health:${user.id}`);
       return Promise.resolve();
     },
+    startWorker: (user) => {
+      calls.push(`worker-start:${user.id}`);
+      return Promise.resolve();
+    },
     stopWorker: (user) => {
       calls.push(`worker-stop:${user.id}`);
       return Promise.resolve();
@@ -91,6 +95,7 @@ void test("add creates a blocked candidate and activates only after layout healt
     "verify:/srv/iva/data/users/123",
     "worker-health:123",
     "registry:active:123",
+    "worker-start:123",
     "print:Added owner 123",
   ]);
 });
@@ -111,6 +116,25 @@ void test("add remains blocked when layout or worker preparation fails", async (
     /worker failed/u,
   );
   assert.doesNotMatch(calls.join("\n"), /registry:active/u);
+});
+
+void test("add rolls registry back to blocked if worker activation fails", async () => {
+  const calls: string[] = [];
+  const command = createUsersCommands(
+    fixture(calls, {
+      startWorker: () => Promise.reject(new Error("systemd failed")),
+    }),
+  );
+
+  await assert.rejects(
+    () => command.cmdUsers(["add", "123"]),
+    /systemd failed/u,
+  );
+  assert.deepEqual(calls.slice(-3), [
+    "registry:active:123",
+    "registry:blocked:123",
+    "worker-stop:123",
+  ]);
 });
 
 void test("delete requires the exact repeated id and never starts mutation on mismatch", async () => {

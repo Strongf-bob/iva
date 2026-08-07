@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -193,6 +193,23 @@ export async function readUserRegistry(
     emptyRegistry(),
   );
   return parseRegistry(value);
+}
+
+export function readUserRegistrySync(controlDir: string): UserRegistry {
+  try {
+    return parseRegistry(
+      JSON.parse(readFileSync(registryFile(controlDir), "utf8")),
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      return emptyRegistry();
+    if (error instanceof SyntaxError) {
+      throw new Error(`invalid user registry JSON: ${error.message}`, {
+        cause: error,
+      });
+    }
+    throw error;
+  }
 }
 
 export async function mutateUserRegistry(

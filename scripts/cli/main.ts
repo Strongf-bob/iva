@@ -62,8 +62,10 @@ export function createCliMain(root: string) {
     showTree: tree.showTree,
     restartUserbotIfActive: userbot.restartUserbotIfActive,
   });
-  const users = createUsersCommands(createUsersCommandDependencies(runtime));
-  const { C, SERVICES, TIMERS, bad, ok } = runtime;
+  const users = createUsersCommands(
+    createUsersCommandDependencies(runtime, systemdLifecycle),
+  );
+  const { C, TIMERS, bad, ok } = runtime;
 
   function cmdHelp(): void {
     console.log(`
@@ -114,7 +116,7 @@ ${C.b}Commands:${C.x}
     "_activate-units": () => {
       systemdLifecycle.activateUnits();
       ok(
-        `systemd units enabled and active: ${SERVICES.length + TIMERS.length}`,
+        `systemd units enabled and active: ${systemdLifecycle.managedServices().length + TIMERS.length}`,
       );
     },
   };

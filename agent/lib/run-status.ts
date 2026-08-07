@@ -43,7 +43,12 @@ const errorCode = (error: unknown): string | undefined =>
 // Путь от cwd, как в usage.ts, а НЕ от import.meta.url: канал инлайнится в кэш
 // authored-modules eve, откуда «две папки вверх» указывают в node_modules/.cache.
 // Оба процесса (iva.service и мост) стартуют из одного WorkingDirectory (корень установки Ивы).
-const DATA_DIR_RAW = process.env.ASSISTANT_DATA_DIR ?? "data";
+// Multi-user workers keep content in personal ASSISTANT_DATA_DIR while
+// publishing only busy/cancel coordination to the gateway's fixed data root.
+const DATA_DIR_RAW =
+  process.env.IVA_RUN_STATUS_DATA_DIR ??
+  process.env.ASSISTANT_DATA_DIR ??
+  "data";
 const DATA_DIR = DATA_DIR_RAW.startsWith("/")
   ? DATA_DIR_RAW
   : join(process.cwd(), DATA_DIR_RAW);

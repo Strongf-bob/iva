@@ -39,6 +39,10 @@ function lifecycle(
     removeUnits: () => [],
     migrateEnv: () => false,
     restartServices: () => undefined,
+    managedServices: () => ["iva.service", "iva-telegram-poll.service"],
+    startWorker: () => undefined,
+    stopWorker: () => undefined,
+    workerStatus: () => "stopped",
     ...overrides,
   };
 }

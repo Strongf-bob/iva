@@ -34,6 +34,7 @@ export type UsersCommandDependencies = {
   readonly ensureUserLayout: typeof defaultEnsureUserLayout;
   readonly verifyUserLayout: typeof defaultVerifyUserLayout;
   readonly workerHealth: (user: UserRecord) => Promise<void>;
+  readonly startWorker: (user: UserRecord) => Promise<void>;
   readonly stopWorker: (user: UserRecord) => Promise<void>;
   readonly workerStatus?: (user: UserRecord) => Promise<string>;
   readonly quarantineUser: (layout: UserLayout, id: TelegramUserId) => string;
@@ -44,6 +45,11 @@ type CliRuntime = Pick<
   ReturnType<typeof createCliRuntime>,
   "ROOT" | "dataDirAbs" | "ok"
 >;
+type WorkerLifecycle = {
+  startWorker: (user: UserRecord) => void;
+  stopWorker: (user: UserRecord) => void;
+  workerStatus: (user: UserRecord) => string;
+};
 
 const LIMIT_FLAGS: Readonly<
   Record<string, { key: keyof UserLimits; multiplier: number }>
@@ -122,6 +128,7 @@ function defaultQuarantine(
 
 export function createUsersCommandDependencies(
   runtime: CliRuntime,
+  lifecycle?: WorkerLifecycle,
 ): UsersCommandDependencies {
   const dataDir = runtime.dataDirAbs();
   const quarantineDir = join(dataDir, "quarantine");
@@ -139,8 +146,16 @@ export function createUsersCommandDependencies(
     verifyUserLayout: defaultVerifyUserLayout,
     // Task 4 replaces these static preparation seams with exact systemd lifecycle checks.
     workerHealth: () => Promise.resolve(),
-    stopWorker: () => Promise.resolve(),
-    workerStatus: () => Promise.resolve("not-managed"),
+    startWorker: (user) => {
+      lifecycle?.startWorker(user);
+      return Promise.resolve();
+    },
+    stopWorker: (user) => {
+      lifecycle?.stopWorker(user);
+      return Promise.resolve();
+    },
+    workerStatus: (user) =>
+      Promise.resolve(lifecycle?.workerStatus(user) ?? "not-managed"),
     quarantineUser: (layout, id) =>
       defaultQuarantine(quarantineDir, new Date(), layout, id),
     print: runtime.ok,
@@ -189,7 +204,14 @@ export function createUsersCommands(dependencies: UsersCommandDependencies) {
     deps.ensureUserLayout(layout, deps.appRoot);
     deps.verifyUserLayout(layout, deps.appRoot);
     await deps.workerHealth(candidate);
-    await deps.setUserStatus(deps.controlDir, id, "active");
+    const active = await deps.setUserStatus(deps.controlDir, id, "active");
+    try {
+      await deps.startWorker(active);
+    } catch (error) {
+      const blocked = await deps.setUserStatus(deps.controlDir, id, "blocked");
+      await deps.stopWorker(blocked).catch(() => undefined);
+      throw error;
+    }
     deps.print(`Added ${candidate.role} ${id}`);
   }
 
@@ -204,7 +226,14 @@ export function createUsersCommands(dependencies: UsersCommandDependencies) {
     const layout = deps.resolveUserLayout(deps.usersDir, id);
     deps.verifyUserLayout(layout, deps.appRoot);
     await deps.workerHealth(user);
-    await deps.setUserStatus(deps.controlDir, id, "active");
+    const active = await deps.setUserStatus(deps.controlDir, id, "active");
+    try {
+      await deps.startWorker(active);
+    } catch (error) {
+      const blocked = await deps.setUserStatus(deps.controlDir, id, "blocked");
+      await deps.stopWorker(blocked).catch(() => undefined);
+      throw error;
+    }
     deps.print(`Unblocked user ${id}`);
   }
 
