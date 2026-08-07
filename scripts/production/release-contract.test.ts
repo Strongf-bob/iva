@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
@@ -135,4 +136,55 @@ void test("deployment waits for successful main CI and keeps least privilege", (
     if (!line.trimStart().startsWith("uses:")) continue;
     assert.match(line, /@[0-9a-f]{40}(?:\s+#.*)?$/u);
   }
+});
+
+void test("production routes text through DeepSeek Flash and images through Qwen", () => {
+  const runtime = read("deploy/container/runtime.env.example");
+  assert.match(runtime, /^MODEL_PROVIDER=opencode$/mu);
+  assert.match(runtime, /^OPENCODE_API_KEY=$/mu);
+  assert.match(runtime, /^OPENCODE_MODEL=deepseek-v4-flash$/mu);
+  assert.match(runtime, /^OPENCODE_CONTEXT_WINDOW=131072$/mu);
+  assert.match(runtime, /^THINKING_EFFORT=medium$/mu);
+
+  const provider = read("agent/provider.ts");
+  assert.match(provider, /visionModel: "qwen3\.7-plus"/u);
+  assert.match(provider, /process\.env\.OPENCODE_MODEL/u);
+
+  const providerUrl = new URL("../../agent/provider.ts", import.meta.url).href;
+  const probe = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `const m = await import(${JSON.stringify(providerUrl)}); console.log(JSON.stringify({ providerName: m.providerName, providerConfig: m.providerConfig, thinkingEffort: m.thinkingEffort, compatibleThinkingEffort: m.compatibleThinkingEffort }));`,
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        MODEL_PROVIDER: "opencode",
+        OPENCODE_API_KEY: "test-only-key",
+        OPENCODE_MODEL: "deepseek-v4-flash",
+        OPENCODE_CONTEXT_WINDOW: "131072",
+        THINKING_EFFORT: "medium",
+      },
+    },
+  );
+  assert.equal(probe.status, 0, probe.stderr);
+  assert.deepEqual(JSON.parse(probe.stdout), {
+    providerName: "opencode",
+    providerConfig: {
+      baseURL: "https://opencode.ai/zen/go/v1",
+      apiKey: "test-only-key",
+      textModel: "deepseek-v4-flash",
+      contextWindow: 131072,
+      visionModel: "qwen3.7-plus",
+    },
+    thinkingEffort: "medium",
+    compatibleThinkingEffort: "medium",
+  });
+
+  const vision = read("agent/vision.ts");
+  assert.match(vision, /Опиши изображение детально/u);
+  assert.match(vision, /max_tokens: 700/u);
 });
