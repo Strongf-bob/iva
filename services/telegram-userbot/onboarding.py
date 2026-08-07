@@ -16,6 +16,7 @@ so no manual save and no restart: the same live client just becomes authorized.
 """
 import asyncio
 import io
+import logging
 import os
 import sys
 from datetime import datetime, timezone
@@ -25,11 +26,11 @@ import qrcode
 from qrcode.image.pure import PyPNGImage
 from telethon import errors
 
-_QR_MAX_REFRESHES = 3  # ~30s per QR ⇒ ~90s total before we give up
 _QR_CAPTION = (
     "Отсканируй этот QR в приложении Telegram того аккаунта, который подключаешь:\n"
     "Настройки → Устройства → Подключить устройство.\n"
-    "Код обновляется автоматически. Это подключение на твой страх и риск."
+    "Код действует недолго. Сканируй только QR из самого нового сообщения; "
+    "если он истёк, запроси новый. Это подключение на твой страх и риск."
 )
 
 # Single-user login state machine. phase ∈
@@ -79,6 +80,10 @@ async def _send_qr_to_bot(png: bytes, caption: str) -> None:
             "нужны TELEGRAM_BOT_TOKEN и chat владельца "
             "(TELEGRAM_USERBOT_QR_CHAT_ID или TELEGRAM_ALLOWED_USER_IDS) для доставки QR"
         )
+    # Telegram puts the bot token in the request path. httpx/httpcore log full
+    # request URLs at INFO, so their normal access log would disclose the token.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     async with httpx.AsyncClient(timeout=30, proxy=proxy, trust_env=False) as http:
         resp = await http.post(
             f"https://api.telegram.org/bot{token}/sendPhoto",
@@ -99,23 +104,28 @@ async def _run_qr_login(client) -> None:
     global _state
     try:
         qr = await client.qr_login()
-        for _ in range(_QR_MAX_REFRESHES):
-            await _send_qr_to_bot(_render_qr_png(qr.url), _QR_CAPTION)
-            _state = {"phase": "waiting", "detail": "QR отправлен в чат с ботом, жду скан"}
-            try:
-                await qr.wait(timeout=_seconds_until_expiry(qr))
-                _state = {"phase": "authorized", "detail": "Аккаунт подключён"}
-                return
-            except asyncio.TimeoutError:
-                await qr.recreate()
-                continue
-            except errors.SessionPasswordNeededError:
-                _state = {
-                    "phase": "password_needed",
-                    "detail": "Включена двухфакторная защита — пришли пароль",
-                }
-                return
-        _state = {"phase": "expired", "detail": "QR истёк слишком много раз — начни заново"}
+        await _send_qr_to_bot(_render_qr_png(qr.url), _QR_CAPTION)
+        _state = {"phase": "waiting", "detail": "QR отправлен в чат с ботом, жду скан"}
+        await qr.wait(timeout=_seconds_until_expiry(qr))
+        _state = {"phase": "authorized", "detail": "Аккаунт подключён"}
+    except (asyncio.TimeoutError, errors.AuthTokenExpiredError):
+        _state = {"phase": "expired", "detail": "qr_expired"}
+    except errors.SessionPasswordNeededError:
+        _state = {
+            "phase": "password_needed",
+            "detail": "Включена двухфакторная защита — пришли пароль",
+        }
+    except errors.AuthTokenAlreadyAcceptedError:
+        _record_safe_error("qr_already_used")
+    except (
+        errors.AuthTokenInvalidError,
+        errors.AuthTokenInvalid2Error,
+        errors.AuthTokenInvalidxError,
+        errors.AuthTokenExceptionError,
+    ):
+        _record_safe_error("qr_invalid")
+    except TypeError:
+        _record_safe_error("qr_unexpected_response")
     except Exception:  # noqa: BLE001
         _record_safe_error("qr_transport_failed")
 

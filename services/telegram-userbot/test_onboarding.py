@@ -1,11 +1,14 @@
 import asyncio
 import contextlib
 import io
+import logging
 import os
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 import onboarding
+from telethon import errors
 
 
 class FailingClient:
@@ -14,7 +17,31 @@ class FailingClient:
         raise RuntimeError(f"POST https://api.telegram.org/bot{token}/sendPhoto failed")
 
 
+class FakeQr:
+    def __init__(self, outcome):
+        self.url = "tg://login?token=synthetic"
+        self.expires = datetime.now(timezone.utc) + timedelta(seconds=30)
+        self.outcome = outcome
+        self.wait_calls = 0
+
+    async def wait(self, timeout):
+        self.wait_calls += 1
+        if isinstance(self.outcome, BaseException):
+            raise self.outcome
+
+
+class FakeQrClient:
+    def __init__(self, qr):
+        self.qr = qr
+
+    async def qr_login(self):
+        return self.qr
+
+
 class OnboardingSafetyTest(unittest.TestCase):
+    def setUp(self):
+        onboarding._state = {"phase": "idle", "detail": ""}
+
     def test_qr_delivery_uses_only_the_explicit_bot_api_proxy(self):
         calls = {}
 
@@ -76,6 +103,82 @@ class OnboardingSafetyTest(unittest.TestCase):
                 os.environ.pop("TELEGRAM_BOT_TOKEN", None)
             else:
                 os.environ["TELEGRAM_BOT_TOKEN"] = previous
+
+    def test_qr_timeout_sends_only_one_image_and_reports_expired(self):
+        qr = FakeQr(asyncio.TimeoutError())
+        with mock.patch.object(
+            onboarding, "_send_qr_to_bot", new=mock.AsyncMock()
+        ) as send:
+            asyncio.run(onboarding._run_qr_login(FakeQrClient(qr)))
+
+        self.assertEqual(send.await_count, 1)
+        self.assertEqual(qr.wait_calls, 1)
+        self.assertEqual(onboarding._state["phase"], "expired")
+        self.assertEqual(onboarding._state["detail"], "qr_expired")
+
+    def test_qr_protocol_errors_are_classified_without_exception_text(self):
+        cases = (
+            (errors.AuthTokenExpiredError(request=None), "expired", "qr_expired"),
+            (
+                errors.AuthTokenAlreadyAcceptedError(request=None),
+                "error",
+                "qr_already_used",
+            ),
+            (errors.AuthTokenInvalidError(request=None), "error", "qr_invalid"),
+            (TypeError("secret response body"), "error", "qr_unexpected_response"),
+        )
+        for exception, phase, detail in cases:
+            with self.subTest(exception=type(exception).__name__), mock.patch.object(
+                onboarding, "_send_qr_to_bot", new=mock.AsyncMock()
+            ):
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr):
+                    asyncio.run(
+                        onboarding._run_qr_login(FakeQrClient(FakeQr(exception)))
+                    )
+                self.assertEqual(onboarding._state, {"phase": phase, "detail": detail})
+                self.assertNotIn("secret response body", stderr.getvalue())
+
+    def test_qr_delivery_suppresses_http_client_urls_containing_bot_token(self):
+        class Response:
+            def raise_for_status(self):
+                return None
+
+        class Client:
+            def __init__(self, **_kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            async def post(self, url, **_kwargs):
+                logging.getLogger("httpx").info("HTTP Request: POST %s", url)
+                return Response()
+
+        token = "123456:SYNTHETIC_LOG_SECRET"
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        logger = logging.getLogger("httpx")
+        previous_level = logger.level
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+        try:
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "TELEGRAM_BOT_TOKEN": token,
+                    "TELEGRAM_ALLOWED_USER_IDS": "777",
+                },
+                clear=False,
+            ), mock.patch.object(onboarding.httpx, "AsyncClient", Client):
+                asyncio.run(onboarding._send_qr_to_bot(b"png", "caption"))
+            self.assertNotIn(token, stream.getvalue())
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(previous_level)
 
 
 if __name__ == "__main__":
