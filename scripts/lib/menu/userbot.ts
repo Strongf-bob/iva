@@ -11,6 +11,12 @@
 import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { readEnvValues, upsertEnv } from "../env-file.ts";
+import {
+  disableContainerUserbot,
+  enableContainerUserbot,
+  readUserbotCredentials,
+  writeUserbotCredentials,
+} from "../userbot-container-runtime.ts";
 import { probeUserbotHealth } from "../userbot-health.ts";
 
 type ErrorLike = { code?: unknown; message?: unknown };
@@ -30,6 +36,8 @@ type MenuContext = {
     probeUserbotHealth?: (options: {
       root: string;
       port: string;
+      runtime?: string;
+      mcpUrl?: string;
     }) => Promise<Health>;
     runUserbotSetup?: () => Promise<void>;
     log?: (...parts: unknown[]) => void;
@@ -61,6 +69,8 @@ const PARENT = "r";
 const SVC = "iva-telegram-userbot.service";
 
 const isPrivate = (st: MenuState) => Number(st.chatId) > 0;
+const isContainerRuntime = () =>
+  process.env.TELEGRAM_USERBOT_RUNTIME === "container";
 
 function run(cmd: string, args: string[], timeout = 1500) {
   return new Promise<{ failed: boolean; code: number; stdout: string }>(
@@ -110,13 +120,20 @@ async function probeStatus(
   env: Record<string, string | undefined>,
 ) {
   const probe = ctx.deps.probeUserbotHealth || probeUserbotHealth;
-  return probe({ root: ctx.deps.root, port: env.TELEGRAM_MCP_PORT || "8724" });
+  return probe({
+    root: ctx.deps.root,
+    port: env.TELEGRAM_MCP_PORT || process.env.TELEGRAM_MCP_PORT || "8724",
+    runtime: process.env.TELEGRAM_USERBOT_RUNTIME,
+    mcpUrl: process.env.TELEGRAM_MCP_URL,
+  });
 }
 
 // Единая сборка карты — используется и render(), и async-перерисовкой после setup.
 async function buildScreen(st: MenuState, ctx: MenuContext): Promise<View> {
   const T = ctx.tr;
-  const env = await readEnvValues(ctx.deps.envPath);
+  const env = isContainerRuntime()
+    ? await readUserbotCredentials(ctx.deps.root)
+    : await readEnvValues(ctx.deps.envPath);
   const hasCreds = Boolean(env.TELEGRAM_API_ID && env.TELEGRAM_API_HASH);
   const status = await probeStatus(ctx, env);
   const head = T("📡 Telegram userbot", "📡 Telegram-userbot");
@@ -304,6 +321,22 @@ export default {
     }
 
     if (step === "setup") {
+      if (isContainerRuntime()) {
+        try {
+          await enableContainerUserbot(ctx.deps.root);
+        } catch {
+          ctx.deps.log?.("userbot container enable failed");
+          return ctx.flows.screen(
+            st,
+            ctx.tr(
+              "🧪 Beta\n\nSetup failed. Re-enter the credentials, then try again.",
+              "🧪 Бета\n\nНастройка завершилась с ошибкой. Введи ключи заново и повтори.",
+            ),
+            [ctx.backRow(PARENT)],
+          );
+        }
+        return ctx.show(st, SID);
+      }
       const bin = join(ctx.deps.root, "bin/iva.mjs");
       // Отсоединённо: НЕ ждём (venv-сборка до 3 мин заблокировала бы poll-цикл). Перерисуем
       // экран по завершении — только если пользователь всё ещё на нём.
@@ -347,7 +380,11 @@ export default {
     }
 
     if (step === "off") {
-      await run("systemctl", ["--user", "disable", "--now", SVC]);
+      if (isContainerRuntime()) {
+        await disableContainerUserbot(ctx.deps.root);
+      } else {
+        await run("systemctl", ["--user", "disable", "--now", SVC]);
+      }
       return ctx.show(st, SID);
     }
     return ctx.show(st, SID);
@@ -392,16 +429,23 @@ export default {
       st.awaitText = null;
       st.data.ub = null;
       try {
-        await upsertEnv(ctx.deps.envPath, {
-          TELEGRAM_API_ID: apiId ?? "",
-          TELEGRAM_API_HASH: value,
-        });
+        if (isContainerRuntime()) {
+          await writeUserbotCredentials(ctx.deps.root, apiId ?? "", value);
+        } else {
+          await upsertEnv(ctx.deps.envPath, {
+            TELEGRAM_API_ID: apiId ?? "",
+            TELEGRAM_API_HASH: value,
+          });
+        }
       } catch (error) {
+        const detail = isContainerRuntime()
+          ? ""
+          : `: ${String(errorMessage(error))}`;
         return ctx.flows.screen(
           st,
           ctx.tr(
-            `Couldn't write .env: ${String(errorMessage(error))}`,
-            `Не удалось записать .env: ${String(errorMessage(error))}`,
+            `Couldn't save credentials${detail}`,
+            `Не удалось сохранить ключи${detail}`,
           ),
           [ctx.backRow(PARENT)],
         );

@@ -12,6 +12,7 @@ export interface UserbotRuntimePaths {
 }
 
 export interface UserbotCredentials {
+  readonly [key: string]: string | undefined;
   readonly TELEGRAM_API_ID?: string;
   readonly TELEGRAM_API_HASH?: string;
 }

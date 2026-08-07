@@ -149,3 +149,42 @@ void test("userbot health reports ready from the existing proxy session", async 
 
   assert.deepEqual(health, { state: "ready", reason: "ok" });
 });
+
+void test("container health reports off from the marker without contacting systemd or MCP", async () => {
+  let fetched = false;
+  const health = await probeUserbotHealth({
+    runtime: "container",
+    mcpUrl: "http://telegram-userbot:8724/mcp",
+    isContainerEnabled: () => Promise.resolve(false),
+    runSystemctl: () => Promise.reject(new Error("must not call systemd")),
+    readToken: () => Promise.resolve("unused"),
+    fetchImpl: () => {
+      fetched = true;
+      return Promise.reject(new Error("must not fetch"));
+    },
+  });
+
+  assert.deepEqual(health, { state: "off", reason: "marker_absent" });
+  assert.equal(fetched, false);
+});
+
+void test("container health uses the configured internal URL without systemd", async () => {
+  const token = "synthetic-container-token";
+  let authorization = "";
+  const health = await probeUserbotHealth({
+    runtime: "container",
+    mcpUrl: "http://telegram-userbot:8724/mcp",
+    isContainerEnabled: () => Promise.resolve(true),
+    runSystemctl: () => Promise.reject(new Error("must not call systemd")),
+    readToken: () => Promise.resolve(token),
+    fetchImpl: (url, init) => {
+      assert.equal(url, "http://telegram-userbot:8724/healthz");
+      authorization = init.headers.authorization;
+      return Promise.resolve(response(200, { state: "ready" }));
+    },
+  });
+
+  assert.equal(authorization, `Bearer ${token}`);
+  assert.deepEqual(health, { state: "ready", reason: "ok" });
+  assert.doesNotMatch(JSON.stringify(health), new RegExp(token));
+});
