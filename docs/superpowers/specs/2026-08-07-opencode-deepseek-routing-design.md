@@ -1,7 +1,7 @@
 # OpenCode Go model routing design
 
 Date: 2026-08-07
-Status: approved in chat, awaiting written-spec review
+Status: implementation in progress
 
 ## Goal
 

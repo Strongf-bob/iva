@@ -136,3 +136,20 @@ void test("deployment waits for successful main CI and keeps least privilege", (
     assert.match(line, /@[0-9a-f]{40}(?:\s+#.*)?$/u);
   }
 });
+
+void test("production routes text through DeepSeek Flash and images through Qwen", () => {
+  const runtime = read("deploy/container/runtime.env.example");
+  assert.match(runtime, /^MODEL_PROVIDER=opencode$/mu);
+  assert.match(runtime, /^OPENCODE_API_KEY=$/mu);
+  assert.match(runtime, /^OPENCODE_MODEL=deepseek-v4-flash$/mu);
+  assert.match(runtime, /^OPENCODE_CONTEXT_WINDOW=131072$/mu);
+  assert.match(runtime, /^THINKING_EFFORT=medium$/mu);
+
+  const provider = read("agent/provider.ts");
+  assert.match(provider, /visionModel: "qwen3\.7-plus"/u);
+  assert.match(provider, /process\.env\.OPENCODE_MODEL/u);
+
+  const vision = read("agent/vision.ts");
+  assert.match(vision, /Опиши изображение детально/u);
+  assert.match(vision, /max_tokens: 700/u);
+});
