@@ -1,0 +1,65 @@
+name: iva
+
+services:
+  iva:
+    image: ${IVA_IMAGE:?IVA_IMAGE is required}
+    env_file:
+      - ${IVA_ENV_FILE:-./.env}
+    environment:
+      ASSISTANT_HOST: http://iva:8723
+      IVA_PORT: "8723"
+      PORT: "8723"
+    ports:
+      - "127.0.0.1:8723:8723"
+    volumes:
+      - ./data:/app/data
+      - ./memory:/app/memory
+      - ./vault:/app/vault
+      - ./.env:/app/.env:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "--fail",
+          "--silent",
+          "http://127.0.0.1:8723/eve/v1/health",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    networks:
+      - iva-internal
+
+  telegram-poll:
+    image: ${IVA_IMAGE:?IVA_IMAGE is required}
+    env_file:
+      - ${IVA_ENV_FILE:-./.env}
+    environment:
+      ASSISTANT_HOST: http://iva:8723
+      IVA_PORT: "8723"
+      PORT: "8723"
+    command: ["npm", "run", "poll"]
+    depends_on:
+      iva:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+      - ./memory:/app/memory
+      - ./vault:/app/vault
+      - ./.env:/app/.env:ro
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    networks:
+      - iva-internal
+
+networks:
+  iva-internal:
+    driver: bridge

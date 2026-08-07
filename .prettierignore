@@ -9,3 +9,5 @@ services/telegram-userbot/
 data/
 scripts/autograph/tests/golden/
 CHANGELOG.md
+docs/index.html
+docs/ru/index.html

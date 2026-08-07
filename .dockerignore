@@ -1,0 +1,13 @@
+.git
+node_modules
+.eve
+.output
+.iva-build
+.iva-update
+dist
+data
+memory
+vault
+.env
+.DS_Store
+npm-debug.log
