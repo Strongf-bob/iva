@@ -34,17 +34,17 @@
 - Consumes: the existing multi-stage `Containerfile` and Node test runner.
 - Produces: `npm run test:release`, a static release-safety gate used by CI.
 
-- [ ] **Step 1: Write the failing release-contract test**
+- [x] **Step 1: Write the failing release-contract test**
 
 Create a Node test that reads `.gitignore`, `.dockerignore`, `Containerfile`, the production Compose file, deploy script, and deployment workflow. Assert that private runtime paths are ignored; the container uses Node 24; no Docker socket is mounted; Compose references `${IVA_IMAGE:?IVA_IMAGE is required}`; workflow permissions are read-only by default; deploy waits on CI; and every `uses:` reference ends in a 40-character commit SHA.
 
-- [ ] **Step 2: Run the focused test and observe the missing-contract failure**
+- [x] **Step 2: Run the focused test and observe the missing-contract failure**
 
 Run: `node --test scripts/production/release-contract.test.ts`
 
 Expected: FAIL because `/memory/`, the production Compose file, deployment script, and workflow contract do not yet exist.
 
-- [ ] **Step 3: Harden ignore and image rules**
+- [x] **Step 3: Harden ignore and image rules**
 
 Add these repository-ignore entries:
 
@@ -55,7 +55,7 @@ Add these repository-ignore entries:
 
 Ensure `.dockerignore` contains exactly the sensitive build-context families `.git`, `.env`, `data`, `memory`, and `vault`. Add an OCI source label and an unprivileged runtime user to `Containerfile`; create and chown `/app/data`, `/app/memory`, and `/app/vault` before switching to that user.
 
-- [ ] **Step 4: Add the focused package command**
+- [x] **Step 4: Add the focused package command**
 
 Add this script to `package.json`:
 
@@ -63,7 +63,7 @@ Add this script to `package.json`:
 "test:release": "node --test scripts/production/release-contract.test.ts"
 ```
 
-- [ ] **Step 5: Run the available subset**
+- [x] **Step 5: Run the available subset**
 
 Run: `npm run test:release`
 
