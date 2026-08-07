@@ -112,7 +112,10 @@ void test("deployment waits for successful main CI and keeps least privilege", (
   assert.match(workflow, /cancel-in-progress: false/u);
   assert.match(workflow, /environment: production/u);
   assert.match(workflow, /ssh-keyscan .*?-t ed25519/u);
-  assert.match(workflow, /SHA256:nTB3CvC0D6hDKFnhSSCRmwoHDLxXtzEHJmrSnuyTW3I/u);
+  assert.match(
+    workflow,
+    /SHA256:gywKmHI7oSa5ZlF3idnKjKoWsB\+UpR4OgikvzbTooRI/u,
+  );
   assert.match(workflow, /ssh-keygen -lf/u);
   assert.doesNotMatch(workflow, /DEPLOY_KNOWN_HOSTS/u);
   assert.doesNotMatch(workflow, /pull_request_target/u);
