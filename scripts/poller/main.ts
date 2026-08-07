@@ -10,6 +10,7 @@ import {
   type TelegramCollectUpdate,
 } from "../lib/telegram-collect.ts";
 import { alreadyDelivered } from "../lib/offset-store.ts";
+import { requestTelegramReset } from "../lib/telegram-reset.ts";
 import {
   isReplyToBot,
   invalidTelegramUpdatesDiagnostic,
@@ -18,13 +19,12 @@ import {
   type TelegramQueueUpdate,
 } from "../lib/telegram-queue.ts";
 import {
-  ACCEPTANCE_ROUTE,
-  ROUTE,
-  SECRET,
-  TOKEN,
-  log,
-  sleep,
-} from "./config.ts";
+  readUserRegistry,
+  parseTelegramUserId,
+  type TelegramUserId,
+  type UserRecord,
+} from "../lib/user-registry.ts";
+import { CONTROL_DIR, SECRET, TOKEN, log, sleep } from "./config.ts";
 import { tg } from "./transport.ts";
 import { fastForwardOffset, loadOffset, saveOffset } from "./offset.ts";
 import * as queue from "./queue.ts";
@@ -32,6 +32,11 @@ import * as routing from "./routing.ts";
 import * as updateFlow from "./update-flow.ts";
 import * as control from "./control.ts";
 import * as wizards from "./wizards.ts";
+import {
+  resolveTenant,
+  workerRoutes,
+  type WorkerRoutes,
+} from "./tenant-routing.ts";
 
 type ErrorLike = { message?: unknown };
 type TelegramResponse = {
@@ -70,6 +75,72 @@ export const handleAwaitNonText = control.handleAwaitNonText;
 
 const errorMessage = (error: unknown) => (error as ErrorLike).message;
 
+async function requestTenantReset({
+  chatKey,
+  continuationToken,
+}: {
+  chatKey: string;
+  continuationToken: string;
+}) {
+  const match = /^([1-9][0-9]{0,19}):$/u.exec(chatKey);
+  const userId = parseTelegramUserId(match?.[1]);
+  if (!userId) throw new Error("reset is not for a private registered tenant");
+  const registry = await readUserRegistry(CONTROL_DIR);
+  const user = registry.users.find(
+    (candidate) => candidate.id === userId && candidate.status === "active",
+  );
+  if (!user) throw new Error(`reset tenant ${userId} is not active`);
+  return requestTelegramReset({
+    url: workerRoutes(user).reset,
+    secret: SECRET as string,
+    continuationToken,
+  });
+}
+
+async function tenantRoutes(
+  update: TelegramQueueUpdate,
+  storedTenantId?: string,
+): Promise<{
+  userId: TelegramUserId;
+  user: UserRecord;
+  routes: WorkerRoutes;
+} | null> {
+  const registry = await readUserRegistry(CONTROL_DIR);
+  const resolved = resolveTenant(update, registry);
+  if (resolved.kind !== "active") return null;
+  if (storedTenantId !== undefined && storedTenantId !== resolved.userId) {
+    return null;
+  }
+  const user = registry.users.find(
+    (candidate) => candidate.id === resolved.userId,
+  );
+  return user
+    ? { userId: resolved.userId, user, routes: workerRoutes(user) }
+    : null;
+}
+
+async function routeTenantUpdate(
+  update: TelegramQueueUpdate,
+): Promise<routing.RouteMessageResult> {
+  const tenant = await tenantRoutes(update);
+  if (!tenant) return "dropped";
+  return routeMessageUpdate(update, {
+    tenantId: tenant.userId,
+    workerRoutes: tenant.routes,
+  });
+}
+
+async function acknowledgeRejectedCallback(
+  update: TelegramQueueUpdate,
+): Promise<void> {
+  const callbackId = update.callback_query?.id;
+  if (!callbackId) return;
+  await tg("answerCallbackQuery", { callback_query_id: callbackId }).catch(
+    (error) =>
+      log("failed to acknowledge rejected callback:", errorMessage(error)),
+  );
+}
+
 const rawCollectQuietMs = Number(
   process.env.TELEGRAM_COLLECT_QUIET_MS ?? COLLECT_QUIET_MS,
 );
@@ -86,7 +157,7 @@ export async function main() {
     throw new Error(
       "no TELEGRAM_WEBHOOK_SECRET_TOKEN — the channel won't accept updates",
     );
-  log(`telegram-poll start → messages ${ACCEPTANCE_ROUTE}; callbacks ${ROUTE}`);
+  log("telegram-poll start → registry-routed private user workers");
   await removeStaleUpdateJobs();
   // Upgrade the old {chatKey: string[]} queue atomically before polling. A failed
   // migration stops the bridge, so Telegram retains new updates until the old bytes
@@ -97,7 +168,9 @@ export async function main() {
         `legacy Telegram group messages moved to ${path}; sender identity was unavailable`,
       ),
   });
-  const reconciledResets = await reconcileScopedResetIntents();
+  const reconciledResets = await reconcileScopedResetIntents({
+    requestResetImpl: requestTenantReset,
+  });
   if (reconciledResets > 0) {
     log(
       `reconciled ${reconciledResets} durable private Telegram reset intent(s)`,
@@ -134,14 +207,20 @@ export async function main() {
     // One head per idle chat/topic per pass. While any queue remains, use a short
     // Telegram long-poll so terminal/stale run-status changes trigger drain quickly.
     try {
-      await reapStaleRuns();
+      await reapStaleRuns({
+        resetImpl: (chatKey, continuationToken) =>
+          requestTenantReset({ chatKey, continuationToken }),
+      });
     } catch (error) {
       log("stale run reaper failed:", errorMessage(error));
     }
-    let pendingQueueCount = await drainReadyQueueHeads();
+    let pendingQueueCount = await drainReadyQueueHeads({
+      resolveRoutesImpl: async (update, storedTenantId) =>
+        (await tenantRoutes(update, storedTenantId))?.routes ?? null,
+    });
     let collectorWriteFailed = false;
     for (const update of collectorTakeExpired(messageCollector, Date.now())) {
-      const routed = await routeMessageUpdate(update);
+      const routed = await routeTenantUpdate(update);
       if (routed === "delivered") {
         const updateId = update.update_id;
         delivered =
@@ -206,8 +285,20 @@ export async function main() {
         await saveOffset(offset, delivered);
         continue;
       }
+      const tenant = await tenantRoutes(update);
+      if (!tenant) {
+        await acknowledgeRejectedCallback(update);
+        offset = update.update_id + 1;
+        await saveOffset(offset, delivered);
+        continue;
+      }
       // Control commands (/restart, /help, /new) — the bridge handles them itself, doesn't send to eve.
-      if (await handleControl(update)) {
+      if (
+        await handleControl(update, {
+          user: tenant.user,
+          routes: tenant.routes,
+        })
+      ) {
         offset = update.update_id + 1;
         await saveOffset(offset, delivered);
         continue;
@@ -231,7 +322,10 @@ export async function main() {
         }
       }
 
-      const routed = await routeMessageUpdate(candidate);
+      const routed = await routeMessageUpdate(candidate, {
+        tenantId: tenant.userId,
+        workerRoutes: tenant.routes,
+      });
       if (routed === "enqueue-failed") {
         if (collectedUpdate)
           collectorRestore(messageCollector, collectedUpdate);

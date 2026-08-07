@@ -1,11 +1,28 @@
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/require-await -- Node owns test registration; async doubles preserve the I/O boundary. */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { handleAwaitNonText } from "./control.ts";
+import { controlCommandAllowed, handleAwaitNonText } from "./control.ts";
 
 type Event = string | [string, string, number | undefined, string | undefined];
 type CaptureMessage = { message_id?: number };
 type CaptureState = { flow: unknown; awaitText?: unknown };
+
+test("ordinary users get only personal conversation controls", () => {
+  for (const command of ["/help", "/stop", "/new"]) {
+    assert.equal(controlCommandAllowed(command, "user"), true, command);
+  }
+  for (const command of [
+    "/menu",
+    "/usage",
+    "/restart",
+    "/update",
+    "/model",
+    "/think",
+  ]) {
+    assert.equal(controlCommandAllowed(command, "user"), false, command);
+    assert.equal(controlCommandAllowed(command, "owner"), true, command);
+  }
+});
 
 test("secret document capture deletes before download and never reaches Eve", async () => {
   const events: Event[] = [];

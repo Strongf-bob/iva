@@ -995,6 +995,22 @@ void test("queued media and quoted metadata replay from the durable update witho
   );
 });
 
+void test("queued tenant identity is durable and cross-user replay fails closed", async (t) => {
+  const file = await queueFile(t);
+  const update = privateUpdate(201, "personal");
+  update.message.chat.id = 42;
+  update.message.from.id = 42;
+  await enqueueQueueFile(file, "42:", update, { tenantId: "42" });
+  const { document } = await loadQueueFile(file, { strict: true });
+  const item = queueHead(document, "42:")!;
+
+  assert.equal(item.tenantId, "42");
+  assert.deepEqual(materializeQueueItem("42:", item), update);
+
+  item.update!.message!.from!.id = 99;
+  assert.equal(materializeQueueItem("42:", item), null);
+});
+
 void test("busy routing is fail-closed and keeps addressed private, group and topic updates", () => {
   const allowedUserIds = new Set(["42"]);
   const options = { allowedUserIds, botUsername: "my_bot" };

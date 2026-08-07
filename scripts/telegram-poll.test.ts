@@ -21,6 +21,7 @@ type AcceptanceFailure = {
   attempt: number;
 };
 type DeliverOptions = {
+  route?: string;
   timeoutMs?: number;
   retryAcceptanceTimeout?: boolean;
   onAcceptanceFailure: (failure: AcceptanceFailure) => Promise<void>;
@@ -36,7 +37,11 @@ type RouteOptions = {
   queueCountImpl: () => number;
   replyToBotImpl: (message: unknown) => boolean;
   shouldQueueImpl: (update: Update) => boolean;
-  enqueueImpl: (chatKey: string, update: Update) => Promise<{ count: number }>;
+  enqueueImpl: (
+    chatKey: string,
+    update: Update,
+    tenantId?: string,
+  ) => Promise<{ count: number }>;
   acknowledgeImpl: (update: Update, count: number) => Promise<void>;
   deliverImpl: (update: Update, options: DeliverOptions) => Promise<boolean>;
   statusImpl: (chatKey: string) => StatusRecord | null;
@@ -50,6 +55,12 @@ type RouteOptions = {
   now: () => number;
   trImpl: (english: string, russian: string) => string;
   logImpl: (...parts: unknown[]) => void;
+  tenantId?: string;
+  workerRoutes?: {
+    webhook: string;
+    acceptance: string;
+    reset: string;
+  };
 };
 type ReaperStatus = { chatKey: string; status: StatusRecord };
 type ReaperOptions = {
@@ -264,6 +275,53 @@ test("routeMessageUpdate sends one idle update through paced delivery", async ()
 
   assert.equal(result, "delivered");
   assert.equal(delivered, 1);
+});
+
+test("tenant delivery uses only the fixed worker acceptance route", async () => {
+  const tenantUpdate = structuredClone(routedUpdate);
+  tenantUpdate.message.chat.id = 42;
+  const result = await routeMessageUpdate(
+    tenantUpdate,
+    routeDeps({
+      tenantId: "42",
+      workerRoutes: {
+        webhook: "http://127.0.0.1:8842/eve/v1/telegram",
+        acceptance: "http://127.0.0.1:8842/eve/v1/telegram/accepted",
+        reset: "http://127.0.0.1:8842/eve/v1/telegram/reset",
+      },
+      deliverImpl: async (_update, options) => {
+        assert.equal(
+          options.route,
+          "http://127.0.0.1:8842/eve/v1/telegram/accepted",
+        );
+        return true;
+      },
+    }),
+  );
+
+  assert.equal(result, "delivered");
+});
+
+test("explicit tenant delivery rejects a sender or private-chat mismatch", async () => {
+  let delivered = 0;
+  const result = await routeMessageUpdate(
+    routedUpdate,
+    routeDeps({
+      tenantId: "42",
+      workerRoutes: {
+        webhook: "http://127.0.0.1:8842/eve/v1/telegram",
+        acceptance: "http://127.0.0.1:8842/eve/v1/telegram/accepted",
+        reset: "http://127.0.0.1:8842/eve/v1/telegram/reset",
+      },
+      deliverImpl: async () => {
+        delivered++;
+        return true;
+      },
+    }),
+  );
+
+  assert.equal(result, "dropped");
+  assert.equal(delivered, 0);
 });
 
 test("a direct acceptance timeout is rejected after one cleanup and notification", async () => {

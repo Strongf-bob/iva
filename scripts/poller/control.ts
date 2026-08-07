@@ -1,5 +1,8 @@
 import { botCommands, helpText, tr } from "#lib/i18n.ts";
-import { continuationTokenForControl } from "../lib/telegram-reset.ts";
+import {
+  continuationTokenForControl,
+  requestTelegramReset,
+} from "../lib/telegram-reset.ts";
 import type {
   TelegramCallbackQuery,
   TelegramQueueMessage as TelegramMessage,
@@ -8,6 +11,7 @@ import type {
 import type { TelegramFlowState } from "../lib/tg-flow.ts";
 import { getChatStatus, isRunning } from "#lib/run-status.ts";
 import { readEnvFresh } from "../lib/env-file.ts";
+import { readUserRegistry, type UserRecord } from "../lib/user-registry.ts";
 import {
   formatUsageReport,
   parseWindow,
@@ -17,9 +21,11 @@ import {
 import {
   ALLOWED,
   BOT_USER_ID,
+  CONTROL_DIR,
   DATA_DIR,
   ENV_PATH,
   ROOT,
+  SECRET,
   log,
 } from "./config.ts";
 import { downloadTelegramFile, edit, reply, sc, tg } from "./transport.ts";
@@ -39,6 +45,11 @@ import {
   resetMessageCopy,
 } from "./wizards.ts";
 import { createMenu } from "../lib/menu/index.ts";
+import {
+  resolveTenant,
+  workerRoutes,
+  type WorkerRoutes,
+} from "./tenant-routing.ts";
 
 type ControlCallbackQuery = TelegramCallbackQuery & { data: string };
 type PendingFlow = {
@@ -67,8 +78,40 @@ type ControlTransport = (
   method: string,
   body: Record<string, unknown>,
 ) => Promise<TelegramResult>;
+export type ControlTenantContext = {
+  user: UserRecord;
+  routes: WorkerRoutes;
+};
+const OWNER_ONLY_CONTROLS = new Set([
+  "/menu",
+  "/usage",
+  "/restart",
+  "/update",
+  "/model",
+  "/think",
+]);
+const menuAllowed = new Set(ALLOWED);
+
+export function controlCommandAllowed(
+  command: string,
+  role: UserRecord["role"],
+): boolean {
+  return role === "owner" || !OWNER_ONLY_CONTROLS.has(command);
+}
 
 const controlTg = tg as unknown as ControlTransport;
+
+async function routesForUpdate(
+  update: TelegramUpdate,
+): Promise<WorkerRoutes | null> {
+  const registry = await readUserRegistry(CONTROL_DIR);
+  const tenant = resolveTenant(update, registry);
+  if (tenant.kind !== "active") return null;
+  const user = registry.users.find(
+    (candidate) => candidate.id === tenant.userId,
+  );
+  return user ? workerRoutes(user) : null;
+}
 
 function errorDetails(error: unknown): ErrorDetails {
   return typeof error === "object" && error !== null ? error : {};
@@ -133,10 +176,15 @@ const menu = createMenu({
     reply,
     // Синтетическая дистилляция делит acceptance, пейсинг и уборку failed-ingress
     // с обычной прямой доставкой, но намеренно не проходит busy-time FIFO.
-    deliver: (update) =>
-      deliverDirectUpdate(update).then((result) => result === "delivered"),
+    deliver: async (update) => {
+      const routes = await routesForUpdate(update);
+      if (!routes) return false;
+      return deliverDirectUpdate(update, { routes }).then(
+        (result) => result === "delivered",
+      );
+    },
     log,
-    allowed: ALLOWED,
+    allowed: menuAllowed,
     handleModelCmd,
     handleThinkCmd,
     handleUpdateCheck,
@@ -256,11 +304,41 @@ export async function handleAwaitNonText(
 
 // Control commands are handled by the BRIDGE (out-of-band) — they work even if the agent is stuck.
 // Trusted IDs only. Returns true if the command was handled (we do NOT deliver it to eve).
-async function handleControl(update: TelegramUpdate) {
+async function handleControl(
+  update: TelegramUpdate,
+  tenant?: ControlTenantContext,
+) {
+  const verifiedFrom = String(
+    update.message?.from?.id ?? update.callback_query?.from?.id ?? "",
+  );
+  const tenantAuthorized = tenant
+    ? tenant.user.id === verifiedFrom &&
+      (update.message?.chat?.type ??
+        update.callback_query?.message?.chat?.type) === "private"
+    : null;
+  if (tenantAuthorized === false) return true;
+  if (tenant) {
+    menuAllowed.clear();
+    if (tenant.user.role === "owner") menuAllowed.add(tenant.user.id);
+  }
   // Bridge-owned inline-button taps (/update, /model, /think) — not eve HITL callbacks.
   const cq = update.callback_query;
   if (cq && hasCallbackData(cq)) {
     const callback = cq;
+    if (
+      tenant &&
+      tenant.user.role !== "owner" &&
+      (callback.data.startsWith("iva_update:") ||
+        callback.data.startsWith("iva_model:") ||
+        callback.data.startsWith("iva_think:") ||
+        callback.data.startsWith("iva_menu:"))
+    ) {
+      await controlTg("answerCallbackQuery", {
+        callback_query_id: callback.id,
+        text: tr("Owner only", "Только для владельца"),
+      }).catch(() => ({ ok: false }));
+      return true;
+    }
     if (callback.data.startsWith("iva_update:"))
       return handleUpdateCallback(callback);
     // Wizard errors must not escape: an uncaught throw would crash the bridge and
@@ -346,9 +424,20 @@ async function handleControl(update: TelegramUpdate) {
   )
     return false;
   const from = String(msg?.from?.id ?? "");
-  if (ALLOWED.size === 0 || !ALLOWED.has(from)) return false; // untrusted — let eve drop it
+  const authorized = tenant ? tenantAuthorized === true : ALLOWED.has(from);
+  if (!authorized) return false; // untrusted — let the tenant gate or Eve reject it
   const chatId = msg?.chat?.id;
   if (chatId === undefined) return true;
+  if (tenant && !controlCommandAllowed(cmd, tenant.user.role)) {
+    await replyTo(
+      chatId,
+      tr(
+        "This command is available only to the server owner.",
+        "Эта команда доступна только владельцу сервера.",
+      ),
+    );
+    return true;
+  }
   // /menu — open the nested settings menu (out-of-band; errors consumed, never reach eve).
   if (cmd === "/menu") {
     await menu
@@ -373,15 +462,18 @@ async function handleControl(update: TelegramUpdate) {
       );
       return true;
     }
-    await deliver({
-      update_id: 0,
-      callback_query: {
-        id: `ivastop-${Date.now()}`, // synthetic: answerCallbackQuery on it fails, channel tolerates
-        from: msg?.from,
-        message: msg, // carries chat/thread — the channel derives chatKey from here
-        data: "iva_cancel",
+    await deliver(
+      {
+        update_id: 0,
+        callback_query: {
+          id: `ivastop-${Date.now()}`, // synthetic: answerCallbackQuery on it fails, channel tolerates
+          from: msg?.from,
+          message: msg, // carries chat/thread — the channel derives chatKey from here
+          data: "iva_cancel",
+        },
       },
-    });
+      tenant ? { route: tenant.routes.webhook } : undefined,
+    );
     return true;
   }
   // /usage — token spend from data/usage.jsonl. Out-of-band and FREE (we don't call the model).
@@ -450,6 +542,16 @@ async function handleControl(update: TelegramUpdate) {
       // include conversationId. Clearing the shared queue here would lose
       // messages belonging to other group conversation anchors.
       clearQueue: clearsPrivateQueue,
+      ...(tenant
+        ? {
+            requestResetImpl: ({ continuationToken: token }) =>
+              requestTelegramReset({
+                url: tenant.routes.reset,
+                secret: SECRET as string,
+                continuationToken: token,
+              }),
+          }
+        : {}),
     });
   } catch (e: unknown) {
     const error = errorDetails(e);
@@ -478,6 +580,19 @@ async function handleControl(update: TelegramUpdate) {
     return true;
   }
 
+  if (cmd === "/restart" && tenant) {
+    if (status) {
+      await editMessage(
+        chatId,
+        status.message_id,
+        tr(
+          "Conversation reset. Service administration is local-only.",
+          "Диалог сброшен. Управление сервисом доступно только локально на сервере.",
+        ),
+      );
+    }
+    return true;
+  }
   if (cmd === "/restart" && !(await sc("restart", "iva.service"))) {
     if (status) {
       await editMessage(

@@ -21,6 +21,7 @@ export const DATA_DIR = DATA_DIR_RAW.startsWith("/")
 // stale after the wizard edits the file) and data/ holds codex-auth.json.
 export const ENV_PATH = join(ROOT, ".env");
 export const DATA_DIR_ABS = DATA_DIR;
+export const CONTROL_DIR = join(DATA_DIR, "control");
 export const ROUTE = `${HOST}/eve/v1/telegram`;
 export const ACCEPTANCE_ROUTE = `${HOST}${TELEGRAM_ACCEPTANCE_ROUTE}`;
 export const RESET_ROUTE = `${ROUTE}/reset`;
