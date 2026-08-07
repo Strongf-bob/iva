@@ -7,6 +7,7 @@ import {
   providerConfig as cfg,
   providerName,
   withReasoningStripped,
+  withUserQuota,
   makeCodexModel,
 } from "./provider.js";
 
@@ -26,7 +27,7 @@ const textModel =
       })(cfg.textModel);
 
 export default defineAgent({
-  model: withReasoningStripped(textModel),
+  model: withUserQuota(withReasoningStripped(textModel)),
   // eve maps this provider-agnostic setting to reasoning_effort for the
   // OpenAI-compatible Ollama Cloud and OpenCode Go endpoints.
   reasoning: compatibleThinkingEffort,

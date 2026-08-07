@@ -96,7 +96,9 @@ async function scanFiles(
   if (!(await pathExists(sourceRoot))) return [];
   const rootInfo = await lstat(sourceRoot);
   if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory())
-    throw new Error(`legacy migration source is not a real directory: ${sourceRoot}`);
+    throw new Error(
+      `legacy migration source is not a real directory: ${sourceRoot}`,
+    );
 
   const entries: OwnerMigrationEntry[] = [];
   async function visit(directory: string): Promise<void> {
@@ -136,7 +138,9 @@ function resolveOwner(input: OwnerMigrationInput): TelegramUserId {
     .map(parseTelegramUserId)
     .filter((id): id is TelegramUserId => id !== null);
   if (allowed.length !== 1)
-    throw new Error("migration requires an explicit owner when legacy access does not contain exactly one ID");
+    throw new Error(
+      "migration requires an explicit owner when legacy access does not contain exactly one ID",
+    );
   return allowed[0];
 }
 
@@ -206,7 +210,8 @@ export async function planOwnerMigration(
 
 async function ensureSafeParent(base: string, target: string): Promise<void> {
   const parent = dirname(target);
-  if (!inside(base, parent)) throw new Error("migration destination escaped its root");
+  if (!inside(base, parent))
+    throw new Error("migration destination escaped its root");
   const rel = relative(base, parent);
   let current = base;
   await mkdir(base, { recursive: true, mode: 0o700 });
@@ -317,19 +322,24 @@ export async function applyOwnerMigration(
   await chmod(join(plan.backupDir, "manifest.json"), 0o600);
   const verification = await verifyOwnerMigration(plan);
   if (!verification.ok)
-    throw new Error(`owner migration verification failed: ${verification.mismatches.join(", ")}`);
+    throw new Error(
+      `owner migration verification failed: ${verification.mismatches.join(", ")}`,
+    );
   await writePhase(plan, "copied");
 
   const registry = await readUserRegistry(plan.controlDir);
   const existing = registry.users.find((user) => user.id === plan.ownerId);
   if (existing && existing.role !== "owner")
-    throw new Error(`migration owner ${plan.ownerId} already exists with another role`);
+    throw new Error(
+      `migration owner ${plan.ownerId} already exists with another role`,
+    );
   if (!existing) {
     if (registry.users.length > 0)
       throw new Error("owner migration requires an empty registry");
     await addUser(plan.controlDir, {
       id: plan.ownerId,
       role: "owner",
+      status: "provisioning",
       now: new Date(plan.createdAt),
     });
   }
@@ -342,10 +352,13 @@ export async function rollbackOwnerMigration(
 ): Promise<void> {
   const mismatches = await verifyBackup(plan);
   if (mismatches.length)
-    throw new Error(`cannot roll back without verified backup: ${mismatches.join(", ")}`);
+    throw new Error(
+      `cannot roll back without verified backup: ${mismatches.join(", ")}`,
+    );
   const registry = await readUserRegistry(plan.controlDir);
   const existing = registry.users.find((user) => user.id === plan.ownerId);
-  if (existing?.role === "owner") await removeUser(plan.controlDir, plan.ownerId);
+  if (existing?.role === "owner")
+    await removeUser(plan.controlDir, plan.ownerId);
   await writePhase(plan, "rolled-back");
 }
 

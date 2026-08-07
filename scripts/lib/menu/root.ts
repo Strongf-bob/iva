@@ -14,40 +14,69 @@ interface RootContext {
   tr: (english: string, russian: string) => string;
 }
 
-type RootState = Record<string, unknown>;
+type RootState = {
+  role?: "owner" | "user";
+  personalRoot?: string;
+} & Record<string, unknown>;
 
 export default {
   parent: null,
-  render(_state: RootState, ctx: RootContext) {
+  render(state: RootState, ctx: RootContext) {
     const b = ctx.btn;
     const T = ctx.tr;
-    const rows = [
-      [
-        b(T("🧠 Model", "🧠 Модель"), "iva_menu:mdl"),
-        b(T("🤔 Thinking", "🤔 Размышления"), "iva_menu:thk"),
-      ],
-      [
-        b(T("🔍 Search", "🔍 Поиск"), "iva_menu:srch:o"),
-        b(T("🌐 Language", "🌐 Язык"), "iva_menu:lang:o"),
-      ],
-      [
-        b(T("🎭 Character", "🎭 Характер"), "iva_menu:chr:o"),
-        b(T("💾 Memory", "💾 Память"), "iva_menu:core:o"),
-      ],
-      [
-        b(T("📡 Userbot", "📡 Userbot"), "iva_menu:ub:o"),
-        b(T("🔗 Google", "🔗 Google"), "iva_menu:gws:o"),
-      ],
-      [
-        b(T("⏰ Timers", "⏰ Кроны"), "iva_menu:cron:o"),
-        b(T("🧩 Skills", "🧩 Скиллы"), "iva_menu:sk:o"),
-      ],
-      [
-        b(T("📊 Status", "📊 Статус"), "iva_menu:st:o"),
-        b(T("🛠 Maintenance", "🛠 Обслуживание"), "iva_menu:svc:o"),
-      ],
-      [b(T("✖ Close", "✖ Закрыть"), "iva_menu:r:x")],
-    ];
+    const rows =
+      state.role === "user"
+        ? [
+            [b(T("🔗 Google", "🔗 Google"), "iva_menu:gws:o")],
+            [b(T("✖ Close", "✖ Закрыть"), "iva_menu:r:x")],
+          ]
+        : state.personalRoot
+          ? [
+              [
+                b(T("🧠 Model", "🧠 Модель"), "iva_menu:mdl"),
+                b(T("🤔 Thinking", "🤔 Размышления"), "iva_menu:thk"),
+              ],
+              [
+                b(T("🔍 Search", "🔍 Поиск"), "iva_menu:srch:o"),
+                b(T("📡 Userbot", "📡 Userbot"), "iva_menu:ub:o"),
+              ],
+              [
+                b(T("🔗 Google", "🔗 Google"), "iva_menu:gws:o"),
+                b(T("🧩 Skills", "🧩 Скиллы"), "iva_menu:sk:o"),
+              ],
+              [
+                b(T("📊 Status", "📊 Статус"), "iva_menu:st:o"),
+                b(T("🛠 Maintenance", "🛠 Обслуживание"), "iva_menu:svc:o"),
+              ],
+              [b(T("✖ Close", "✖ Закрыть"), "iva_menu:r:x")],
+            ]
+          : [
+              [
+                b(T("🧠 Model", "🧠 Модель"), "iva_menu:mdl"),
+                b(T("🤔 Thinking", "🤔 Размышления"), "iva_menu:thk"),
+              ],
+              [
+                b(T("🔍 Search", "🔍 Поиск"), "iva_menu:srch:o"),
+                b(T("🌐 Language", "🌐 Язык"), "iva_menu:lang:o"),
+              ],
+              [
+                b(T("🎭 Character", "🎭 Характер"), "iva_menu:chr:o"),
+                b(T("💾 Memory", "💾 Память"), "iva_menu:core:o"),
+              ],
+              [
+                b(T("📡 Userbot", "📡 Userbot"), "iva_menu:ub:o"),
+                b(T("🔗 Google", "🔗 Google"), "iva_menu:gws:o"),
+              ],
+              [
+                b(T("⏰ Timers", "⏰ Кроны"), "iva_menu:cron:o"),
+                b(T("🧩 Skills", "🧩 Скиллы"), "iva_menu:sk:o"),
+              ],
+              [
+                b(T("📊 Status", "📊 Статус"), "iva_menu:st:o"),
+                b(T("🛠 Maintenance", "🛠 Обслуживание"), "iva_menu:svc:o"),
+              ],
+              [b(T("✖ Close", "✖ Закрыть"), "iva_menu:r:x")],
+            ];
     return {
       text: T(
         "⚙️ Settings\n\nPick a section.",

@@ -114,7 +114,7 @@ export function createCliSystemd(runtime: CliRuntime) {
     const runtime = workerRuntime();
     const registry = readUserRegistrySync(runtime.controlDir);
     return registry.users
-      .filter((user) => user.status === "active")
+      .filter((user) => user.status !== "blocked")
       .map((user) => workerServiceName(user.id));
   }
 
@@ -252,7 +252,7 @@ export function createCliSystemd(runtime: CliRuntime) {
     const registry = readUserRegistrySync(runtime.controlDir);
     const workerBodies = desiredWorkerUnits(registry, runtime);
     for (const user of registry.users) {
-      if (user.status !== "active") continue;
+      if (user.status === "blocked") continue;
       verifyUserLayout(
         resolveUserLayout(runtime.usersDir, user.id),
         runtime.appRoot,
@@ -443,6 +443,29 @@ export function createCliSystemd(runtime: CliRuntime) {
     return systemd.isActive(workerServiceName(user.id)) ? "active" : "stopped";
   }
 
+  function retireLegacyService(): void {
+    if (systemd.isEnabled("iva.service") || systemd.isActive("iva.service")) {
+      systemd.disableNow(["iva.service"]);
+    }
+  }
+
+  function restoreLegacyService(): void {
+    systemd.activate(["iva.service"]);
+  }
+
+  function pauseGateway(): void {
+    if (
+      systemd.isEnabled("iva-telegram-poll.service") ||
+      systemd.isActive("iva-telegram-poll.service")
+    ) {
+      systemd.disableNow(["iva-telegram-poll.service"]);
+    }
+  }
+
+  function resumeGateway(): void {
+    systemd.activate(["iva-telegram-poll.service"]);
+  }
+
   return {
     ensureAssistantBearer,
     writeUnits,
@@ -454,5 +477,9 @@ export function createCliSystemd(runtime: CliRuntime) {
     startWorker,
     stopWorker,
     workerStatus,
+    retireLegacyService,
+    restoreLegacyService,
+    pauseGateway,
+    resumeGateway,
   };
 }

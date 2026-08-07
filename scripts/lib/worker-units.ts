@@ -68,7 +68,7 @@ export function desiredWorkerUnits(
 ): ReadonlyMap<string, string> {
   const units = new Map<string, string>();
   for (const user of registry.users) {
-    if (user.status !== "active") continue;
+    if (user.status === "blocked") continue;
     const layout = resolveUserLayout(runtime.usersDir, user.id);
     units.set(
       workerServiceName(user.id),

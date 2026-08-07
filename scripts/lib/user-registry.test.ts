@@ -14,9 +14,13 @@ import { test } from "node:test";
 import {
   addUser,
   defaultUserLimits,
+  disableLegacyOwnerRoute,
+  enableLegacyOwnerRoute,
+  isLegacyOwnerRoute,
   parseTelegramUserId,
   readUserRegistry,
   readUserRegistrySync,
+  readRoutingUserRegistry,
   removeUser,
   setUserStatus,
   updateUserLimits,
@@ -59,6 +63,33 @@ void test("default limits match the approved multi-user policy", () => {
     attachmentBytes: 20 * 1024 * 1024,
     storageBytes: 1024 * 1024 * 1024,
   });
+});
+
+void test("routing can temporarily overlay the migrated owner on the legacy worker", async (t) => {
+  const control = fixture(t);
+  const owner = await addUser(control, { id: "101", role: "owner" });
+  await removeUser(control, owner.id);
+
+  await enableLegacyOwnerRoute(control, owner);
+  const routed = await readRoutingUserRegistry(control);
+  assert.deepEqual(
+    routed.users.map(({ id, role, status, port }) => ({
+      id,
+      role,
+      status,
+      port,
+    })),
+    [{ id: "101", role: "owner", status: "active", port: 8723 }],
+  );
+  assert.equal(
+    statSync(join(control, "legacy-owner-route.json")).mode & 0o777,
+    0o600,
+  );
+  assert.equal((await readUserRegistry(control)).users.length, 0);
+  assert.equal(isLegacyOwnerRoute(routed.users[0]), true);
+
+  await disableLegacyOwnerRoute(control);
+  assert.equal((await readRoutingUserRegistry(control)).users.length, 0);
 });
 
 void test("registry serializes concurrent additions and keeps private file modes", async (t) => {

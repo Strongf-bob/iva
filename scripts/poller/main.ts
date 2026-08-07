@@ -20,7 +20,8 @@ import {
   type TelegramQueueUpdate,
 } from "../lib/telegram-queue.ts";
 import {
-  readUserRegistry,
+  readRoutingUserRegistry,
+  isLegacyOwnerRoute,
   parseTelegramUserId,
   type TelegramUserId,
   type UserRecord,
@@ -95,7 +96,7 @@ async function requestTenantReset({
   const match = /^([1-9][0-9]{0,19}):$/u.exec(chatKey);
   const userId = parseTelegramUserId(match?.[1]);
   if (!userId) throw new Error("reset is not for a private registered tenant");
-  const registry = await readUserRegistry(CONTROL_DIR);
+  const registry = await readRoutingUserRegistry(CONTROL_DIR);
   const user = registry.users.find(
     (candidate) => candidate.id === userId && candidate.status === "active",
   );
@@ -111,7 +112,7 @@ async function tenantRoutes(
   update: TelegramQueueUpdate,
   storedTenantId?: string,
 ): Promise<TenantContext | null> {
-  const registry = await readUserRegistry(CONTROL_DIR);
+  const registry = await readRoutingUserRegistry(CONTROL_DIR);
   const resolved = resolveTenant(update, registry);
   if (resolved.kind !== "active") return null;
   if (storedTenantId !== undefined && storedTenantId !== resolved.userId) {
@@ -128,6 +129,7 @@ async function tenantRoutes(
     routes: workerRoutes(user),
     personalRoot: layout.root,
     personalData: layout.data,
+    legacyRoute: isLegacyOwnerRoute(user),
   };
 }
 
@@ -137,6 +139,7 @@ type TenantContext = {
   routes: WorkerRoutes;
   personalRoot: string;
   personalData: string;
+  legacyRoute: boolean;
 };
 
 const quotaMessages: Record<QuotaDenialReason, string> = {
@@ -145,8 +148,10 @@ const quotaMessages: Record<QuotaDenialReason, string> = {
   "tokens-day": "Дневной лимит токенов исчерпан. Он обновится в 00:00 UTC.",
   "audio-day": "Дневной лимит аудио исчерпан. Он обновится в 00:00 UTC.",
   attachment: "Вложение превышает разрешённый размер.",
-  storage: "Личное хранилище достигло лимита. Освободи место или обратись к владельцу.",
-  "concurrent-turns": "Предыдущая задача ещё выполняется. Сообщение можно повторить позже.",
+  storage:
+    "Личное хранилище достигло лимита. Освободи место или обратись к владельцу.",
+  "concurrent-turns":
+    "Предыдущая задача ещё выполняется. Сообщение можно повторить позже.",
 };
 
 async function notifyQuota(
@@ -191,15 +196,23 @@ async function routeKnownTenantUpdate(
   update: TelegramQueueUpdate,
   tenant: TenantContext,
 ): Promise<routing.RouteMessageResult> {
-  if (update.message && !(await chargeTenantIngress(update, tenant)))
+  if (
+    !tenant.legacyRoute &&
+    update.message &&
+    !(await chargeTenantIngress(update, tenant))
+  )
     return "quota-exceeded";
   const routed = await routeMessageUpdate(update, {
     tenantId: tenant.userId,
     workerRoutes: tenant.routes,
     reserveTurnImpl: () =>
-      reserveUserTurn(CONTROL_DIR, tenant.userId, tenant.user.limits),
+      tenant.legacyRoute
+        ? { allowed: true, token: `legacy:${tenant.userId}` }
+        : reserveUserTurn(CONTROL_DIR, tenant.userId, tenant.user.limits),
     releaseTurnImpl: (token) =>
-      releaseUserTurn(CONTROL_DIR, tenant.userId, token),
+      tenant.legacyRoute
+        ? Promise.resolve()
+        : releaseUserTurn(CONTROL_DIR, tenant.userId, token),
   });
   if (routed === "quota-exceeded")
     await notifyQuota(tenant, "concurrent-turns");
@@ -296,12 +309,14 @@ export async function main() {
       reserveTurnImpl: async (update, storedTenantId) => {
         const tenant = await tenantRoutes(update, storedTenantId);
         return tenant
-          ? reserveUserTurn(CONTROL_DIR, tenant.userId, tenant.user.limits)
+          ? tenant.legacyRoute
+            ? { allowed: true, token: `legacy:${tenant.userId}` }
+            : reserveUserTurn(CONTROL_DIR, tenant.userId, tenant.user.limits)
           : { allowed: false, reason: "concurrent-turns" };
       },
       releaseTurnImpl: async (token, update, storedTenantId) => {
         const tenant = await tenantRoutes(update, storedTenantId);
-        if (tenant)
+        if (tenant && !tenant.legacyRoute)
           await releaseUserTurn(CONTROL_DIR, tenant.userId, token);
       },
     });
@@ -385,6 +400,7 @@ export async function main() {
           user: tenant.user,
           routes: tenant.routes,
           dataDir: tenant.personalData,
+          personalRoot: tenant.personalRoot,
         })
       ) {
         offset = update.update_id + 1;

@@ -46,6 +46,7 @@ export function authSessionBelongsToUser(
 interface StartAuthOptions {
   services?: string;
   timeoutMs?: number;
+  homeDir?: string;
 }
 
 interface RelayCodeOptions {
@@ -105,11 +106,17 @@ export function gwsBin() {
   return existsSync(p) ? p : "gws";
 }
 
-export function childEnv() {
+export function childEnv(homeDir?: string) {
   const path = process.env.PATH
     ? `${NODE_BIN_DIR}:${process.env.PATH}`
     : NODE_BIN_DIR;
-  return { ...process.env, PATH: path };
+  return {
+    ...process.env,
+    PATH: path,
+    ...(homeDir
+      ? { HOME: homeDir, XDG_CONFIG_HOME: join(homeDir, ".config") }
+      : {}),
+  };
 }
 
 const sleep = (ms: number): Promise<void> =>
@@ -124,6 +131,7 @@ export const AUTH_SERVICES = "gmail,calendar,drive,tasks";
 export async function startAuth({
   services = AUTH_SERVICES,
   timeoutMs = 6000,
+  homeDir,
 }: StartAuthOptions = {}): Promise<AuthSession | null> {
   const logPath = join(
     tmpdir(),
@@ -133,7 +141,7 @@ export async function startAuth({
   let child;
   try {
     child = spawn(gwsBin(), ["auth", "login", "-s", services], {
-      env: childEnv(),
+      env: childEnv(homeDir),
       detached: true,
       stdio: ["ignore", fd, fd],
     });

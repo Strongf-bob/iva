@@ -139,7 +139,7 @@ export async function prepareWorker(
   }
   const registry = await readUserRegistry(resolve(input.controlDir));
   const user = registry.users.find((candidate) => candidate.id === id);
-  if (!user || user.status !== "active") {
+  if (!user || user.status === "blocked") {
     throw new Error(`worker user ${id} is not active`);
   }
   if (String(user.port) !== input.expectedPort) {

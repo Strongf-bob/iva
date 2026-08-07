@@ -11,7 +11,10 @@ import type {
 import type { TelegramFlowState } from "../lib/tg-flow.ts";
 import { getChatStatus, isRunning } from "#lib/run-status.ts";
 import { readEnvFresh } from "../lib/env-file.ts";
-import { readUserRegistry, type UserRecord } from "../lib/user-registry.ts";
+import {
+  readRoutingUserRegistry,
+  type UserRecord,
+} from "../lib/user-registry.ts";
 import {
   formatUsageReport,
   parseWindow,
@@ -82,9 +85,9 @@ export type ControlTenantContext = {
   user: UserRecord;
   routes: WorkerRoutes;
   dataDir: string;
+  personalRoot: string;
 };
 const OWNER_ONLY_CONTROLS = new Set([
-  "/menu",
   "/restart",
   "/update",
   "/model",
@@ -104,7 +107,7 @@ const controlTg = tg as unknown as ControlTransport;
 async function routesForUpdate(
   update: TelegramUpdate,
 ): Promise<WorkerRoutes | null> {
-  const registry = await readUserRegistry(CONTROL_DIR);
+  const registry = await readRoutingUserRegistry(CONTROL_DIR);
   const tenant = resolveTenant(update, registry);
   if (tenant.kind !== "active") return null;
   const user = registry.users.find(
@@ -319,23 +322,41 @@ async function handleControl(
   if (tenantAuthorized === false) return true;
   if (tenant) {
     menuAllowed.clear();
-    if (tenant.user.role === "owner") menuAllowed.add(tenant.user.id);
+    menuAllowed.add(tenant.user.id);
   }
   // Bridge-owned inline-button taps (/update, /model, /think) — not eve HITL callbacks.
   const cq = update.callback_query;
   if (cq && hasCallbackData(cq)) {
     const callback = cq;
+    const tenantMenuState = tenant
+      ? getWizard(callback.message?.chat?.id, tenant.user.id)
+      : null;
     if (
       tenant &&
       tenant.user.role !== "owner" &&
       (callback.data.startsWith("iva_update:") ||
         callback.data.startsWith("iva_model:") ||
         callback.data.startsWith("iva_think:") ||
-        callback.data.startsWith("iva_menu:"))
+        (callback.data.startsWith("iva_menu:") &&
+          !callback.data.startsWith("iva_menu:r:") &&
+          !callback.data.startsWith("iva_menu:gws:")))
     ) {
       await controlTg("answerCallbackQuery", {
         callback_query_id: callback.id,
         text: tr("Owner only", "Только для владельца"),
+      }).catch(() => ({ ok: false }));
+      return true;
+    }
+    if (
+      tenant &&
+      tenant.user.role !== "owner" &&
+      callback.data.startsWith("iva_menu:") &&
+      (tenantMenuState?.flow !== "menu" ||
+        tenantMenuState.personalRoot !== tenant.personalRoot)
+    ) {
+      await controlTg("answerCallbackQuery", {
+        callback_query_id: callback.id,
+        text: tr("Menu expired - send /menu", "Меню устарело - отправь /menu"),
       }).catch(() => ({ ok: false }));
       return true;
     }
@@ -441,7 +462,10 @@ async function handleControl(
   // /menu — open the nested settings menu (out-of-band; errors consumed, never reach eve).
   if (cmd === "/menu") {
     await menu
-      .open(chatId, from)
+      .open(chatId, from, {
+        role: tenant?.user.role,
+        personalRoot: tenant?.personalRoot,
+      })
       .catch((e: unknown) => log("menu error:", errorDetails(e).message));
     return true;
   }

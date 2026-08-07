@@ -9,7 +9,9 @@ import {
 } from "../lib/user-registry.ts";
 
 const id = parseTelegramUserId("123")!;
-const record = (status: "active" | "blocked" = "active"): UserRecord => ({
+const record = (
+  status: "active" | "blocked" | "provisioning" = "active",
+): UserRecord => ({
   id,
   role: "owner",
   status,
@@ -78,6 +80,39 @@ function fixture(
       calls.push(`quarantine:${layout.root}:${userId}`);
       return `/srv/iva/data/quarantine/user-${userId}-stamp`;
     },
+    quarantineControlState: (userId, destination) => {
+      calls.push(`quarantine-control:${userId}:${destination}`);
+      return Promise.resolve();
+    },
+    finishQuarantine: (userId) => calls.push(`quarantine-finish:${userId}`),
+    retireLegacyService: () => {
+      calls.push("legacy-retire");
+      return Promise.resolve();
+    },
+    restoreLegacyService: () => {
+      calls.push("legacy-restore");
+      return Promise.resolve();
+    },
+    legacyHealth: () => {
+      calls.push("legacy-health");
+      return Promise.resolve();
+    },
+    enableLegacyOwnerRoute: (user) => {
+      calls.push(`legacy-route-enable:${user.id}`);
+      return Promise.resolve();
+    },
+    disableLegacyOwnerRoute: () => {
+      calls.push("legacy-route-disable");
+      return Promise.resolve();
+    },
+    pauseGateway: () => {
+      calls.push("gateway-pause");
+      return Promise.resolve();
+    },
+    resumeGateway: () => {
+      calls.push("gateway-resume");
+      return Promise.resolve();
+    },
     migrateOwner: (explicitOwner) => {
       calls.push(`migrate-owner:${explicitOwner ?? "auto"}`);
       return Promise.resolve(record());
@@ -94,25 +129,100 @@ void test("migrate-owner switches the verified owner before starting its worker"
   await command.cmdUsers(["migrate-owner", "123"]);
 
   assert.deepEqual(calls, [
+    "gateway-pause",
     "migrate-owner:123",
+    "registry:provisioning:123",
+    "legacy-retire",
     "worker-start:123",
+    "worker-health:123",
+    "registry:active:123",
+    "legacy-route-disable",
+    "gateway-resume",
     "print:Migrated legacy owner 123; rollback backup retained",
   ]);
 });
 
-void test("add creates a blocked candidate and activates only after layout health", async () => {
+void test("migrate-owner restores the legacy service when the personalized worker is not ready", async () => {
+  const calls: string[] = [];
+  const command = createUsersCommands(
+    fixture(calls, {
+      workerHealth: () => Promise.reject(new Error("health failed")),
+    }),
+  );
+
+  await assert.rejects(
+    () => command.cmdUsers(["migrate-owner", "123"]),
+    /health failed/u,
+  );
+  assert.deepEqual(calls, [
+    "gateway-pause",
+    "migrate-owner:123",
+    "registry:provisioning:123",
+    "legacy-retire",
+    "worker-start:123",
+    "registry:blocked:123",
+    "worker-stop:123",
+    "registry:remove:123",
+    "legacy-restore",
+    "legacy-health",
+    "legacy-route-enable:123",
+    "gateway-resume",
+  ]);
+});
+
+void test("migrate-owner keeps the gateway paused when rollback cannot prove a legacy route", async () => {
+  const calls: string[] = [];
+  const command = createUsersCommands(
+    fixture(calls, {
+      workerHealth: () => Promise.reject(new Error("health failed")),
+      removeUser: (_control, userId) => {
+        calls.push(`registry:remove:${userId}`);
+        return Promise.reject(new Error("registry removal failed"));
+      },
+    }),
+  );
+
+  await assert.rejects(
+    () => command.cmdUsers(["migrate-owner", "123"]),
+    /registry removal failed/u,
+  );
+  assert.equal(calls.includes("gateway-resume"), false);
+  assert.equal(calls.includes("legacy-route-enable:123"), false);
+});
+
+void test("migrate-owner keeps polling paused when the restored legacy worker is unhealthy", async () => {
+  const calls: string[] = [];
+  const command = createUsersCommands(
+    fixture(calls, {
+      workerHealth: () => Promise.reject(new Error("personal health failed")),
+      legacyHealth: () => {
+        calls.push("legacy-health");
+        return Promise.reject(new Error("legacy health failed"));
+      },
+    }),
+  );
+
+  await assert.rejects(
+    () => command.cmdUsers(["migrate-owner", "123"]),
+    /legacy health failed/u,
+  );
+  assert.equal(calls.includes("legacy-route-enable:123"), false);
+  assert.equal(calls.includes("gateway-resume"), false);
+});
+
+void test("add creates a blocked candidate and rolls back unless its started worker is healthy", async () => {
   const calls: string[] = [];
   const command = createUsersCommands(fixture(calls));
 
   await command.cmdUsers(["add", "123", "--owner"]);
 
   assert.deepEqual(calls, [
-    "registry:add-blocked:123",
+    "registry:add-provisioning:123",
     "layout:/srv/iva/data/users/123",
     "verify:/srv/iva/data/users/123",
+    "worker-start:123",
     "worker-health:123",
     "registry:active:123",
-    "worker-start:123",
     "print:Added owner 123",
   ]);
 });
@@ -133,6 +243,11 @@ void test("add remains blocked when layout or worker preparation fails", async (
     /worker failed/u,
   );
   assert.doesNotMatch(calls.join("\n"), /registry:active/u);
+  assert.deepEqual(calls.slice(-3), [
+    "worker-health:123",
+    "registry:blocked:123",
+    "worker-stop:123",
+  ]);
 });
 
 void test("add rolls registry back to blocked if worker activation fails", async () => {
@@ -148,7 +263,7 @@ void test("add rolls registry back to blocked if worker activation fails", async
     /systemd failed/u,
   );
   assert.deepEqual(calls.slice(-3), [
-    "registry:active:123",
+    "verify:/srv/iva/data/users/123",
     "registry:blocked:123",
     "worker-stop:123",
   ]);
@@ -174,10 +289,29 @@ void test("delete blocks, stops, quarantines, and only then removes the record",
   assert.deepEqual(calls, [
     "registry:blocked:123",
     "worker-stop:123",
+    "gateway-pause",
     "quarantine:/srv/iva/data/users/123:123",
+    "quarantine-control:123:/srv/iva/data/quarantine/user-123-stamp",
     "registry:remove:123",
+    "quarantine-finish:123",
+    "gateway-resume",
     "print:Quarantined user 123",
   ]);
+});
+
+void test("delete does not touch tenant files when the shared gateway cannot be paused", async () => {
+  const calls: string[] = [];
+  const command = createUsersCommands(
+    fixture(calls, {
+      pauseGateway: () => Promise.reject(new Error("gateway busy")),
+    }),
+  );
+
+  await assert.rejects(
+    () => command.cmdUsers(["delete", "123", "--confirm", "123"]),
+    /gateway busy/u,
+  );
+  assert.deepEqual(calls, ["registry:blocked:123", "worker-stop:123"]);
 });
 
 void test("limits accepts positive integer flags and converts megabytes and minutes", async () => {

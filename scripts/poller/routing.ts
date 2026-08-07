@@ -301,9 +301,10 @@ export async function routeMessageUpdate(
     }
   }
 
-  const reservation = update.message && reserveTurnImpl
-    ? await reserveTurnImpl()
-    : ({ allowed: true, token: "" } as const);
+  const reservation =
+    update.message && reserveTurnImpl
+      ? await reserveTurnImpl()
+      : ({ allowed: true, token: "" } as const);
   if (!reservation.allowed) return "quota-exceeded";
   return deliverDirectUpdate(update, {
     key,

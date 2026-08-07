@@ -26,18 +26,30 @@ void test("ingress counters are atomic, idempotent and reset on UTC boundaries",
   const first = Date.UTC(2026, 7, 7, 10, 30);
 
   assert.equal(
-    (await chargeUserIngress(dir, userId, limits, { ingressId: "10", now: first }))
-      .allowed,
+    (
+      await chargeUserIngress(dir, userId, limits, {
+        ingressId: "10",
+        now: first,
+      })
+    ).allowed,
     true,
   );
   assert.equal(
-    (await chargeUserIngress(dir, userId, limits, { ingressId: "10", now: first }))
-      .allowed,
+    (
+      await chargeUserIngress(dir, userId, limits, {
+        ingressId: "10",
+        now: first,
+      })
+    ).allowed,
     true,
   );
   assert.equal(
-    (await chargeUserIngress(dir, userId, limits, { ingressId: "11", now: first }))
-      .allowed,
+    (
+      await chargeUserIngress(dir, userId, limits, {
+        ingressId: "11",
+        now: first,
+      })
+    ).allowed,
     true,
   );
   assert.deepEqual(

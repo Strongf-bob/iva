@@ -14,7 +14,10 @@ import {
 } from "./user-registry.ts";
 import { resolveUserLayout } from "./user-layout.ts";
 
-function user(id: string, status: "active" | "blocked" = "active"): UserRecord {
+function user(
+  id: string,
+  status: "active" | "blocked" | "provisioning" = "active",
+): UserRecord {
   return {
     id: parseTelegramUserId(id)!,
     role: id === "123" ? "owner" : "user",
@@ -67,15 +70,18 @@ void test("worker unit fixes cwd, identity, port, paths, and loopback bootstrap"
   assert.doesNotMatch(unit, /0\.0\.0\.0/u);
 });
 
-void test("desired units contain active registry users only", () => {
+void test("desired units contain active and non-routable provisioning users", () => {
   const registry: UserRegistry = {
     schema: "iva-users/v1",
     revision: 3,
-    users: [user("123"), user("456", "blocked")],
+    users: [user("123"), user("456", "blocked"), user("789", "provisioning")],
   };
 
   const units = desiredWorkerUnits(registry, runtime);
 
-  assert.deepEqual([...units.keys()], ["iva-worker-123.service"]);
+  assert.deepEqual(
+    [...units.keys()],
+    ["iva-worker-123.service", "iva-worker-789.service"],
+  );
   assert.match(units.get("iva-worker-123.service")!, /IVA_WORKER_USER_ID=123/u);
 });

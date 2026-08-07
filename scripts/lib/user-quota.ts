@@ -10,10 +10,7 @@ import {
   releaseLock,
   saveJsonAtomic,
 } from "../../agent/lib/json-store.ts";
-import type {
-  TelegramUserId,
-  UserLimits,
-} from "./user-registry.ts";
+import type { TelegramUserId, UserLimits } from "./user-registry.ts";
 import type {
   TelegramQueueMessage,
   TelegramQueueUpdate,
@@ -50,8 +47,7 @@ export type QuotaDenialReason =
   | "storage"
   | "concurrent-turns";
 export type QuotaDecision =
-  | { allowed: true }
-  | { allowed: false; reason: QuotaDenialReason };
+  { allowed: true } | { allowed: false; reason: QuotaDenialReason };
 export type TurnReservation =
   | { allowed: true; token: string }
   | { allowed: false; reason: "concurrent-turns" };
@@ -187,10 +183,15 @@ async function loadState(
   now: number,
 ): Promise<UserQuotaState> {
   const parsed = QuotaStateSchema.safeParse(
-    await loadJsonStrict<unknown>(quotaFile(controlDir, userId), emptyState(now)),
+    await loadJsonStrict<unknown>(
+      quotaFile(controlDir, userId),
+      emptyState(now),
+    ),
   );
   if (!parsed.success) {
-    throw new Error(`invalid quota state for user ${userId}: ${z.prettifyError(parsed.error)}`);
+    throw new Error(
+      `invalid quota state for user ${userId}: ${z.prettifyError(parsed.error)}`,
+    );
   }
   refresh(parsed.data, now);
   return parsed.data;
@@ -240,7 +241,8 @@ export async function chargeUserIngress(
 ): Promise<QuotaDecision> {
   const now = input.now ?? Date.now();
   return mutateState(controlDir, userId, now, (state): QuotaDecision => {
-    if (state.chargedIngress.includes(input.ingressId)) return { allowed: true };
+    if (state.chargedIngress.includes(input.ingressId))
+      return { allowed: true };
     if ((input.attachmentBytes ?? 0) > limits.attachmentBytes)
       return { allowed: false, reason: "attachment" };
     if ((input.storageBytes ?? 0) > limits.storageBytes)
@@ -251,7 +253,10 @@ export async function chargeUserIngress(
       return { allowed: false, reason: "requests-hour" };
     if (state.requestsDay + 1 > limits.requestsPerDay)
       return { allowed: false, reason: "requests-day" };
-    if (state.audioSecondsDay + (input.audioSeconds ?? 0) > limits.audioSecondsPerDay)
+    if (
+      state.audioSecondsDay + (input.audioSeconds ?? 0) >
+      limits.audioSecondsPerDay
+    )
       return { allowed: false, reason: "audio-day" };
 
     state.requestsHour += 1;

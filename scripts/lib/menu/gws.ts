@@ -9,7 +9,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, writeFile, chmod, rm } from "node:fs/promises";
 import { execFile } from "node:child_process";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
 import {
   startAuth,
@@ -23,8 +23,6 @@ import {
 
 const SID = "gws";
 const PARENT = "r";
-const CONFIG_DIR = join(homedir(), ".config/gws");
-const SECRET_PATH = join(CONFIG_DIR, "client_secret.json");
 const CACHE_TTL_MS = 60_000;
 const SCOPES = AUTH_SERVICES.split(",").join(", ");
 type AuthStatus = "missing" | "unauth" | "ok";
@@ -44,6 +42,7 @@ type AwaitText = {
 type MenuState = {
   chatId: number;
   userId?: string;
+  personalRoot?: string;
   awaitText: AwaitText | null;
   gwsAuth?: GwsAuth | null;
 };
@@ -64,7 +63,7 @@ type ClientSecret = {
   installed?: { client_id?: unknown };
   web?: { client_id?: unknown };
 };
-let cache: { at: number; status: AuthStatus | null } = { at: 0, status: null };
+const cache = new Map<string, { at: number; status: AuthStatus }>();
 
 const isPrivate = (st: MenuState) => Number(st.chatId) > 0;
 const sleep = (ms: number) =>
@@ -77,12 +76,25 @@ function errorMessage(error: unknown): string {
 // Проба авторизации. Возвращает "missing" (нет бинаря gws), "unauth" (код 2) или "ok".
 // Неавторизованный gws выходит с кодом 2 сразу (без сети); авторизованный `+triage` может
 // не уложиться в 1.5с — таймаут трактуем как «похоже, подключено» (код != 2).
-function probeAuth(): Promise<AuthStatus> {
+function personalHome(st: MenuState): string {
+  if (st.personalRoot && isAbsolute(st.personalRoot)) return st.personalRoot;
+  return homedir();
+}
+
+function configDir(st: MenuState): string {
+  return join(personalHome(st), ".config", "gws");
+}
+
+function secretPath(st: MenuState): string {
+  return join(configDir(st), "client_secret.json");
+}
+
+function probeAuth(st: MenuState): Promise<AuthStatus> {
   return new Promise((resolve: (status: AuthStatus) => void) => {
     execFile(
       gwsBin(),
       ["gmail", "+triage"],
-      { timeout: 1500, encoding: "utf8", env: childEnv() },
+      { timeout: 1500, encoding: "utf8", env: childEnv(personalHome(st)) },
       (err) => {
         if (err && err.code === "ENOENT") return resolve("missing");
         const code = typeof err?.code === "number" ? err.code : err ? 1 : 0;
@@ -92,14 +104,16 @@ function probeAuth(): Promise<AuthStatus> {
   });
 }
 
-async function authStatus() {
-  if (cache.status && Date.now() - cache.at < CACHE_TTL_MS) return cache.status;
-  const status = await probeAuth();
-  cache = { at: Date.now(), status };
+async function authStatus(st: MenuState) {
+  const key = configDir(st);
+  const current = cache.get(key);
+  if (current && Date.now() - current.at < CACHE_TTL_MS) return current.status;
+  const status = await probeAuth(st);
+  cache.set(key, { at: Date.now(), status });
   return status;
 }
 
-const invalidate = () => (cache = { at: 0, status: null });
+const invalidate = (st: MenuState) => cache.delete(configDir(st));
 
 // Прибрать detached-процесс `gws auth login` и его temp-лог (в логе — OAuth-URL).
 // Вызывается при повторном «Подключить», при возврате на экран с висящей авторизацией
@@ -160,9 +174,9 @@ export default {
     // Возврат на экран (отмена, «Назад») с незавершённой авторизацией: awaitText уже снят
     // движком, код принять некому — приберём процесс и лог, а не оставим их висеть.
     if (st.gwsAuth && st.awaitText?.kind !== "gwsauthcode") reapAuth(st);
-    if (!existsSync(SECRET_PATH)) return instructions(ctx);
+    if (!existsSync(secretPath(st))) return instructions(ctx);
 
-    const status = await authStatus();
+    const status = await authStatus(st);
     const head = T("🔗 Google Workspace", "🔗 Google Workspace");
     const checkRow = [
       ctx.btn(T("Check again", "Проверить"), `iva_menu:${SID}:do:check`),
@@ -258,7 +272,7 @@ export default {
     if (step === "connect") {
       const T = ctx.tr;
       reapAuth(st); // повторное «Подключить» не должно оставлять прежний detached-процесс
-      const challenge = await startAuth();
+      const challenge = await startAuth({ homeDir: personalHome(st) });
       if (!challenge) {
         st.awaitText = null;
         return ctx.flows.screen(
@@ -302,7 +316,7 @@ export default {
     }
 
     if (step === "check") {
-      invalidate();
+      invalidate(st);
       // Re-rendering the same status yields an identical message → Telegram "not modified" → the
       // tap looks like it did nothing. Flash a transient "checking…" first so the re-render always
       // differs and the result is visibly refreshed.
@@ -350,9 +364,9 @@ export default {
       }
       st.awaitText = null;
       try {
-        await mkdir(CONFIG_DIR, { recursive: true });
-        await writeFile(SECRET_PATH, raw, { encoding: "utf8", mode: 0o600 });
-        await chmod(SECRET_PATH, 0o600); // mode игнорируется, если файл уже существовал
+        await mkdir(configDir(st), { recursive: true });
+        await writeFile(secretPath(st), raw, { encoding: "utf8", mode: 0o600 });
+        await chmod(secretPath(st), 0o600); // mode игнорируется, если файл уже существовал
       } catch (error) {
         const message = errorMessage(error);
         return ctx.flows.screen(
@@ -364,7 +378,7 @@ export default {
           [ctx.backRow(PARENT)],
         );
       }
-      invalidate();
+      invalidate(st);
       return ctx.flows.screen(
         st,
         ctx.tr(
@@ -396,10 +410,7 @@ export default {
       const auth = st.gwsAuth;
       const cancelRow = [[ctx.btn(T("Cancel", "Отмена"), `iva_menu:${SID}:o`)]];
       const stateUserId = String(st.userId ?? st.chatId);
-      if (
-        !auth?.port ||
-        !authSessionBelongsToUser(auth.userId, stateUserId)
-      ) {
+      if (!auth?.port || !authSessionBelongsToUser(auth.userId, stateUserId)) {
         st.awaitText = null;
         return ctx.flows.screen(
           st,
@@ -446,10 +457,10 @@ export default {
         );
       }
       await sleep(2500); // let gws exchange the code and write the token before we re-probe
-      invalidate();
+      invalidate(st);
       // A final status is mandatory — always edit the menu message to an explicit outcome, so the
       // user never has to guess whether the login finished. (The op is short; no working spinner.)
-      if ((await authStatus()) === "ok") {
+      if ((await authStatus(st)) === "ok") {
         return ctx.flows.screen(
           st,
           T(

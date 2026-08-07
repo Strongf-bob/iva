@@ -49,6 +49,10 @@ function lifecycle(
     startWorker: () => undefined,
     stopWorker: () => undefined,
     workerStatus: () => "stopped",
+    retireLegacyService: () => undefined,
+    restoreLegacyService: () => undefined,
+    pauseGateway: () => undefined,
+    resumeGateway: () => undefined,
     ...overrides,
   };
 }

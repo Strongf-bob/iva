@@ -8,16 +8,10 @@ type CaptureMessage = { message_id?: number };
 type CaptureState = { flow: unknown; awaitText?: unknown };
 
 test("ordinary users get personal conversation and usage controls", () => {
-  for (const command of ["/help", "/stop", "/new", "/usage"]) {
+  for (const command of ["/help", "/stop", "/new", "/usage", "/menu"]) {
     assert.equal(controlCommandAllowed(command, "user"), true, command);
   }
-  for (const command of [
-    "/menu",
-    "/restart",
-    "/update",
-    "/model",
-    "/think",
-  ]) {
+  for (const command of ["/restart", "/update", "/model", "/think"]) {
     assert.equal(controlCommandAllowed(command, "user"), false, command);
     assert.equal(controlCommandAllowed(command, "owner"), true, command);
   }

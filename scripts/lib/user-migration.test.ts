@@ -31,7 +31,10 @@ function fixture(t: { after: (fn: () => void) => void }) {
   mkdirSync(join(appRoot, "data"), { recursive: true });
   writeFileSync(join(appRoot, "data", "settings.json"), '{"language":"ru"}\n');
   mkdirSync(join(appRoot, ".eve", ".workflow-data"), { recursive: true });
-  writeFileSync(join(appRoot, ".eve", ".workflow-data", "session.json"), "{}\n");
+  writeFileSync(
+    join(appRoot, ".eve", ".workflow-data", "session.json"),
+    "{}\n",
+  );
   mkdirSync(join(appRoot, "home", ".config", "gws"), { recursive: true });
   writeFileSync(
     join(appRoot, "home", ".config", "gws", "credentials.json"),
@@ -72,7 +75,10 @@ void test("legacy owner migration copies, hashes, switches atomically, and keeps
     '{"language":"ru"}\n',
   );
   assert.equal(
-    readFileSync(join(plan.layout.root, ".config/gws/credentials.json"), "utf8"),
+    readFileSync(
+      join(plan.layout.root, ".config/gws/credentials.json"),
+      "utf8",
+    ),
     "google-owner\n",
   );
 
