@@ -49,6 +49,53 @@ The allowlist is **fail-closed: empty means Iva answers nobody.** The wizard aut
 
 At 10:00 in `ASSISTANT_TIMEZONE` Iva checks Git upstream without using the model. It sends nothing unless a higher stable `MAJOR.MINOR.PATCH` version exists, and offers each version only once. If `TELEGRAM_DIGEST_CHAT_ID` is empty, the first trusted ID is used.
 
+## Isolated multi-user mode
+
+Iva can serve up to 10 mutually untrusted Telegram users through private chats with one bot. The operator manages users only from the server terminal; Telegram has no command for listing users, reading another person's data or changing another person's limits.
+
+```bash
+# Existing installation: copy and verify the current owner's state first.
+# Omit the ID only when TELEGRAM_ALLOWED_USER_IDS contains exactly one user.
+iva users migrate-owner 123456789
+
+# Add and operate ordinary users.
+iva users add 987654321
+iva users list
+iva users block 987654321
+iva users unblock 987654321
+iva users delete 987654321 --confirm 987654321
+```
+
+`migrate-owner` is explicit, idempotent and keeps a timestamped rollback backup. It copies and verifies the legacy vault, runtime data, sessions and Google configuration, stages a non-routable worker, and activates the owner only after its exact loopback health check passes. `block` stops access but retains data. `delete` first blocks the worker, pauses the shared gateway, moves the personal directory and tenant-scoped gateway state to `data/quarantine/`, removes the registry entry, then resumes the gateway; it does not erase the quarantine automatically.
+
+Each user has independent memory, history, personal settings files, persona, schedules, Google credentials and quota accounting under `data/users/<telegram-id>/`. The model provider, model selection, Telegram bot, Deepgram account and server are shared infrastructure configured and paid by the operator. The personal Telegram userbot remains owner-only.
+
+New users receive these limits:
+
+| Resource         |          Default |
+| ---------------- | ---------------: |
+| Concurrent turns |                1 |
+| Requests         | 30/hour, 100/day |
+| Model tokens     |      500,000/day |
+| Audio            |   30 minutes/day |
+| One attachment   |            20 MB |
+| Personal storage |             1 GB |
+
+Override one or more values locally:
+
+```bash
+iva users limits 987654321 \
+  --concurrent-turns 1 \
+  --requests-hour 30 \
+  --requests-day 100 \
+  --tokens-day 500000 \
+  --audio-minutes-day 30 \
+  --attachment-mb 20 \
+  --storage-mb 1024
+```
+
+All counters use UTC hour/day boundaries. Telegram turns and background schedules share request, token and concurrency admission. Before every provider step, the remaining daily token budget also caps model output; exact provider-reported input usage is recorded after the step and closes later calls when the ceiling is reached. `/usage` shows only the caller's ledger. An ordinary user's `/menu` exposes only that user's Google setup. In personalized owner mode, `/menu` retains shared model/search/maintenance controls, owner-only userbot and personal Google; legacy-path language/persona/core/timer screens are hidden so they cannot mutate pre-migration state.
+
 ## Voice
 
 | Variable            | Default | Notes                                                                                                                                      |
