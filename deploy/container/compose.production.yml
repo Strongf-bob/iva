@@ -14,6 +14,7 @@ services:
       PORT: "8723"
       TELEGRAM_USERBOT_RUNTIME: "container"
       TELEGRAM_MCP_URL: http://telegram-userbot:8724/mcp
+      NO_PROXY: ${NO_PROXY:-iva,127.0.0.1,localhost},telegram-userbot
     ports:
       - "127.0.0.1:8723:8723"
     volumes:
@@ -68,6 +69,7 @@ services:
       PORT: "8723"
       TELEGRAM_USERBOT_RUNTIME: "container"
       TELEGRAM_MCP_URL: http://telegram-userbot:8724/mcp
+      NO_PROXY: ${NO_PROXY:-iva,127.0.0.1,localhost},telegram-userbot
     command: ["npm", "run", "poll"]
     depends_on:
       iva:
