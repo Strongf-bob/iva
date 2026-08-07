@@ -17,7 +17,18 @@ void test("private runtime state is excluded from Git and the image context", ()
   assertIgnored(".gitignore", "/memory/");
   assertIgnored(".gitignore", "/iva-runtime/");
 
-  for (const entry of [".git", ".env", "data", "memory", "vault"]) {
+  for (const entry of [
+    ".git",
+    ".env",
+    ".eve",
+    ".output",
+    ".iva-build",
+    ".iva-update",
+    "dist",
+    "data",
+    "memory",
+    "vault",
+  ]) {
     assertIgnored(".dockerignore", entry);
   }
 });

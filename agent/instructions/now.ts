@@ -6,7 +6,7 @@ import { join } from "node:path";
 // пользователя в системный промпт. Локаль следует за языком интерфейса (кнопка в /menu
 // пишет data/settings.json на лету), поэтому язык пересчитывается КАЖДЫЙ турн, а не
 // захватывается на загрузке модуля. Самодостаточна — только eve + node fs/path/Intl.
-const TIMEZONE = process.env.ASSISTANT_TIMEZONE ?? "Asia/Almaty";
+const TIMEZONE = process.env.ASSISTANT_TIMEZONE ?? "Europe/Moscow";
 const DATA_DIR = process.env.ASSISTANT_DATA_DIR ?? "data";
 
 // settings.language ("ru"|"en") → env AGENT_LANGUAGE → "ru". Продублировано инлайн, а

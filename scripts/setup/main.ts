@@ -506,7 +506,7 @@ async function main() {
   );
 
   // Already configured? Don't walk every step — ask once.
-  const prov0 = existing.MODEL_PROVIDER || "ollama";
+  const prov0 = existing.MODEL_PROVIDER || "opencode";
   const provModel =
     {
       opencode: "OPENCODE_MODEL",
@@ -1109,7 +1109,7 @@ async function main() {
   for (;;) {
     const candidate = await ask(
       `  ${t("Timezone (IANA, e.g. Asia/Almaty, Asia/Tashkent, Europe/Berlin)", "Часовой пояс (IANA, напр. Asia/Almaty, Asia/Tashkent, Europe/Moscow)")}`,
-      out.ASSISTANT_TIMEZONE || "Asia/Almaty",
+      out.ASSISTANT_TIMEZONE || "Europe/Moscow",
     );
     const timezone = validateTimeZone(candidate);
     if (timezone) {
@@ -1122,7 +1122,7 @@ async function main() {
   }
   out.ASSISTANT_VAULT_DIR = await ask(
     `  ${t("Vault directory (memory + git backup)", "Каталог vault (память + git-бэкап)")}`,
-    out.ASSISTANT_VAULT_DIR || "vault",
+    out.ASSISTANT_VAULT_DIR || "memory",
   );
   out.ASSISTANT_DATA_DIR = out.ASSISTANT_DATA_DIR || "data";
   // Off-the-beaten-path port: 3000/8000/8080 are often taken on a typical VPS (docker etc.). The server

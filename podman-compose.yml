@@ -1,0 +1,53 @@
+services:
+  iva:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: strongf-iva:local
+    env_file:
+      - .env
+    environment:
+      ASSISTANT_HOST: http://iva:8723
+      IVA_PORT: "8723"
+      PORT: "8723"
+    ports:
+      - "127.0.0.1:8723:8723"
+    volumes:
+      - ./memory:/app/memory:Z
+      - ./data:/app/data:Z
+      - ./.env:/app/.env:ro,Z
+    restart: unless-stopped
+
+  telegram-poll:
+    image: strongf-iva:local
+    env_file:
+      - .env
+    environment:
+      ASSISTANT_HOST: http://iva:8723
+      IVA_PORT: "8723"
+      PORT: "8723"
+    command: ["npm", "run", "poll"]
+    depends_on:
+      - iva
+    volumes:
+      - ./memory:/app/memory:Z
+      - ./data:/app/data:Z
+      - ./.env:/app/.env:ro,Z
+    restart: unless-stopped
+
+  memory-daily:
+    image: strongf-iva:local
+    profiles: ["manual"]
+    env_file:
+      - .env
+    environment:
+      ASSISTANT_HOST: http://iva:8723
+      IVA_PORT: "8723"
+      PORT: "8723"
+    command: ["npm", "run", "memory", "--", "daily"]
+    depends_on:
+      - iva
+    volumes:
+      - ./memory:/app/memory:Z
+      - ./data:/app/data:Z
+      - ./.env:/app/.env:ro,Z

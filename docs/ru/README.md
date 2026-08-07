@@ -9,6 +9,7 @@ Iva - self-hosted ассистент в Telegram со слоями памяти:
 - [configuration.md](configuration.md) - все переменные `.env` и мастер настройки
 - [memory.md](memory.md) - как копится память: транскрипты, выжимки, карточки, поиск
 - [security.md](security.md) - инъекции ловятся на входе, секреты вычищаются на выходе, чужим бот молчит
+- [podman.md](podman.md) - запуск этого fork через rootless Podman
 - [faq.md](faq.md) - короткие ответы про цену, модели, приватность и Obsidian
 
 **Пока только по-английски:**

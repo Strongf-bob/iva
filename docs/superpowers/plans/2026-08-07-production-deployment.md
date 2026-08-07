@@ -209,23 +209,23 @@ Expected: all commands exit 0.
 - Consumes: the validated legacy bot token and owner ID, repository deployment files, and a newly generated dedicated Ed25519 key.
 - Produces: mode-`0600` runtime secrets, persistent directories, and a forced-command deployment identity.
 
-- [ ] **Step 1: Validate migration inputs without exposing secrets**
+- [x] **Step 1: Validate migration inputs without exposing secrets**
 
 Read the legacy `.env` values in-process, require a Telegram token shape and numeric owner ID, call `https://api.telegram.org/bot<TOKEN>/getMe`, and record only the returned bot ID and username. Abort cleanup if validation fails.
 
-- [ ] **Step 2: Create runtime directories and environment atomically**
+- [x] **Step 2: Create runtime directories and environment atomically**
 
 Create `data`, `memory`, `vault`, and `deploy` with mode `0700`. Generate new `TELEGRAM_WEBHOOK_SECRET_TOKEN` and `ASSISTANT_BEARER`. Write `.env` through a temporary mode-`0600` file and rename it. Set the Telegram allowlist and digest ID to the migrated owner ID.
 
-- [ ] **Step 3: Install Compose and deploy entrypoint**
+- [x] **Step 3: Install Compose and deploy entrypoint**
 
 Copy the reviewed production Compose and deploy script into the runtime directory, preserve executable modes, and verify their SHA-256 hashes against local files.
 
-- [ ] **Step 4: Configure the restricted deployment key**
+- [x] **Step 4: Configure the restricted deployment key**
 
 Generate a dedicated Ed25519 key locally. Add its public key to `authorized_keys` with `restrict`, `command="/home/strongf/iva-runtime/deploy/deploy.sh"`, `no-agent-forwarding`, `no-port-forwarding`, `no-pty`, `no-user-rc`, and `no-X11-forwarding`. Confirm the existing administrative key remains present.
 
-- [ ] **Step 5: Verify runtime permissions and forced-command rejection**
+- [x] **Step 5: Verify runtime permissions and forced-command rejection**
 
 Run remote `stat` checks and try a harmless unsupported command using the deploy key.
 
@@ -242,23 +242,23 @@ Expected: `.env` is `600`, private directories are `700`, the unsupported comman
 - Consumes: the exact approved resource list from the design and a validated Telegram migration.
 - Produces: a clean home directory with Mihomo and rootless Docker intact.
 
-- [ ] **Step 1: Record a non-secret preflight manifest**
+- [x] **Step 1: Record a non-secret preflight manifest**
 
 Record container IDs/names/status, network names, volume names, image IDs/tags, target directory names and sizes, user-unit states, and VPN service state. Do not record environment values.
 
-- [ ] **Step 2: Stop and remove the legacy Compose projects**
+- [x] **Step 2: Stop and remove the legacy Compose projects**
 
 Run each existing Compose file with `docker compose down --remove-orphans`, then explicitly verify no container label remains for projects `ai-assistant` or `ai-assistant-v2`.
 
-- [ ] **Step 3: Remove only the approved volumes, images, units, and paths**
+- [x] **Step 3: Remove only the approved volumes, images, units, and paths**
 
 Resolve each exact name before removal. Disable and remove only `ai-assistant.service`; clear the stale `hermes-dashboard.service` failure state. Remove the approved paths and images referenced only by the old projects.
 
-- [ ] **Step 4: Run the cleanup postflight**
+- [x] **Step 4: Run the cleanup postflight**
 
 Verify every approved target is absent, no unrelated home entry disappeared, rootless Docker responds, and `mihomo.service` is still enabled and active.
 
-- [ ] **Step 5: Verify VPN behavior**
+- [x] **Step 5: Verify VPN behavior**
 
 Confirm the selector still has no Russian node, a direct request and a proxied request both complete, their egress IPs differ, and the latest selector health result is usable. Do not print the subscription URL or credentials.
 
