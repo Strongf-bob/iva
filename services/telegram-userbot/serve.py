@@ -31,6 +31,81 @@ import stat
 import sys
 from pathlib import Path
 
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
+
+
+class BearerAuthMiddleware(BaseHTTPMiddleware):
+    """Fail closed before health, MCP, or onboarding request dispatch."""
+
+    def __init__(self, app, *, token: str):
+        super().__init__(app)
+        self._expected = f"Bearer {token}"
+
+    async def dispatch(self, request, call_next):
+        if request.headers.get("authorization") != self._expected:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        return await call_next(request)
+
+
+def add_phone_onboarding_routes(app, controller) -> None:
+    """Attach the internal, non-MCP phone-login API to a Starlette app."""
+
+    async def field(request, name: str):
+        try:
+            if int(request.headers.get("content-length", "0")) > 1024:
+                raise ValueError
+            payload = await request.json()
+            value = payload.get(name) if isinstance(payload, dict) else None
+            if not isinstance(value, str):
+                raise ValueError
+            return value
+        except (TypeError, ValueError, UnicodeError):
+            return None
+        except Exception:  # noqa: BLE001 - malformed parsers stay a fixed 400
+            return None
+
+    async def invalid():
+        return JSONResponse(
+            {"state": "error", "reason": "invalid_request"}, status_code=400
+        )
+
+    async def start(request):
+        phone = await field(request, "phone")
+        return (
+            await invalid()
+            if phone is None
+            else JSONResponse(await controller.start(phone))
+        )
+
+    async def code(request):
+        value = await field(request, "code")
+        return (
+            await invalid()
+            if value is None
+            else JSONResponse(await controller.submit_code(value))
+        )
+
+    async def password(request):
+        value = await field(request, "password")
+        return (
+            await invalid()
+            if value is None
+            else JSONResponse(await controller.submit_password(value))
+        )
+
+    async def cancel(_request):
+        return JSONResponse(await controller.cancel())
+
+    async def status(_request):
+        return JSONResponse(await controller.status())
+
+    app.add_route("/onboarding/phone/start", start, methods=["POST"])
+    app.add_route("/onboarding/phone/code", code, methods=["POST"])
+    app.add_route("/onboarding/phone/password", password, methods=["POST"])
+    app.add_route("/onboarding/phone/cancel", cancel, methods=["POST"])
+    app.add_route("/onboarding/phone/status", status, methods=["GET"])
+
 
 # Explicit allowlist: upstream readOnlyHint annotations are useful but not sufficient
 # as a security boundary. New or mis-annotated tools fail closed until reviewed here.
@@ -213,11 +288,11 @@ def main() -> None:
 
     client = get_client()
 
-    # Register onboarding tools AFTER pruning so QR login always works — you must be
-    # able to connect the account even under read-only exposure.
+    # Register only the model-visible read-only status probe. Phone/code/password
+    # travel through private HTTP routes below and never become MCP tool arguments.
     from onboarding import register_onboarding_tools
 
-    register_onboarding_tools(mcp, client)
+    onboarding = register_onboarding_tools(mcp, client)
 
     # Enforce the anti-ban safety guide as server behavior (FloodWait compliance,
     # pacing, circuit-breaker) by wrapping the client's outbound methods in place.
@@ -226,17 +301,6 @@ def main() -> None:
     install_guardrails(client)
 
     import uvicorn
-    from starlette.middleware.base import BaseHTTPMiddleware
-    from starlette.responses import JSONResponse
-
-    expected = f"Bearer {token}"
-
-    class BearerAuthMiddleware(BaseHTTPMiddleware):
-        async def dispatch(self, request, call_next):
-            if request.headers.get("authorization") != expected:
-                return JSONResponse({"error": "unauthorized"}, status_code=401)
-            return await call_next(request)
-
     class EnsureConnectedMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
             try:
@@ -270,10 +334,11 @@ def main() -> None:
 
         app = mcp.streamable_http_app()
         app.add_route("/healthz", health, methods=["GET"])
+        add_phone_onboarding_routes(app, onboarding)
         # add_middleware stacks outermost-last: BearerAuth runs first (reject before
         # we bother reconnecting), then EnsureConnected.
         app.add_middleware(EnsureConnectedMiddleware)
-        app.add_middleware(BearerAuthMiddleware)
+        app.add_middleware(BearerAuthMiddleware, token=token)
 
         print(f"telegram-userbot: listening on http://{host}:{port}/mcp", file=sys.stderr)
         config = uvicorn.Config(app, host=host, port=port, log_level="warning", lifespan="on")
