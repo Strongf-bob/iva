@@ -23,10 +23,12 @@
 ### Task 1: Private container runtime state
 
 **Files:**
+
 - Create: `scripts/lib/userbot-container-runtime.ts`
 - Test: `scripts/lib/userbot-container-runtime.test.ts`
 
 **Interfaces:**
+
 - Produces: `userbotRuntimePaths(root: string)`, `readUserbotCredentials(root: string)`, `writeUserbotCredentials(root: string, apiId: string, apiHash: string)`, `enableContainerUserbot(root: string)`, and `disableContainerUserbot(root: string)`.
 - Guarantees: atomic mode-`0600` secret writes, no secret echo, idempotent token generation, and marker lifecycle.
 
@@ -40,13 +42,18 @@ void test("container credentials and token are private and marker lifecycle is i
     TELEGRAM_API_ID: "12345",
     TELEGRAM_API_HASH: "abcdef123456",
   });
-  assert.equal((await stat(userbotRuntimePaths(root).credentials)).mode & 0o777, 0o600);
+  assert.equal(
+    (await stat(userbotRuntimePaths(root).credentials)).mode & 0o777,
+    0o600,
+  );
   await enableContainerUserbot(root);
   const first = await readFile(userbotRuntimePaths(root).token, "utf8");
   await enableContainerUserbot(root);
   assert.equal(await readFile(userbotRuntimePaths(root).token, "utf8"), first);
   await disableContainerUserbot(root);
-  await assert.rejects(stat(userbotRuntimePaths(root).enabled), { code: "ENOENT" });
+  await assert.rejects(stat(userbotRuntimePaths(root).enabled), {
+    code: "ENOENT",
+  });
 });
 ```
 
@@ -80,12 +87,14 @@ git commit -m "feat(userbot): add private container runtime state" -m "Store con
 ### Task 2: Container-aware menu and health probe
 
 **Files:**
+
 - Modify: `scripts/lib/menu/userbot.ts`
 - Modify: `scripts/lib/menu/userbot.test.ts`
 - Modify: `scripts/lib/userbot-health.ts`
 - Modify: `scripts/lib/userbot-health.test.ts`
 
 **Interfaces:**
+
 - Consumes: Task 1 runtime helpers.
 - Produces: container mode selected by `TELEGRAM_USERBOT_RUNTIME=container`; health URL selected by `TELEGRAM_MCP_URL`; legacy systemd fallback otherwise.
 
@@ -96,11 +105,16 @@ test("container menu saves credentials outside .env and toggles the marker", asy
   process.env.TELEGRAM_USERBOT_RUNTIME = "container";
   await userbot.texts.ubcred("abcdef123456", {}, stateWithApiId, ctx);
   assert.equal(await readFile(envPath, "utf8"), "UNCHANGED=1\n");
-  assert.match(await readFile(join(root, "data/telegram-userbot.env"), "utf8"), /TELEGRAM_API_ID=12345/);
+  assert.match(
+    await readFile(join(root, "data/telegram-userbot.env"), "utf8"),
+    /TELEGRAM_API_ID=12345/,
+  );
   await userbot.on("do", ["setup"], state, ctx);
   await stat(join(root, "data/telegram-userbot.enabled"));
   await userbot.on("do", ["off"], state, ctx);
-  await assert.rejects(stat(join(root, "data/telegram-userbot.enabled")), { code: "ENOENT" });
+  await assert.rejects(stat(join(root, "data/telegram-userbot.enabled")), {
+    code: "ENOENT",
+  });
 });
 ```
 
@@ -160,12 +174,14 @@ git commit -m "fix(userbot): support container onboarding lifecycle" -m "Route p
 ### Task 3: Sidecar credential loader and supervisor
 
 **Files:**
+
 - Create: `services/telegram-userbot/container_supervisor.py`
 - Create: `services/telegram-userbot/test_container_supervisor.py`
 - Modify: `services/telegram-userbot/serve.py`
 - Modify: `services/telegram-userbot/test_health.py`
 
 **Interfaces:**
+
 - Consumes: `/app/data/telegram-userbot.env`, `.token`, and `.enabled` as read-only files.
 - Produces: one supervised `serve.py` child; `load_credentials(path: Path) -> dict[str, str]`; sidecar exit remains controlled by Docker.
 
@@ -224,11 +240,13 @@ git commit -m "feat(userbot): supervise the container proxy" -m "Start exactly o
 ### Task 4: Internal MCP URL and read-only registry contract
 
 **Files:**
+
 - Modify: `agent/connections/telegram-userbot.ts`
 - Create: `services/telegram-userbot/test_readonly_registry.py`
 - Modify: `.github/workflows/ci.yml`
 
 **Interfaces:**
+
 - Consumes: `TELEGRAM_MCP_URL` with localhost fallback.
 - Produces: Eve MCP connection to the internal sidecar and a reproducible registry allow/deny test.
 
@@ -273,6 +291,7 @@ git commit -m "feat(userbot): connect IVA to the read-only sidecar" -m "Use the 
 ### Task 5: Immutable image, Compose sidecar, and deployment contract
 
 **Files:**
+
 - Modify: `Containerfile`
 - Modify: `deploy/container/compose.production.yml`
 - Modify: `deploy/container/deploy.sh`
@@ -281,6 +300,7 @@ git commit -m "feat(userbot): connect IVA to the read-only sidecar" -m "Use the 
 - Modify: `scripts/production/deploy-script.test.ts`
 
 **Interfaces:**
+
 - Consumes: immutable `${IVA_IMAGE}`, shared `/app/data:ro`, sidecar-only `telegram-userbot-state`, and internal network.
 - Produces: always-running supervisor with no public port and deploy health/restart verification.
 
@@ -291,7 +311,10 @@ assert.match(compose, /telegram-userbot:/u);
 assert.match(compose, /TELEGRAM_EXPOSED_TOOLS: "read-only"/u);
 assert.doesNotMatch(userbotServiceBlock, /ports:/u);
 assert.match(userbotServiceBlock, /\.\/data:\/app\/data:ro/u);
-assert.match(userbotServiceBlock, /telegram-userbot-state:\/app\/userbot-state/u);
+assert.match(
+  userbotServiceBlock,
+  /telegram-userbot-state:\/app\/userbot-state/u,
+);
 assert.doesNotMatch(ivaServiceBlock, /telegram-userbot-state/u);
 assert.match(containerfile, /uv pip sync[\s\S]*requirements\.lock/u);
 ```
@@ -348,10 +371,12 @@ git commit -m "ci(userbot): deploy the hardened read-only sidecar" -m "Bake hash
 ### Task 6: Full verification, documentation audit, review, and production rollout
 
 **Files:**
+
 - Modify if required by finished behavior: `README.md`
 - Create: `docs/security/2026-08-07-container-userbot-readonly-audit.md`
 
 **Interfaces:**
+
 - Consumes: all prior tasks and the approved design.
 - Produces: fresh local/CI evidence, final security recommendation, merged release, production verification, and owner QR checkpoint.
 

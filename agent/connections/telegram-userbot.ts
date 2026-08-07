@@ -10,8 +10,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const port = process.env.TELEGRAM_MCP_PORT ?? "8724";
-const url =
-  process.env.TELEGRAM_MCP_URL ?? `http://127.0.0.1:${port}/mcp`;
+const url = process.env.TELEGRAM_MCP_URL ?? `http://127.0.0.1:${port}/mcp`;
 
 // Токен пишет `iva userbot setup` в data/telegram-userbot.token (тот же файл читает прокси).
 // Читаем при КАЖДОМ вызове (getToken), а не на старте: iva не нужно перезапускать после

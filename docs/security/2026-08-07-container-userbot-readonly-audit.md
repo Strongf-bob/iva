@@ -1,6 +1,6 @@
 # Containerized read-only Telegram userbot: security audit
 
-Date: 2026-08-07  
+Date: 2026-08-07
 Scope: the container runtime, MCP registry, onboarding lifecycle, deployment
 contract, and the IVA-to-Telegram trust path introduced by
 `strongf/container-userbot-readonly`.

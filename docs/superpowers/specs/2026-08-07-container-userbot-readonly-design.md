@@ -73,12 +73,12 @@ IVA. It receives no Docker socket, SSH material, host project checkout, main
 
 Four untracked runtime artifacts are used:
 
-| Artifact | Mounted into IVA | Mounted into sidecar | Purpose |
-|---|---:|---:|---|
-| `data/telegram-userbot.env` | read/write | read-only | `api_id` and `api_hash` entered by the owner |
-| `data/telegram-userbot.token` | read/write | read-only | bearer token shared by IVA and MCP proxy |
-| `data/telegram-userbot.enabled` | read/write | read-only | explicit lifecycle marker / kill switch |
-| dedicated `telegram-userbot-state` volume | no | read/write | Telethon SQLite session and MTProto auth key |
+| Artifact                                  | Mounted into IVA | Mounted into sidecar | Purpose                                      |
+| ----------------------------------------- | ---------------: | -------------------: | -------------------------------------------- |
+| `data/telegram-userbot.env`               |       read/write |            read-only | `api_id` and `api_hash` entered by the owner |
+| `data/telegram-userbot.token`             |       read/write |            read-only | bearer token shared by IVA and MCP proxy     |
+| `data/telegram-userbot.enabled`           |       read/write |            read-only | explicit lifecycle marker / kill switch      |
+| dedicated `telegram-userbot-state` volume |               no |           read/write | Telethon SQLite session and MTProto auth key |
 
 Credential and token files are atomically written with mode `0600`; the marker
 contains no secret. The sidecar validates credential syntax and refuses files
@@ -171,60 +171,60 @@ lifecycle marker, reveal credentials, or perform a Telegram mutation.
 
 ### AI-SAFE coverage for this change
 
-| Control | Design status | Required evidence before release |
-|---|---|---|
-| `YAISAFE.INPUT.1` Prompt Injection | partial | existing injection tests plus a tool-result canary proving no Telegram write tool exists |
-| `YAISAFE.INPUT.2` Denial of Service | partial | health timeout and container CPU/RAM/PID limits |
-| `YAISAFE.INPUT.3` Improper Output Handling | partial | strict credential parser and no shell evaluation |
-| `YAISAFE.EXEC.1` Tool Misuse | designed | enumerate the live MCP registry and reject every mutating tool family |
-| `YAISAFE.EXEC.2` Privilege Escalation | designed | Compose assertions for mounts, capabilities, ports, resources, and session isolation |
-| `YAISAFE.EXEC.3` Tool Poisoning | partial | MCP results remain data; bounded canary regression without downstream mutation |
-| `YAISAFE.EXEC.4` Auth Bypass | designed | missing/wrong bearer negative tests and owner-only menu tests |
-| `YAISAFE.INFRA.1` Supply Chain | designed | hash-locked Python install in image and existing lock reproducibility CI |
-| `YAISAFE.INFRA.2` Resource Overload | designed | bounded supervisor retry plus container limits and probe timeout |
-| `YAISAFE.INFRA.3` Cross-Agent Poisoning | not applicable | no new agent-to-agent channel; the sidecar is a scoped MCP tool server |
-| `YAISAFE.LOGIC.1` Jailbreaking | partial | server-side read-only registry remains effective regardless of model output |
-| `YAISAFE.LOGIC.2` Reasoning Collapse | unchanged | existing IVA step/tool/time limits; no autonomous sidecar loop |
-| `YAISAFE.LOGIC.3` Goal Manipulation | partial | no Telegram mutation capability and explicit user-request boundary |
-| `YAISAFE.LOGIC.4` Overwhelming HITL | not applicable | this integration exposes no consequential write approvals |
-| `YAISAFE.DATA.1` Knowledge Poisoning | partial | Telegram content is marked untrusted and cannot authorize tool widening |
-| `YAISAFE.DATA.2` Sensitive Disclosure | partial | session isolation, secret-safe logs, owner allowlist; model still reads requested personal data |
-| `YAISAFE.DATA.3` Retrieval Manipulation | partial | Telegram search results are untrusted and read-only; ranking remains upstream-controlled |
-| `YAISAFE.DATA.4` Embedding Inversion | not applicable | this change adds no embeddings or vector store |
+| Control                                    | Design status  | Required evidence before release                                                                |
+| ------------------------------------------ | -------------- | ----------------------------------------------------------------------------------------------- |
+| `YAISAFE.INPUT.1` Prompt Injection         | partial        | existing injection tests plus a tool-result canary proving no Telegram write tool exists        |
+| `YAISAFE.INPUT.2` Denial of Service        | partial        | health timeout and container CPU/RAM/PID limits                                                 |
+| `YAISAFE.INPUT.3` Improper Output Handling | partial        | strict credential parser and no shell evaluation                                                |
+| `YAISAFE.EXEC.1` Tool Misuse               | designed       | enumerate the live MCP registry and reject every mutating tool family                           |
+| `YAISAFE.EXEC.2` Privilege Escalation      | designed       | Compose assertions for mounts, capabilities, ports, resources, and session isolation            |
+| `YAISAFE.EXEC.3` Tool Poisoning            | partial        | MCP results remain data; bounded canary regression without downstream mutation                  |
+| `YAISAFE.EXEC.4` Auth Bypass               | designed       | missing/wrong bearer negative tests and owner-only menu tests                                   |
+| `YAISAFE.INFRA.1` Supply Chain             | designed       | hash-locked Python install in image and existing lock reproducibility CI                        |
+| `YAISAFE.INFRA.2` Resource Overload        | designed       | bounded supervisor retry plus container limits and probe timeout                                |
+| `YAISAFE.INFRA.3` Cross-Agent Poisoning    | not applicable | no new agent-to-agent channel; the sidecar is a scoped MCP tool server                          |
+| `YAISAFE.LOGIC.1` Jailbreaking             | partial        | server-side read-only registry remains effective regardless of model output                     |
+| `YAISAFE.LOGIC.2` Reasoning Collapse       | unchanged      | existing IVA step/tool/time limits; no autonomous sidecar loop                                  |
+| `YAISAFE.LOGIC.3` Goal Manipulation        | partial        | no Telegram mutation capability and explicit user-request boundary                              |
+| `YAISAFE.LOGIC.4` Overwhelming HITL        | not applicable | this integration exposes no consequential write approvals                                       |
+| `YAISAFE.DATA.1` Knowledge Poisoning       | partial        | Telegram content is marked untrusted and cannot authorize tool widening                         |
+| `YAISAFE.DATA.2` Sensitive Disclosure      | partial        | session isolation, secret-safe logs, owner allowlist; model still reads requested personal data |
+| `YAISAFE.DATA.3` Retrieval Manipulation    | partial        | Telegram search results are untrusted and read-only; ranking remains upstream-controlled        |
+| `YAISAFE.DATA.4` Embedding Inversion       | not applicable | this change adds no embeddings or vector store                                                  |
 
 ### SHAD attack-family decisions
 
-| Family | Status at design | Release check |
-|---|---|---|
-| IO-01/02/03/04 direct, indirect, encoded, multi-turn injection | partial | existing policy suite plus no-write registry invariant |
-| IO-05 system prompt leakage | unchanged partial | secrets absent from prompts and logs |
-| IO-06 improper output handling | designed | malformed credential and file-syntax negative tests |
-| IO-07 context/resource flooding | partial | container and request time limits; upstream result-size risk remains |
-| RP-01/02/03/04 jailbreak, goal change, collapse, refusal | partial | hard read-only boundary independent of model compliance |
-| RP-05 overwhelming HITL | not applicable | no write approvals |
-| RAG-01/02/03/04/05/06 | not applicable | no RAG, shared long-term memory, tenant corpus, deletion index, or vector store is added |
-| TOOL-01 excessive agency | designed | only read and onboarding tools registered |
-| TOOL-02/03/04 poisoning, shadowing, rug pull | partial | pinned dependency and registry enumeration; upstream compromise remains residual |
-| TOOL-05 parameter mutation | not applicable | no consequential write parameters |
-| TOOL-06 confused deputy | partial | single owner plus bearer; requested peer reads remain broad within that account |
-| TOOL-07 result injection | partial | canary result must not trigger unavailable mutation |
-| TOOL-08 dangerous composition | partial | account reads can still be combined with other IVA output/tools; no Telegram write path |
-| ID-01 broad credentials | partial | session isolated, but Telethon session inherently reads the whole account |
-| ID-02 identity spoofing | designed | private allowlisted onboarding and bearer-bound MCP |
-| ID-03 secret/PII exfiltration | partial | requested personal Telegram data reaches the configured model; accepted owner scope |
-| ID-04 log leakage | designed | synthetic canary scan of container and application logs |
-| EXEC-01 code/command injection | designed | parser never evaluates shell; fixed argv entrypoint |
-| EXEC-02 sandbox escape | partial | hardened container and narrow mounts; shared host kernel remains residual |
-| EXEC-03 resource exhaustion | designed | cgroup/PID limits, timeout, bounded restart delay |
-| EXEC-04 supply chain | designed | hash-pinned Python dependencies installed during immutable build |
-| EXEC-05 unsafe deploy | unchanged partial | protected CI/CD and immutable rollback image |
-| A2A-01/02/03/04 | not applicable | no multi-agent delegation channel is added |
-| MM-01/02/03/04 | unchanged | this feature adds no new media processing path |
-| OPS-01 observability | partial | states and failures logged without payloads or secrets |
-| OPS-02 kill switch | designed | removing enabled marker stops the sole Telethon process |
-| OPS-03 rollback/recovery | designed | immutable image rollback preserves sidecar-only session volume |
-| OPS-04 fail-open | designed | missing files, token, auth, or proxy all fail closed |
-| OPS-05 incident response | partial | disable marker, stop sidecar, revoke Telegram session, rotate bearer |
+| Family                                                         | Status at design  | Release check                                                                            |
+| -------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------- |
+| IO-01/02/03/04 direct, indirect, encoded, multi-turn injection | partial           | existing policy suite plus no-write registry invariant                                   |
+| IO-05 system prompt leakage                                    | unchanged partial | secrets absent from prompts and logs                                                     |
+| IO-06 improper output handling                                 | designed          | malformed credential and file-syntax negative tests                                      |
+| IO-07 context/resource flooding                                | partial           | container and request time limits; upstream result-size risk remains                     |
+| RP-01/02/03/04 jailbreak, goal change, collapse, refusal       | partial           | hard read-only boundary independent of model compliance                                  |
+| RP-05 overwhelming HITL                                        | not applicable    | no write approvals                                                                       |
+| RAG-01/02/03/04/05/06                                          | not applicable    | no RAG, shared long-term memory, tenant corpus, deletion index, or vector store is added |
+| TOOL-01 excessive agency                                       | designed          | only read and onboarding tools registered                                                |
+| TOOL-02/03/04 poisoning, shadowing, rug pull                   | partial           | pinned dependency and registry enumeration; upstream compromise remains residual         |
+| TOOL-05 parameter mutation                                     | not applicable    | no consequential write parameters                                                        |
+| TOOL-06 confused deputy                                        | partial           | single owner plus bearer; requested peer reads remain broad within that account          |
+| TOOL-07 result injection                                       | partial           | canary result must not trigger unavailable mutation                                      |
+| TOOL-08 dangerous composition                                  | partial           | account reads can still be combined with other IVA output/tools; no Telegram write path  |
+| ID-01 broad credentials                                        | partial           | session isolated, but Telethon session inherently reads the whole account                |
+| ID-02 identity spoofing                                        | designed          | private allowlisted onboarding and bearer-bound MCP                                      |
+| ID-03 secret/PII exfiltration                                  | partial           | requested personal Telegram data reaches the configured model; accepted owner scope      |
+| ID-04 log leakage                                              | designed          | synthetic canary scan of container and application logs                                  |
+| EXEC-01 code/command injection                                 | designed          | parser never evaluates shell; fixed argv entrypoint                                      |
+| EXEC-02 sandbox escape                                         | partial           | hardened container and narrow mounts; shared host kernel remains residual                |
+| EXEC-03 resource exhaustion                                    | designed          | cgroup/PID limits, timeout, bounded restart delay                                        |
+| EXEC-04 supply chain                                           | designed          | hash-pinned Python dependencies installed during immutable build                         |
+| EXEC-05 unsafe deploy                                          | unchanged partial | protected CI/CD and immutable rollback image                                             |
+| A2A-01/02/03/04                                                | not applicable    | no multi-agent delegation channel is added                                               |
+| MM-01/02/03/04                                                 | unchanged         | this feature adds no new media processing path                                           |
+| OPS-01 observability                                           | partial           | states and failures logged without payloads or secrets                                   |
+| OPS-02 kill switch                                             | designed          | removing enabled marker stops the sole Telethon process                                  |
+| OPS-03 rollback/recovery                                       | designed          | immutable image rollback preserves sidecar-only session volume                           |
+| OPS-04 fail-open                                               | designed          | missing files, token, auth, or proxy all fail closed                                     |
+| OPS-05 incident response                                       | partial           | disable marker, stop sidecar, revoke Telegram session, rotate bearer                     |
 
 Native unit, Python, Compose, and bounded integration tests are the appropriate
 evaluation method for this change. Promptfoo, Garak, PyRIT, and FuzzyAI would not

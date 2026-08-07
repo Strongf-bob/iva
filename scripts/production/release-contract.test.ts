@@ -41,7 +41,10 @@ void test("the production image uses Node 24 and a non-root runtime user", () =>
     containerfile,
     /^LABEL org\.opencontainers\.image\.source="https:\/\/github\.com\/Strongf-bob\/iva"$/mu,
   );
-  assert.match(containerfile, /uv venv --python python3 \/opt\/iva-userbot-venv/u);
+  assert.match(
+    containerfile,
+    /uv venv --python python3 \/opt\/iva-userbot-venv/u,
+  );
   assert.match(
     containerfile,
     /uv pip sync --python \/opt\/iva-userbot-venv\/bin\/python[\s\\]*--require-hashes[\s\\]*--strict[\s\\]*services\/telegram-userbot\/requirements\.lock/u,
@@ -102,10 +105,7 @@ void test("production Compose requires an immutable image and narrow mounts", ()
   assert.match(userbot, /TELEGRAM_EXPOSED_TOOLS: "read-only"/u);
   assert.match(userbot, /TELEGRAM_MCP_HOST: "0\.0\.0\.0"/u);
   assert.match(userbot, /\.\/data:\/app\/data:ro/u);
-  assert.match(
-    userbot,
-    /telegram-userbot-state:\/app\/userbot-state/u,
-  );
+  assert.match(userbot, /telegram-userbot-state:\/app\/userbot-state/u);
   assert.match(userbot, /cap_drop:\s*\n\s*- ALL/u);
   assert.match(userbot, /no-new-privileges:true/u);
   assert.match(userbot, /pids_limit: 128/u);

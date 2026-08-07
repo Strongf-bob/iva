@@ -137,7 +137,8 @@ test("container menu stores credentials outside .env and toggles the sidecar mar
   const previousRuntime = process.env.TELEGRAM_USERBOT_RUNTIME;
   process.env.TELEGRAM_USERBOT_RUNTIME = "container";
   t.after(() => {
-    if (previousRuntime === undefined) delete process.env.TELEGRAM_USERBOT_RUNTIME;
+    if (previousRuntime === undefined)
+      delete process.env.TELEGRAM_USERBOT_RUNTIME;
     else process.env.TELEGRAM_USERBOT_RUNTIME = previousRuntime;
   });
 
@@ -156,7 +157,10 @@ test("container menu stores credentials outside .env and toggles the sidecar mar
     deps: {
       root,
       envPath,
-      probeUserbotHealth: async () => ({ state: "off", reason: "marker_absent" }),
+      probeUserbotHealth: async () => ({
+        state: "off",
+        reason: "marker_absent",
+      }),
       log: (...parts: unknown[]) => {
         rendered.push({ text: parts.map(String).join(" "), rows: [] });
       },
@@ -193,9 +197,8 @@ test("container menu stores credentials outside .env and toggles the sidecar mar
   );
 
   await userbot.on("do", ["off"], state, ctx);
-  await assert.rejects(
-    stat(join(root, "data", "telegram-userbot.enabled")),
-    { code: "ENOENT" },
-  );
+  await assert.rejects(stat(join(root, "data", "telegram-userbot.enabled")), {
+    code: "ENOENT",
+  });
   assert.doesNotMatch(JSON.stringify(rendered), new RegExp(apiHash));
 });
