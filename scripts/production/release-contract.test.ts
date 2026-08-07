@@ -120,6 +120,17 @@ void test("deployment waits for successful main CI and keeps least privilege", (
   assert.doesNotMatch(workflow, /DEPLOY_KNOWN_HOSTS/u);
   assert.doesNotMatch(workflow, /pull_request_target/u);
 
+  const ciWorkflow = read(".github/workflows/ci.yml");
+  assert.match(ciWorkflow, /Validate production Compose/u);
+  assert.match(ciWorkflow, /IVA_ENV_FILE=runtime\.env\.example/u);
+  assert.match(ciWorkflow, /docker compose/u);
+  assert.match(ciWorkflow, /-f deploy\/container\/compose\.production\.yml/u);
+  assert.match(ciWorkflow, /config --quiet/u);
+  assert.match(
+    read("deploy/container/runtime.env.example"),
+    /^TELEGRAM_BOT_ID=$/mu,
+  );
+
   for (const line of workflow.split("\n")) {
     if (!line.trimStart().startsWith("uses:")) continue;
     assert.match(line, /@[0-9a-f]{40}(?:\s+#.*)?$/u);

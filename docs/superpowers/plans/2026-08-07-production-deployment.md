@@ -113,7 +113,7 @@ The example includes variable names and non-secret defaults only: `MODEL_PROVIDE
 
 - [x] **Step 5: Validate Compose rendering without secrets**
 
-Run: `IVA_IMAGE=ghcr.io/strongf-bob/iva:test docker compose -f deploy/container/compose.production.yml --env-file deploy/container/runtime.env.example config --quiet`
+Run: `IVA_IMAGE=ghcr.io/strongf-bob/iva:test IVA_ENV_FILE=runtime.env.example docker compose -f deploy/container/compose.production.yml config --quiet`
 
 Expected: exit 0.
 
