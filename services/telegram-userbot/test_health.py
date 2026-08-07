@@ -1,7 +1,10 @@
 import asyncio
+import os
+import tempfile
 import unittest
+from pathlib import Path
 
-from serve import _health_payload
+from serve import _health_payload, _seed_session_env
 
 
 class FakeClient:
@@ -30,6 +33,32 @@ class HealthPayloadTest(unittest.TestCase):
 
         self.assertEqual(payload, {"state": "ready"})
         self.assertEqual(client.calls, 1)
+
+    def test_session_path_rejects_symlinks_and_public_permissions(self):
+        previous = os.environ.get("TELEGRAM_SESSION_FILE")
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                root.chmod(0o700)
+                target = root / "target.session"
+                target.write_text("secret", encoding="utf-8")
+                target.chmod(0o600)
+                session = root / "telegram-userbot.session"
+                session.symlink_to(target)
+                os.environ["TELEGRAM_SESSION_FILE"] = str(session)
+                with self.assertRaises(SystemExit):
+                    _seed_session_env()
+
+                session.unlink()
+                session.write_text("secret", encoding="utf-8")
+                session.chmod(0o644)
+                with self.assertRaises(SystemExit):
+                    _seed_session_env()
+        finally:
+            if previous is None:
+                os.environ.pop("TELEGRAM_SESSION_FILE", None)
+            else:
+                os.environ["TELEGRAM_SESSION_FILE"] = previous
 
 
 if __name__ == "__main__":

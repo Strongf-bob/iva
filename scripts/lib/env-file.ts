@@ -2,10 +2,11 @@
 // Unlike scripts/setup/main.ts's writeEnv (full rewrite in a fixed key order, drops comments),
 // this edits lines in place: comments, blank lines, unknown keys and order survive.
 import {
-  chmodSync,
+  constants,
   closeSync,
   existsSync,
   fchmodSync,
+  fstatSync,
   fsyncSync,
   openSync,
   renameSync,
@@ -76,7 +77,20 @@ export function writeEnvAtomicSync(
   text: unknown,
   { beforeRename, beforeDirectorySync }: AtomicWriteHooks = {},
 ): void {
-  if (existsSync(path)) chmodSync(path, 0o600);
+  if (existsSync(path)) {
+    const existingFd = openSync(
+      path,
+      constants.O_RDONLY | constants.O_NOFOLLOW,
+    );
+    try {
+      const metadata = fstatSync(existingFd);
+      if (!metadata.isFile())
+        throw new Error("env path must be a regular file");
+      fchmodSync(existingFd, 0o600);
+    } finally {
+      closeSync(existingFd);
+    }
+  }
   const parent = dirname(path);
   const tmp = join(
     parent,

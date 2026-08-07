@@ -39,6 +39,12 @@ _lock = asyncio.Lock()
 _task: "asyncio.Task | None" = None
 
 
+def _record_safe_error(code: str) -> None:
+    global _state
+    _state = {"phase": "error", "detail": code}
+    print(f"telegram-userbot: qr login failed: {code}", file=sys.stderr)
+
+
 def _first_id(csv: "str | None") -> "str | None":
     if not csv:
         return None
@@ -109,9 +115,8 @@ async def _run_qr_login(client) -> None:
                 }
                 return
         _state = {"phase": "expired", "detail": "QR истёк слишком много раз — начни заново"}
-    except Exception as exc:  # noqa: BLE001
-        _state = {"phase": "error", "detail": str(exc)}
-        print(f"telegram-userbot: qr login failed: {exc}", file=sys.stderr)
+    except Exception:  # noqa: BLE001
+        _record_safe_error("qr_transport_failed")
 
 
 def register_onboarding_tools(mcp, client) -> None:
@@ -150,9 +155,9 @@ def register_onboarding_tools(mcp, client) -> None:
                 await client.sign_in(password=password)
                 _state.update(phase="authorized", detail="Аккаунт подключён")
                 return "Готово — аккаунт подключён."
-            except Exception as exc:  # noqa: BLE001
-                _state.update(phase="error", detail=str(exc))
-                return f"Не удалось войти: {exc}"
+            except Exception:  # noqa: BLE001
+                _record_safe_error("password_login_failed")
+                return "Не удалось войти: проверь пароль и начни подключение заново."
 
     async def login_status() -> str:
         """Подключён ли userbot к Telegram? Зови перед использованием остальных тулов."""
@@ -161,5 +166,17 @@ def register_onboarding_tools(mcp, client) -> None:
         return f"not_connected (phase={_state['phase']}: {_state['detail']})"
 
     read_only = ToolAnnotations(readOnlyHint=True)
-    for fn in (qr_login_start, qr_login_status, qr_login_password, login_status):
+    onboarding_action = ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+    )
+    for fn in (qr_login_status, login_status):
         mcp.add_tool(fn, name=fn.__name__, description=fn.__doc__, annotations=read_only)
+    for fn in (qr_login_start, qr_login_password):
+        mcp.add_tool(
+            fn,
+            name=fn.__name__,
+            description=fn.__doc__,
+            annotations=onboarding_action,
+        )

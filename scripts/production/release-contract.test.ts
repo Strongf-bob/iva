@@ -41,6 +41,18 @@ void test("the production image uses Node 24 and a non-root runtime user", () =>
     containerfile,
     /^LABEL org\.opencontainers\.image\.source="https:\/\/github\.com\/Strongf-bob\/iva"$/mu,
   );
+  assert.match(
+    containerfile,
+    /uv venv --python python3 \/opt\/iva-userbot-venv/u,
+  );
+  assert.match(
+    containerfile,
+    /uv pip sync --python \/opt\/iva-userbot-venv\/bin\/python[\s\\]*--require-hashes[\s\\]*--strict[\s\\]*services\/telegram-userbot\/requirements\.lock/u,
+  );
+  assert.match(
+    containerfile,
+    /COPY --from=build \/opt\/iva-userbot-venv \/opt\/iva-userbot-venv/u,
+  );
   assert.match(containerfile, /^USER node$/mu);
 });
 
@@ -48,18 +60,18 @@ void test("production Compose requires an immutable image and narrow mounts", ()
   const compose = read("deploy/container/compose.production.yml");
   assert.equal(
     compose.match(/image: \$\{IVA_IMAGE:\?IVA_IMAGE is required\}/gu)?.length,
-    2,
+    3,
   );
   assert.match(compose, /127\.0\.0\.1:8723:8723/u);
   assert.match(compose, /\/eve\/v1\/health/u);
   assert.match(compose, /condition: service_healthy/u);
-  assert.equal(compose.match(/restart: unless-stopped/gu)?.length, 2);
-  assert.equal(compose.match(/^\s+user: "0:0"$/gmu)?.length, 2);
+  assert.equal(compose.match(/restart: unless-stopped/gu)?.length, 3);
+  assert.equal(compose.match(/^\s+user: "0:0"$/gmu)?.length, 3);
   assert.equal(compose.match(/^\s+pids_limit: 512$/gmu)?.length, 2);
   assert.equal(compose.match(/^\s+mem_limit: 4g$/gmu)?.length, 2);
   assert.equal(compose.match(/^\s+cpus: "2\.0"$/gmu)?.length, 2);
-  assert.equal(compose.match(/max-size: "10m"/gu)?.length, 2);
-  assert.equal(compose.match(/max-file: "3"/gu)?.length, 2);
+  assert.equal(compose.match(/max-size: "10m"/gu)?.length, 3);
+  assert.equal(compose.match(/max-file: "3"/gu)?.length, 3);
   assert.equal(
     compose.match(
       /\/app\/node_modules\/\.cache\/eve:rw,noexec,nosuid,nodev,mode=0700/gu,
@@ -67,7 +79,6 @@ void test("production Compose requires an immutable image and narrow mounts", ()
     2,
   );
   for (const mount of [
-    "./data:/app/data",
     "./memory:/app/memory",
     "./vault:/app/vault",
     "./.eve:/app/.eve",
@@ -79,12 +90,61 @@ void test("production Compose requires an immutable image and narrow mounts", ()
       `${mount} must be mounted twice`,
     );
   }
+  assert.equal(compose.split("./data:/app/data\n").length - 1, 2);
+  assert.equal(compose.split("./data:/app/data:ro").length - 1, 1);
   assert.doesNotMatch(compose, /docker\.sock/u);
   assert.doesNotMatch(compose, /^\s*-\s*["']?8723:8723/mu);
+
+  const userbotStart = compose.indexOf(
+    "\n  telegram-userbot:\n    image: ${IVA_IMAGE:?IVA_IMAGE is required}",
+  );
+  const networksStart = compose.indexOf("\nnetworks:", userbotStart);
+  assert.notEqual(userbotStart, -1);
+  assert.notEqual(networksStart, -1);
+  const userbot = compose.slice(userbotStart, networksStart);
+  assert.match(userbot, /TELEGRAM_EXPOSED_TOOLS: "read-only"/u);
+  assert.match(userbot, /if \[ -x \/opt\/iva-userbot-venv\/bin\/python \]/u);
+  assert.match(userbot, /exec sleep infinity/u);
+  assert.match(userbot, /TELEGRAM_USERBOT_ALLOW_INERT/u);
+  assert.match(userbot, /TELEGRAM_MCP_HOST: "0\.0\.0\.0"/u);
+  assert.match(userbot, /\.\/data:\/app\/data:ro/u);
+  assert.match(userbot, /telegram-userbot-state:\/app\/userbot-state/u);
+  assert.match(userbot, /cap_drop:\s*\n\s*- ALL/u);
+  assert.match(userbot, /no-new-privileges:true/u);
+  assert.match(userbot, /pids_limit: 128/u);
+  assert.match(userbot, /mem_limit: 768m/u);
+  assert.match(userbot, /cpus: "0\.5"/u);
+  assert.doesNotMatch(userbot, /\n\s+ports:/u);
+  assert.doesNotMatch(userbot, /\.\/\.env:\/app\/\.env/u);
+  assert.doesNotMatch(userbot, /\.\/memory:|\.\/vault:|\.\/\.eve:/u);
+  assert.equal(
+    compose.match(/telegram-userbot-state:\/app\/userbot-state/gu)?.length,
+    1,
+  );
+  assert.match(compose, /^volumes:\s*\n\s+telegram-userbot-state:$/mu);
+  assert.equal(
+    compose.match(/TELEGRAM_USERBOT_RUNTIME: "container"/gu)?.length,
+    2,
+  );
+  assert.equal(
+    compose.match(/TELEGRAM_MCP_URL: http:\/\/telegram-userbot:8724\/mcp/gu)
+      ?.length,
+    2,
+  );
 
   const deployScript = read("deploy/container/deploy.sh");
   assert.match(deployScript, /docker info.*SecurityOptions/u);
   assert.match(deployScript, /rootless/u);
+  assert.match(deployScript, /ps -q telegram-userbot/u);
+  assert.match(deployScript, /telegram-userbot.*running 0/su);
+  assert.match(deployScript, /org\.opencontainers\.image\.revision/u);
+  assert.match(
+    deployScript,
+    /\/app\/deploy\/container\/compose\.production\.yml/u,
+  );
+  assert.match(deployScript, /IVA_DEPLOY_RELEASE_BUNDLE/u);
+  assert.match(deployScript, /image_supports_userbot/u);
+  assert.match(deployScript, /TELEGRAM_USERBOT_ALLOW_INERT/u);
 });
 
 void test("deployment waits for successful main CI and keeps least privilege", () => {

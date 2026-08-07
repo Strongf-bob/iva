@@ -27,8 +27,75 @@ Env:
                          (default $ASSISTANT_DATA_DIR/telegram-userbot.session, else ./telegram-userbot.session)
 """
 import os
+import stat
 import sys
 from pathlib import Path
+
+
+# Explicit allowlist: upstream readOnlyHint annotations are useful but not sufficient
+# as a security boundary. New or mis-annotated tools fail closed until reviewed here.
+APPROVED_READ_ONLY_TOOLS = frozenset(
+    {
+        "export_contacts",
+        "get_admins",
+        "get_banned_users",
+        "get_blocked_users",
+        "get_bot_info",
+        "get_chat",
+        "get_chats",
+        "get_common_chats",
+        "get_contact_chats",
+        "get_contact_ids",
+        "get_direct_chat_by_contact",
+        "get_drafts",
+        "get_folder",
+        "get_full_chat",
+        "get_full_user",
+        "get_gif_search",
+        "get_history",
+        "get_last_interaction",
+        "get_me",
+        "get_media_info",
+        "get_message_context",
+        "get_message_link",
+        "get_message_reactions",
+        "get_message_read_by",
+        "get_messages",
+        "get_participants",
+        "get_pinned_messages",
+        "get_privacy_settings",
+        "get_recent_actions",
+        "get_scheduled_messages",
+        "get_sticker_sets",
+        "get_user_photos",
+        "get_user_status",
+        "list_accounts",
+        "list_chats",
+        "list_contacts",
+        "list_folders",
+        "list_inline_buttons",
+        "list_messages",
+        "list_topics",
+        "resolve_username",
+        "search_contacts",
+        "search_global",
+        "search_messages",
+        "search_public_chats",
+        "wait_for_new_message",
+        "wait_for_settled_message",
+    }
+)
+
+
+def apply_exposed_tool_policy(server, *, upstream_apply, mode: str) -> list[str]:
+    """Apply upstream annotations, then the local fail-closed read allowlist."""
+    removed = set(upstream_apply(server, mode))
+    if mode.strip().lower() == "read-only":
+        for tool in list(server._tool_manager.list_tools()):
+            if tool.name not in APPROVED_READ_ONLY_TOOLS:
+                server._tool_manager.remove_tool(tool.name)
+                removed.add(tool.name)
+    return sorted(removed)
 
 
 async def _health_payload(client) -> dict[str, str]:
@@ -65,6 +132,16 @@ def _resolve_token() -> str:
     return f.read_text().strip() if f.exists() else ""
 
 
+def _load_credentials_file() -> None:
+    """Load the strict container credential file while preserving legacy env use."""
+    path = os.getenv("TELEGRAM_USERBOT_CREDENTIALS_FILE")
+    if not path or (os.getenv("TELEGRAM_API_ID") and os.getenv("TELEGRAM_API_HASH")):
+        return
+    from container_supervisor import load_credentials
+
+    os.environ.update(load_credentials(Path(path)))
+
+
 def _seed_session_env() -> Path:
     """Point upstream at our SQLite session file (created empty if absent = onboarding).
 
@@ -78,6 +155,16 @@ def _seed_session_env() -> Path:
     """
     path = _session_file()
     path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    parent = path.parent.lstat()
+    if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.geteuid():
+        _fail("session directory must be an owned regular directory")
+    path.parent.chmod(0o700)
+    if path.exists() or path.is_symlink():
+        metadata = path.lstat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid():
+            _fail("session file must be an owned regular file")
+        if metadata.st_mode & 0o077:
+            _fail("session file must have private permissions")
     # Telethon appends ".session" to the name; strip it so we don't get ".session.session".
     name = str(path)
     if name.endswith(".session"):
@@ -99,6 +186,7 @@ def main() -> None:
     token = _resolve_token()
     if not token:
         _fail("no proxy token — run `iva userbot setup` (writes data/telegram-userbot.token)")
+    _load_credentials_file()
     if not os.getenv("TELEGRAM_API_ID") or not os.getenv("TELEGRAM_API_HASH"):
         _fail("TELEGRAM_API_ID and TELEGRAM_API_HASH are required (create an app at my.telegram.org)")
 
@@ -111,9 +199,17 @@ def main() -> None:
 
     # Honor TELEGRAM_EXPOSED_TOOLS (e.g. "read-only"); upstream normally does this in
     # its runner, which we bypass. Default "all".
-    removed = _apply_exposed_tools_mode(mcp)
+    exposed_mode = os.getenv("TELEGRAM_EXPOSED_TOOLS", "all")
+    removed = apply_exposed_tool_policy(
+        mcp,
+        upstream_apply=_apply_exposed_tools_mode,
+        mode=exposed_mode,
+    )
     if removed:
-        print(f"telegram-userbot: read-only mode, pruned {len(removed)} write tools", file=sys.stderr)
+        print(
+            f"telegram-userbot: read-only mode, pruned {len(removed)} non-approved tools",
+            file=sys.stderr,
+        )
 
     client = get_client()
 

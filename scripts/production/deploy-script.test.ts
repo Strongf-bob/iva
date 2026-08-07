@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 const deployScript = fileURLToPath(
   new URL("../../deploy/container/deploy.sh", import.meta.url),
 );
+const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const goodSha = "a".repeat(40);
 const badSha = "b".repeat(40);
 
@@ -50,11 +51,15 @@ function harness(): {
     join(mockBin, "docker"),
     'printf "docker image=%s args=%s\\n" "${IVA_IMAGE:-}" "$*" >> "$MOCK_LOG"\n' +
       'if [ "${1:-}" = "info" ]; then printf \'["name=rootless"]\\n\'; exit 0; fi\n' +
+      'if [ "${1:-}" = "image" ] && [ "${2:-}" = "inspect" ]; then printf "%s\\n" "${SSH_ORIGINAL_COMMAND#deploy }"; exit 0; fi\n' +
+      'if [ "${1:-}" = "run" ]; then if printf "%s" "$*" | grep -q -- "--entrypoint /bin/sh"; then [ "${MOCK_CANDIDATE_COMPAT:-1}" = "1" ]; exit; fi; last=""; for arg in "$@"; do last="$arg"; done; case "$last" in */deploy.sh) cat "$MOCK_REPO_ROOT/deploy/container/deploy.sh" ;; */compose.production.yml) cat "$MOCK_REPO_ROOT/deploy/container/compose.production.yml" ;; *) exit 1 ;; esac; exit 0; fi\n' +
       'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "up -d"; then printf "%s\\n" "$IVA_IMAGE" > "$MOCK_IMAGE_STATE"; fi\n' +
       'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "ps -q iva"; then printf "iva-container\\n"; fi\n' +
       'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "ps -q telegram-poll"; then printf "poller-container\\n"; fi\n' +
+      'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "ps -q telegram-userbot"; then printf "userbot-container\\n"; fi\n' +
       'last=""; for arg in "$@"; do last="$arg"; done\n' +
       'if [ "${1:-}" = "inspect" ] && [ "$last" = "poller-container" ]; then printf "%s 0\\n" "${MOCK_POLLER_STATE:-running}"; exit 0; fi\n' +
+      'if [ "${1:-}" = "inspect" ] && [ "$last" = "userbot-container" ]; then printf "%s %s\\n" "${MOCK_USERBOT_STATE:-running}" "${MOCK_USERBOT_RESTARTS:-0}"; exit 0; fi\n' +
       'if [ "${1:-}" = "inspect" ]; then image=$(cat "$MOCK_IMAGE_STATE"); case "$image" in *sha-b*) printf "unhealthy\\n" ;; *) printf "healthy\\n" ;; esac; fi\n',
   );
   executable(
@@ -77,6 +82,7 @@ printf '{"ok":true,"result":{"id":777}}\\n'
     env: {
       ...process.env,
       IVA_DEPLOY_TESTING: "1",
+      IVA_DEPLOY_SKIP_BUNDLE: "1",
       IVA_DEPLOY_TEST_PATH: `${mockBin}:/usr/bin:/bin`,
       IVA_RUNTIME_ROOT: root,
       IVA_DEPLOY_HEALTH_ATTEMPTS: "1",
@@ -84,6 +90,7 @@ printf '{"ok":true,"result":{"id":777}}\\n'
       IVA_DEPLOY_POLLER_SETTLE_DELAY: "0",
       MOCK_LOG: log,
       MOCK_IMAGE_STATE: imageState,
+      MOCK_REPO_ROOT: repoRoot,
     },
   };
 }
@@ -120,6 +127,28 @@ void test("forced deployment rejects commands outside the exact SHA contract", (
   }
 });
 
+void test("the forced command activates deployment assets from the verified image", () => {
+  const { root, env, log } = harness();
+  const bundleEnv = { ...env };
+  delete bundleEnv.IVA_DEPLOY_SKIP_BUNDLE;
+
+  const result = run(`deploy ${goodSha}`, bundleEnv);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    readFileSync(join(root, "compose.yml"), "utf8"),
+    readFileSync(
+      join(repoRoot, "deploy/container/compose.production.yml"),
+      "utf8",
+    ),
+  );
+  assert.match(readFileSync(log, "utf8"), /image inspect/u);
+  assert.match(
+    readFileSync(log, "utf8"),
+    /\/app\/deploy\/container\/deploy\.sh/u,
+  );
+});
+
 void test("a healthy candidate advances the current immutable image", () => {
   const { root, env, log } = harness();
   const result = run(`deploy ${goodSha}`, env);
@@ -133,6 +162,21 @@ void test("a healthy candidate advances the current immutable image", () => {
     /curl args=--proxy socks5h:\/\/127\.0\.0\.1:7891/u,
   );
   assert.match(readFileSync(log, "utf8"), /ps -q telegram-poll/u);
+  assert.match(readFileSync(log, "utf8"), /ps -q telegram-userbot/u);
+  assert.match(
+    readFileSync(log, "utf8"),
+    /up -d --remove-orphans iva telegram-poll telegram-userbot/u,
+  );
+});
+
+void test("a candidate without the real supervisor cannot pass via the inert fallback", () => {
+  const { env } = harness();
+  const result = run(`deploy ${goodSha}`, {
+    ...env,
+    MOCK_CANDIDATE_COMPAT: "0",
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /candidate image lacks the userbot runtime/u);
 });
 
 void test("a valid token for the wrong Telegram bot fails deployment", () => {
@@ -160,6 +204,18 @@ void test("a stopped Telegram poller fails deployment", () => {
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /candidate failed health checks/u);
+});
+
+void test("a stopped or restarted userbot supervisor fails deployment", () => {
+  for (const override of [
+    { MOCK_USERBOT_STATE: "exited" },
+    { MOCK_USERBOT_RESTARTS: "1" },
+  ]) {
+    const { env } = harness();
+    const result = run(`deploy ${goodSha}`, { ...env, ...override });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /candidate failed health checks/u);
+  }
 });
 
 void test("an unhealthy candidate restores the previous healthy image", () => {

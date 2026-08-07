@@ -1,6 +1,6 @@
 // Подключение к локальному telegram-userbot прокси (services/telegram-userbot/serve.py):
 // личный Telegram-аккаунт владельца через Telethon (userbot). Прокси — единственный
-// владелец сессии, живёт как systemd-сервис на 127.0.0.1. Тулы видны модели как
+// владелец сессии, живёт как systemd-сервис или внутренний Compose sidecar. Тулы видны модели как
 // connection__telegram-userbot__<tool> и находятся через connection_search.
 //
 // Онбординг (QR-логин) и правила безопасности — в скилле telegram-userbot.
@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const port = process.env.TELEGRAM_MCP_PORT ?? "8724";
+const url = process.env.TELEGRAM_MCP_URL ?? `http://127.0.0.1:${port}/mcp`;
 
 // Токен пишет `iva userbot setup` в data/telegram-userbot.token (тот же файл читает прокси).
 // Читаем при КАЖДОМ вызове (getToken), а не на старте: iva не нужно перезапускать после
@@ -27,11 +28,11 @@ function proxyToken(): string {
 }
 
 export default defineMcpClientConnection({
-  url: `http://127.0.0.1:${port}/mcp`,
+  url,
   description:
-    "Личный Telegram владельца (userbot, НЕ бот-аккаунт): читать диалоги/историю/поиск " +
-    "и отправлять сообщения от его имени. Требует подключения аккаунта через QR " +
-    "(скилл telegram-userbot). Соблюдай анти-бан правила из скилла.",
+    "Личный Telegram владельца (userbot, НЕ бот-аккаунт): только чтение диалогов, " +
+    "истории и поиск. Отправка и другие изменения отключены на MCP-сервере. " +
+    "Требует подключения аккаунта через QR (скилл telegram-userbot).",
   auth: {
     getToken: () => Promise.resolve({ token: proxyToken() }),
   },
