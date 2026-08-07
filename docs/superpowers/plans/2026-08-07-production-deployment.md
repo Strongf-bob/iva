@@ -80,17 +80,17 @@ Expected: remaining failures name only the production files introduced in Tasks 
 - Consumes: `IVA_IMAGE`, `/home/strongf/iva-runtime/.env`, and persistent runtime directories.
 - Produces: services `iva` and `telegram-poll`, both on the internal `iva-internal` network; only `iva` exposes loopback port `8723`.
 
-- [ ] **Step 1: Extend the failing test for Compose invariants**
+- [x] **Step 1: Extend the failing test for Compose invariants**
 
 Assert that both services use the required immutable image variable, `iva` has an HTTP health check for `/eve/v1/health`, `telegram-poll` depends on `service_healthy`, restart policy is `unless-stopped`, all mounts are narrow bind mounts, and no service publishes a non-loopback address.
 
-- [ ] **Step 2: Run the test to verify the Compose assertions fail**
+- [x] **Step 2: Run the test to verify the Compose assertions fail**
 
 Run: `npm run test:release`
 
 Expected: FAIL with missing `deploy/container/compose.production.yml` assertions.
 
-- [ ] **Step 3: Implement the production Compose file**
+- [x] **Step 3: Implement the production Compose file**
 
 Define the shared environment:
 
@@ -103,11 +103,11 @@ environment:
 
 Mount `./data:/app/data`, `./memory:/app/memory`, `./vault:/app/vault`, and `./.env:/app/.env:ro`. Publish only `127.0.0.1:8723:8723`. The health check runs `curl --fail --silent http://127.0.0.1:8723/eve/v1/health` with a 5-second interval, 5-second timeout, 24 retries, and a 20-second start period.
 
-- [ ] **Step 4: Document the server-only environment shape**
+- [x] **Step 4: Document the server-only environment shape**
 
 The example includes variable names and non-secret defaults only: `MODEL_PROVIDER=codex`, `CODEX_MODEL=gpt-5.5`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_ALLOWED_USER_IDS`, `TELEGRAM_DIGEST_CHAT_ID`, `TELEGRAM_EXPOSED_TOOLS=read-only`, `ASSISTANT_TIMEZONE=Europe/Moscow`, `ASSISTANT_VAULT_DIR=vault`, `ASSISTANT_DATA_DIR=data`, `IVA_PORT=8723`, and `ASSISTANT_HOST=http://iva:8723`. Secret variables have empty values.
 
-- [ ] **Step 5: Validate Compose rendering without secrets**
+- [x] **Step 5: Validate Compose rendering without secrets**
 
 Run: `IVA_IMAGE=ghcr.io/strongf-bob/iva:test docker compose -f deploy/container/compose.production.yml --env-file deploy/container/runtime.env.example config --quiet`
 

@@ -31,10 +31,22 @@ test("the production image uses Node 24 and a non-root runtime user", () => {
 
 test("production Compose requires an immutable image and narrow mounts", () => {
   const compose = read("deploy/container/compose.production.yml");
-  assert.match(compose, /image: \$\{IVA_IMAGE:\?IVA_IMAGE is required\}/u);
+  assert.equal(
+    compose.match(/image: \$\{IVA_IMAGE:\?IVA_IMAGE is required\}/gu)?.length,
+    2,
+  );
   assert.match(compose, /127\.0\.0\.1:8723:8723/u);
   assert.match(compose, /\/eve\/v1\/health/u);
   assert.match(compose, /condition: service_healthy/u);
+  assert.equal(compose.match(/restart: unless-stopped/gu)?.length, 2);
+  for (const mount of [
+    "./data:/app/data",
+    "./memory:/app/memory",
+    "./vault:/app/vault",
+    "./.env:/app/.env:ro",
+  ]) {
+    assert.equal(compose.split(mount).length - 1, 2, `${mount} must be mounted twice`);
+  }
   assert.doesNotMatch(compose, /docker\.sock/u);
   assert.doesNotMatch(compose, /^\s*-\s*["']?8723:8723/mu);
 });
