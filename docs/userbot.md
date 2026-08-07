@@ -35,7 +35,9 @@ for you, in chat:
    file under `data/` and flips an explicit enable marker; it never modifies the read-only
    `/app/.env` mount.
 2. It renders a QR and sends it as an image into your chat. Scan it in the Telegram app of the
-   account you're connecting: **Settings → Devices → Link Desktop Device**.
+   account you're connecting: **Settings → Devices → Link Desktop Device**. Each attempt sends
+   exactly one short-lived QR. Scan only the newest image; if its status becomes `expired`, ask
+   the bot to connect again so it creates a fresh code.
 3. If you have 2FA, it asks for your password (change it afterward if you'd rather it not pass
    through chat). Done — the session persists on the server, so this is one-time.
 
