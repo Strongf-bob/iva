@@ -36,6 +36,8 @@ candidate_image="$REGISTRY_IMAGE:sha-$sha"
 
 [ -f "$COMPOSE_FILE" ] || fail "compose file is missing"
 [ -f "$ENV_FILE" ] || fail "runtime environment is missing"
+docker info --format '{{json .SecurityOptions}}' | grep -q rootless ||
+  fail "rootless Docker is required"
 mkdir -p "$DEPLOY_DIR"
 
 exec 9>"$DEPLOY_DIR/deploy.lock"
@@ -52,13 +54,24 @@ telegram_token() {
   sed -n 's/^TELEGRAM_BOT_TOKEN=//p' "$ENV_FILE" | tail -n 1
 }
 
+telegram_proxy() {
+  sed -n 's/^TELEGRAM_PROXY_URL=//p' "$ENV_FILE" |
+    tail -n 1 |
+    sed 's#://10\.0\.2\.2:#://127.0.0.1:#'
+}
+
 telegram_ok() {
-  local token response
+  local token proxy response
+  local -a proxy_args=()
   token="$(telegram_token)"
   [[ "$token" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]] || return 1
+  proxy="$(telegram_proxy)"
+  if [ -n "$proxy" ]; then
+    proxy_args=(--proxy "$proxy")
+  fi
   response="$(
     printf 'url = "https://api.telegram.org/bot%s/getMe"\n' "$token" |
-      curl --config - --fail --silent --show-error --max-time 10
+      curl "${proxy_args[@]}" --config - --fail --silent --show-error --max-time 10
   )" || return 1
   printf '%s' "$response" | grep -Eq '"ok"[[:space:]]*:[[:space:]]*true'
 }

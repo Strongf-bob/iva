@@ -35,9 +35,12 @@ function harness(): {
   mkdirSync(mockBin);
   mkdirSync(deployDir);
   writeFileSync(join(root, "compose.yml"), "name: test\n");
-  writeFileSync(join(root, ".env"), "TELEGRAM_BOT_TOKEN=123456:test-token\n", {
-    mode: 0o600,
-  });
+  writeFileSync(
+    join(root, ".env"),
+    "TELEGRAM_BOT_TOKEN=123456:test-token\n" +
+      "TELEGRAM_PROXY_URL=socks5h://10.0.2.2:7891\n",
+    { mode: 0o600 },
+  );
 
   const log = join(root, "commands.log");
   const imageState = join(root, "running-image");
@@ -45,13 +48,14 @@ function harness(): {
   executable(
     join(mockBin, "docker"),
     'printf "docker image=%s args=%s\\n" "${IVA_IMAGE:-}" "$*" >> "$MOCK_LOG"\n' +
+      'if [ "${1:-}" = "info" ]; then printf \'["name=rootless"]\\n\'; exit 0; fi\n' +
       'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "up -d"; then printf "%s\\n" "$IVA_IMAGE" > "$MOCK_IMAGE_STATE"; fi\n' +
       'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "ps -q iva"; then printf "iva-container\\n"; fi\n' +
       'if [ "${1:-}" = "inspect" ]; then image=$(cat "$MOCK_IMAGE_STATE"); case "$image" in *sha-b*) printf "unhealthy\\n" ;; *) printf "healthy\\n" ;; esac; fi\n',
   );
   executable(
     join(mockBin, "curl"),
-    `printf "curl\\n" >> "$MOCK_LOG"
+    `printf "curl args=%s\\n" "$*" >> "$MOCK_LOG"
 cat >/dev/null || true
 printf '{"ok":true}\\n'
 `,
@@ -112,12 +116,16 @@ void test("forced deployment rejects commands outside the exact SHA contract", (
 });
 
 void test("a healthy candidate advances the current immutable image", () => {
-  const { root, env } = harness();
+  const { root, env, log } = harness();
   const result = run(`deploy ${goodSha}`, env);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(
     readFileSync(join(root, "deploy/current-image"), "utf8").trim(),
     `ghcr.io/strongf-bob/iva:sha-${goodSha}`,
+  );
+  assert.match(
+    readFileSync(log, "utf8"),
+    /curl args=--proxy socks5h:\/\/127\.0\.0\.1:7891/u,
   );
 });
 

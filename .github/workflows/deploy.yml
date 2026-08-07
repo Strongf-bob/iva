@@ -78,7 +78,7 @@ jobs:
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
       DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
       DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      DEPLOY_HOST_KEY_SHA256: SHA256:nTB3CvC0D6hDKFnhSSCRmwoHDLxXtzEHJmrSnuyTW3I
 
     steps:
       - name: Deploy verified image
@@ -86,11 +86,15 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$DEPLOY_USER" =~ ^[A-Za-z0-9._-]+$ ]]
           install -d -m 700 "$HOME/.ssh"
           install -m 600 /dev/null "$HOME/.ssh/id_ed25519"
           install -m 600 /dev/null "$HOME/.ssh/known_hosts"
           printf '%s\n' "$DEPLOY_SSH_KEY" >"$HOME/.ssh/id_ed25519"
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" >"$HOME/.ssh/known_hosts"
+          ssh-keyscan -T 10 -t ed25519 "$DEPLOY_HOST" >"$HOME/.ssh/known_hosts"
+          actual_fingerprint="$(ssh-keygen -lf "$HOME/.ssh/known_hosts" | awk '{print $2}')"
+          test "$actual_fingerprint" = "$DEPLOY_HOST_KEY_SHA256"
           ssh \
             -F /dev/null \
             -i "$HOME/.ssh/id_ed25519" \

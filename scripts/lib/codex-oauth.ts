@@ -303,11 +303,19 @@ export async function runDeviceCodeLogin({
   for (;;) {
     if (Date.now() > deadline)
       throw new Error("device auth timed out (15 min)");
-    const r = await fetch(`${api}/deviceauth/token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device_auth_id, user_code }),
-    });
+    let r: Response;
+    try {
+      r = await fetch(`${api}/deviceauth/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_auth_id, user_code }),
+      });
+    } catch {
+      // Device confirmation is a 15-minute flow. A transient proxy/network
+      // failure must not invalidate the browser code or force a new login.
+      await new Promise((res) => setTimeout(res, pollMs));
+      continue;
+    }
     if (r.ok) {
       const { authorization_code, code_verifier } = (await r.json()) as {
         authorization_code: string;
