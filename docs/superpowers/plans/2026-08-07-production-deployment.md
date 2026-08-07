@@ -174,21 +174,21 @@ Expected: PASS.
 - Consumes: successful `CI` workflow runs for `main`, repository `GITHUB_TOKEN`, and secrets `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`.
 - Produces: GHCR tags `sha-<40-hex-sha>` and `main`, followed by the forced SSH command `deploy <sha>`.
 
-- [ ] **Step 1: Extend static tests for workflow security**
+- [x] **Step 1: Extend static tests for workflow security**
 
 Assert `workflow_run` references `CI` and `completed`, jobs check `conclusion == 'success'`, branch is `main`, checkout uses `head_sha`, PR-controlled code is never evaluated with deployment secrets, default permissions are `contents: read`, package publication grants only `packages: write`, and all Actions are SHA-pinned.
 
-- [ ] **Step 2: Run the test and observe workflow failures**
+- [x] **Step 2: Run the test and observe workflow failures**
 
 Run: `npm run test:release`
 
 Expected: FAIL because `.github/workflows/deploy.yml` is absent.
 
-- [ ] **Step 3: Implement build and deploy jobs**
+- [x] **Step 3: Implement build and deploy jobs**
 
 The build job logs in to `ghcr.io` with `GITHUB_TOKEN`, builds the exact `head_sha`, runs an image smoke check, and pushes both tags. The deploy job downloads no artifacts, writes the SSH key with mode `0600`, verifies the host against `DEPLOY_KNOWN_HOSTS`, and executes exactly `deploy "$DEPLOY_SHA"`. Add a production concurrency group with `cancel-in-progress: false`.
 
-- [ ] **Step 4: Run focused and repository checks**
+- [x] **Step 4: Run focused and repository checks**
 
 Run: `npm run test:deploy && npm run lint && npm run format:check && npm run typecheck`
 

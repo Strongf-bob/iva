@@ -51,7 +51,10 @@ function harness(): {
   );
   executable(
     join(mockBin, "curl"),
-    'printf "curl\\n" >> "$MOCK_LOG"\ncat >/dev/null || true\nprintf "{\\\"ok\\\":true}\\n"\n',
+    `printf "curl\\n" >> "$MOCK_LOG"
+cat >/dev/null || true
+printf '{"ok":true}\\n'
+`,
   );
   executable(
     join(mockBin, "flock"),
@@ -93,7 +96,7 @@ function run(
   }
 }
 
-test("forced deployment rejects commands outside the exact SHA contract", () => {
+void test("forced deployment rejects commands outside the exact SHA contract", () => {
   const { env } = harness();
   for (const command of [
     "",
@@ -108,7 +111,7 @@ test("forced deployment rejects commands outside the exact SHA contract", () => 
   }
 });
 
-test("a healthy candidate advances the current immutable image", () => {
+void test("a healthy candidate advances the current immutable image", () => {
   const { root, env } = harness();
   const result = run(`deploy ${goodSha}`, env);
   assert.equal(result.status, 0, result.stderr);
@@ -118,7 +121,7 @@ test("a healthy candidate advances the current immutable image", () => {
   );
 });
 
-test("an unhealthy candidate restores the previous healthy image", () => {
+void test("an unhealthy candidate restores the previous healthy image", () => {
   const { root, env, log, imageState } = harness();
   const previous = `ghcr.io/strongf-bob/iva:sha-${goodSha}`;
   writeFileSync(join(root, "deploy/current-image"), `${previous}\n`);

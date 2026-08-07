@@ -1,0 +1,102 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+      IMAGE_NAME: ghcr.io/strongf-bob/iva
+
+    steps:
+      - name: Check out verified commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Validate immutable commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$DEPLOY_SHA"
+
+      - name: Build immutable image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build \
+            --file Containerfile \
+            --label "org.opencontainers.image.revision=$DEPLOY_SHA" \
+            --tag "$IMAGE_NAME:sha-$DEPLOY_SHA" \
+            --tag "$IMAGE_NAME:main" \
+            .
+
+      - name: Smoke-test image
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(docker run --rm --entrypoint node "$IMAGE_NAME:sha-$DEPLOY_SHA" --version)"
+          [[ "$version" == v24.* ]]
+
+      - name: Publish image
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE_NAME:sha-$DEPLOY_SHA"
+          docker push "$IMAGE_NAME:main"
+          docker logout ghcr.io
+
+  deploy:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+
+    steps:
+      - name: Deploy verified image
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
+          install -d -m 700 "$HOME/.ssh"
+          install -m 600 /dev/null "$HOME/.ssh/id_ed25519"
+          install -m 600 /dev/null "$HOME/.ssh/known_hosts"
+          printf '%s\n' "$DEPLOY_SSH_KEY" >"$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" >"$HOME/.ssh/known_hosts"
+          ssh \
+            -F /dev/null \
+            -i "$HOME/.ssh/id_ed25519" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "deploy $DEPLOY_SHA"
