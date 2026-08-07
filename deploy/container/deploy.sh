@@ -20,6 +20,7 @@ PREVIOUS_IMAGE_FILE="$DEPLOY_DIR/previous-image"
 REGISTRY_IMAGE="ghcr.io/strongf-bob/iva"
 HEALTH_ATTEMPTS="${IVA_DEPLOY_HEALTH_ATTEMPTS:-36}"
 HEALTH_DELAY="${IVA_DEPLOY_HEALTH_DELAY:-5}"
+POLLER_SETTLE_DELAY="${IVA_DEPLOY_POLLER_SETTLE_DELAY:-5}"
 
 fail() {
   printf 'deploy: %s\n' "$1" >&2
@@ -54,6 +55,10 @@ telegram_token() {
   sed -n 's/^TELEGRAM_BOT_TOKEN=//p' "$ENV_FILE" | tail -n 1
 }
 
+telegram_bot_id() {
+  sed -n 's/^TELEGRAM_BOT_ID=//p' "$ENV_FILE" | tail -n 1
+}
+
 telegram_proxy() {
   sed -n 's/^TELEGRAM_PROXY_URL=//p' "$ENV_FILE" |
     tail -n 1 |
@@ -61,10 +66,12 @@ telegram_proxy() {
 }
 
 telegram_ok() {
-  local token proxy response
+  local token expected_id proxy response
   local -a proxy_args=()
   token="$(telegram_token)"
   [[ "$token" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]] || return 1
+  expected_id="$(telegram_bot_id)"
+  [[ "$expected_id" =~ ^[0-9]+$ ]] || return 1
   proxy="$(telegram_proxy)"
   if [ -n "$proxy" ]; then
     proxy_args=(--proxy "$proxy")
@@ -73,15 +80,24 @@ telegram_ok() {
     printf 'url = "https://api.telegram.org/bot%s/getMe"\n' "$token" |
       curl "${proxy_args[@]}" --config - --fail --silent --show-error --max-time 10
   )" || return 1
-  printf '%s' "$response" | grep -Eq '"ok"[[:space:]]*:[[:space:]]*true'
+  printf '%s' "$response" | grep -Eq '"ok"[[:space:]]*:[[:space:]]*true' ||
+    return 1
+  printf '%s' "$response" |
+    grep -Eq '"id"[[:space:]]*:[[:space:]]*'"$expected_id"'([^0-9]|$)'
 }
 
 runtime_ok() {
-  local image="$1" container_id health
+  local image="$1" container_id health poller_id poller_state
   container_id="$(compose "$image" ps -q iva)" || return 1
   [ -n "$container_id" ] || return 1
   health="$(docker inspect --format '{{.State.Health.Status}}' "$container_id")" || return 1
   [ "$health" = "healthy" ] || return 1
+  poller_id="$(compose "$image" ps -q telegram-poll)" || return 1
+  [ -n "$poller_id" ] || return 1
+  poller_state="$(
+    docker inspect --format '{{.State.Status}} {{.RestartCount}}' "$poller_id"
+  )" || return 1
+  [ "$poller_state" = "running 0" ] || return 1
   curl --fail --silent --show-error --max-time 5 \
     "http://127.0.0.1:8723/eve/v1/health" >/dev/null || return 1
   telegram_ok
@@ -102,6 +118,7 @@ wait_healthy() {
 start_image() {
   local image="$1"
   compose "$image" up -d --remove-orphans iva telegram-poll || return 1
+  sleep "$POLLER_SETTLE_DELAY"
   wait_healthy "$image"
 }
 

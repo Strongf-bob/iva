@@ -38,6 +38,7 @@ function harness(): {
   writeFileSync(
     join(root, ".env"),
     "TELEGRAM_BOT_TOKEN=123456:test-token\n" +
+      "TELEGRAM_BOT_ID=777\n" +
       "TELEGRAM_PROXY_URL=socks5h://10.0.2.2:7891\n",
     { mode: 0o600 },
   );
@@ -51,13 +52,16 @@ function harness(): {
       'if [ "${1:-}" = "info" ]; then printf \'["name=rootless"]\\n\'; exit 0; fi\n' +
       'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "up -d"; then printf "%s\\n" "$IVA_IMAGE" > "$MOCK_IMAGE_STATE"; fi\n' +
       'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "ps -q iva"; then printf "iva-container\\n"; fi\n' +
+      'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "ps -q telegram-poll"; then printf "poller-container\\n"; fi\n' +
+      'last=""; for arg in "$@"; do last="$arg"; done\n' +
+      'if [ "${1:-}" = "inspect" ] && [ "$last" = "poller-container" ]; then printf "%s 0\\n" "${MOCK_POLLER_STATE:-running}"; exit 0; fi\n' +
       'if [ "${1:-}" = "inspect" ]; then image=$(cat "$MOCK_IMAGE_STATE"); case "$image" in *sha-b*) printf "unhealthy\\n" ;; *) printf "healthy\\n" ;; esac; fi\n',
   );
   executable(
     join(mockBin, "curl"),
     `printf "curl args=%s\\n" "$*" >> "$MOCK_LOG"
 cat >/dev/null || true
-printf '{"ok":true}\\n'
+printf '{"ok":true,"result":{"id":777}}\\n'
 `,
   );
   executable(
@@ -77,6 +81,7 @@ printf '{"ok":true}\\n'
       IVA_RUNTIME_ROOT: root,
       IVA_DEPLOY_HEALTH_ATTEMPTS: "1",
       IVA_DEPLOY_HEALTH_DELAY: "0",
+      IVA_DEPLOY_POLLER_SETTLE_DELAY: "0",
       MOCK_LOG: log,
       MOCK_IMAGE_STATE: imageState,
     },
@@ -127,6 +132,34 @@ void test("a healthy candidate advances the current immutable image", () => {
     readFileSync(log, "utf8"),
     /curl args=--proxy socks5h:\/\/127\.0\.0\.1:7891/u,
   );
+  assert.match(readFileSync(log, "utf8"), /ps -q telegram-poll/u);
+});
+
+void test("a valid token for the wrong Telegram bot fails deployment", () => {
+  const { root, env } = harness();
+  writeFileSync(
+    join(root, ".env"),
+    "TELEGRAM_BOT_TOKEN=123456:test-token\n" +
+      "TELEGRAM_BOT_ID=999\n" +
+      "TELEGRAM_PROXY_URL=socks5h://10.0.2.2:7891\n",
+    { mode: 0o600 },
+  );
+
+  const result = run(`deploy ${goodSha}`, env);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /candidate failed health checks/u);
+});
+
+void test("a stopped Telegram poller fails deployment", () => {
+  const { env } = harness();
+  const result = run(`deploy ${goodSha}`, {
+    ...env,
+    MOCK_POLLER_STATE: "exited",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /candidate failed health checks/u);
 });
 
 void test("an unhealthy candidate restores the previous healthy image", () => {

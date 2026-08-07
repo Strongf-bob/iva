@@ -47,6 +47,14 @@ jobs:
       - name: Check formatting
         run: npm run format:check
 
+      - name: Validate production Compose
+        run: |
+          IVA_IMAGE=ghcr.io/strongf-bob/iva:ci \
+          IVA_ENV_FILE=runtime.env.example \
+            docker compose \
+              -f deploy/container/compose.production.yml \
+              config --quiet
+
       - name: Enforce mjs migration budget
         run: |
           actual=$(git ls-files '*.mjs' | wc -l | tr -d '[:space:]')
