@@ -54,6 +54,9 @@ type MaybePromise<T> = T | Promise<T>;
 type ErrorLike = { code?: unknown; message?: unknown };
 type Status = Record<string, unknown>;
 type DeliveryResult = Awaited<ReturnType<typeof pacedDeliver>>;
+type TurnReservation =
+  | { allowed: true; token: string }
+  | { allowed: false; reason: "concurrent-turns" };
 type DeliverImpl = (
   update: TelegramQueueUpdate,
   options?: DeliverOptions,
@@ -96,6 +99,7 @@ type DirectDeliveryOptions = {
   trImpl?: (en: string, ru: string) => string;
   logImpl?: (...parts: unknown[]) => void;
   routes?: WorkerRoutes;
+  onNoTurnImpl?: () => MaybePromise<unknown>;
 };
 
 async function deliverDirectUpdate(
@@ -111,6 +115,7 @@ async function deliverDirectUpdate(
     trImpl = tr,
     logImpl = log,
     routes,
+    onNoTurnImpl,
   }: DirectDeliveryOptions = {},
 ) {
   // The acceptance wrapper does not cover callback_query dispatch. Keeping this
@@ -165,11 +170,19 @@ async function deliverDirectUpdate(
   };
 
   const accepted = await deliverImpl(update, {
-    ...(routes ? { route: routes.acceptance } : {}),
+    ...(routes
+      ? {
+          route: routes.acceptance,
+          acceptedStatus: 204,
+          queueReceipt: true,
+        }
+      : {}),
     onAcceptanceFailure,
     timeoutMs: DIRECT_ACCEPTANCE_TIMEOUT_MS,
     retryAcceptanceTimeout: false,
   });
+  if ((!accepted || accepted === "handled") && onNoTurnImpl)
+    await onNoTurnImpl();
   // Defensive fallback for injected/custom deliverers and for a pacing deadline
   // that expires before fetch starts.
   if (!accepted && !acceptanceFailureReported) await onAcceptanceFailure();
@@ -177,7 +190,12 @@ async function deliverDirectUpdate(
 }
 
 export type RouteMessageResult =
-  "delivered" | "rejected" | "dropped" | "enqueue-failed" | "queued";
+  | "delivered"
+  | "rejected"
+  | "dropped"
+  | "enqueue-failed"
+  | "queued"
+  | "quota-exceeded";
 
 export async function routeMessageUpdate(
   update: TelegramQueueUpdate,
@@ -210,6 +228,8 @@ export async function routeMessageUpdate(
     logImpl = log,
     tenantId,
     workerRoutes,
+    reserveTurnImpl,
+    releaseTurnImpl,
   }: {
     chatKeyImpl?: (update: TelegramQueueUpdate) => string | null;
     loadQueueImpl?: () => MaybePromise<TelegramQueueDocument>;
@@ -248,6 +268,8 @@ export async function routeMessageUpdate(
     logImpl?: (...parts: unknown[]) => void;
     tenantId?: TelegramUserId;
     workerRoutes?: WorkerRoutes;
+    reserveTurnImpl?: () => MaybePromise<TurnReservation>;
+    releaseTurnImpl?: (token: string) => MaybePromise<unknown>;
   } = {},
 ): Promise<RouteMessageResult> {
   if ((tenantId === undefined) !== (workerRoutes === undefined)) {
@@ -279,6 +301,10 @@ export async function routeMessageUpdate(
     }
   }
 
+  const reservation = update.message && reserveTurnImpl
+    ? await reserveTurnImpl()
+    : ({ allowed: true, token: "" } as const);
+  if (!reservation.allowed) return "quota-exceeded";
   return deliverDirectUpdate(update, {
     key,
     deliverImpl,
@@ -290,6 +316,10 @@ export async function routeMessageUpdate(
     trImpl,
     logImpl,
     routes: workerRoutes,
+    onNoTurnImpl:
+      releaseTurnImpl && reservation.token
+        ? () => releaseTurnImpl(reservation.token)
+        : undefined,
   });
 }
 
@@ -309,6 +339,8 @@ export async function drainReadyQueueHeads({
   deliveryTimeoutMs = QUEUE_DELIVERY_TIMEOUT_MS,
   gateWaitMs = RUN_STALE_MS,
   resolveRoutesImpl,
+  reserveTurnImpl,
+  releaseTurnImpl,
 }: {
   loadImpl?: () => MaybePromise<TelegramQueueDocument>;
   runningImpl?: (key: string) => boolean;
@@ -327,6 +359,15 @@ export async function drainReadyQueueHeads({
     update: TelegramQueueUpdate,
     tenantId: string | undefined,
   ) => MaybePromise<WorkerRoutes | null>;
+  reserveTurnImpl?: (
+    update: TelegramQueueUpdate,
+    tenantId: string | undefined,
+  ) => MaybePromise<TurnReservation>;
+  releaseTurnImpl?: (
+    token: string,
+    update: TelegramQueueUpdate,
+    tenantId: string | undefined,
+  ) => MaybePromise<unknown>;
 } = {}) {
   const snapshot = await loadImpl();
   const keys = [...new Set([...queueKeys(snapshot), ...inFlight.keys()])];
@@ -391,6 +432,10 @@ export async function drainReadyQueueHeads({
       1,
       Math.min(deliveryTimeoutMs, deadline - now()),
     );
+    const reservation = reserveTurnImpl
+      ? await reserveTurnImpl(update, item.tenantId)
+      : ({ allowed: true, token: "" } as const);
+    if (!reservation.allowed) continue;
     lastAttempted = key;
     const baselineGeneration = currentGeneration;
     inFlight.set(key, { state: "delivering", baselineGeneration });
@@ -411,10 +456,14 @@ export async function drainReadyQueueHeads({
     }
     if (!accepted) {
       inFlight.delete(key);
+      if (releaseTurnImpl && reservation.token)
+        await releaseTurnImpl(reservation.token, update, item.tenantId);
       continue;
     }
     if (accepted === "handled") {
       inFlight.delete(key);
+      if (releaseTurnImpl && reservation.token)
+        await releaseTurnImpl(reservation.token, update, item.tenantId);
     } else {
       const acceptedStatus = statusImpl(key);
       const acceptedGeneration = statusGeneration(acceptedStatus);

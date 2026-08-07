@@ -81,10 +81,10 @@ type ControlTransport = (
 export type ControlTenantContext = {
   user: UserRecord;
   routes: WorkerRoutes;
+  dataDir: string;
 };
 const OWNER_ONLY_CONTROLS = new Set([
   "/menu",
-  "/usage",
   "/restart",
   "/update",
   "/model",
@@ -480,7 +480,7 @@ async function handleControl(
   if (cmd === "/usage") {
     const arg = text.split(/\s+/).slice(1).join(" ");
     try {
-      const agg = summarize(readEntries(), {
+      const agg = summarize(readEntries(tenant?.dataDir), {
         window: parseWindow(arg),
         now: Date.now(),
         tz: process.env.ASSISTANT_TIMEZONE,

@@ -7,13 +7,12 @@ type Event = string | [string, string, number | undefined, string | undefined];
 type CaptureMessage = { message_id?: number };
 type CaptureState = { flow: unknown; awaitText?: unknown };
 
-test("ordinary users get only personal conversation controls", () => {
-  for (const command of ["/help", "/stop", "/new"]) {
+test("ordinary users get personal conversation and usage controls", () => {
+  for (const command of ["/help", "/stop", "/new", "/usage"]) {
     assert.equal(controlCommandAllowed(command, "user"), true, command);
   }
   for (const command of [
     "/menu",
-    "/usage",
     "/restart",
     "/update",
     "/model",

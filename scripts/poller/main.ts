@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 import {
   COLLECT_QUIET_MS,
@@ -24,7 +25,16 @@ import {
   type TelegramUserId,
   type UserRecord,
 } from "../lib/user-registry.ts";
-import { CONTROL_DIR, SECRET, TOKEN, log, sleep } from "./config.ts";
+import { resolveUserLayout } from "../lib/user-layout.ts";
+import {
+  chargeUserIngress,
+  inspectTelegramIngress,
+  measureDirectoryBytes,
+  releaseUserTurn,
+  reserveUserTurn,
+  type QuotaDenialReason,
+} from "../lib/user-quota.ts";
+import { CONTROL_DIR, DATA_DIR, SECRET, TOKEN, log, sleep } from "./config.ts";
 import { tg } from "./transport.ts";
 import { fastForwardOffset, loadOffset, saveOffset } from "./offset.ts";
 import * as queue from "./queue.ts";
@@ -100,11 +110,7 @@ async function requestTenantReset({
 async function tenantRoutes(
   update: TelegramQueueUpdate,
   storedTenantId?: string,
-): Promise<{
-  userId: TelegramUserId;
-  user: UserRecord;
-  routes: WorkerRoutes;
-} | null> {
+): Promise<TenantContext | null> {
   const registry = await readUserRegistry(CONTROL_DIR);
   const resolved = resolveTenant(update, registry);
   if (resolved.kind !== "active") return null;
@@ -114,9 +120,63 @@ async function tenantRoutes(
   const user = registry.users.find(
     (candidate) => candidate.id === resolved.userId,
   );
-  return user
-    ? { userId: resolved.userId, user, routes: workerRoutes(user) }
-    : null;
+  if (!user) return null;
+  const layout = resolveUserLayout(join(DATA_DIR, "users"), resolved.userId);
+  return {
+    userId: resolved.userId,
+    user,
+    routes: workerRoutes(user),
+    personalRoot: layout.root,
+    personalData: layout.data,
+  };
+}
+
+type TenantContext = {
+  userId: TelegramUserId;
+  user: UserRecord;
+  routes: WorkerRoutes;
+  personalRoot: string;
+  personalData: string;
+};
+
+const quotaMessages: Record<QuotaDenialReason, string> = {
+  "requests-hour": "Часовой лимит запросов исчерпан. Попробуй позже.",
+  "requests-day": "Дневной лимит запросов исчерпан. Он обновится в 00:00 UTC.",
+  "tokens-day": "Дневной лимит токенов исчерпан. Он обновится в 00:00 UTC.",
+  "audio-day": "Дневной лимит аудио исчерпан. Он обновится в 00:00 UTC.",
+  attachment: "Вложение превышает разрешённый размер.",
+  storage: "Личное хранилище достигло лимита. Освободи место или обратись к владельцу.",
+  "concurrent-turns": "Предыдущая задача ещё выполняется. Сообщение можно повторить позже.",
+};
+
+async function notifyQuota(
+  tenant: TenantContext,
+  reason: QuotaDenialReason,
+): Promise<void> {
+  await tg("sendMessage", {
+    chat_id: tenant.userId,
+    text: quotaMessages[reason],
+  }).catch((error) => log("quota notification failed:", errorMessage(error)));
+}
+
+async function chargeTenantIngress(
+  update: TelegramQueueUpdate,
+  tenant: TenantContext,
+): Promise<boolean> {
+  const media = inspectTelegramIngress(update);
+  const decision = await chargeUserIngress(
+    CONTROL_DIR,
+    tenant.userId,
+    tenant.user.limits,
+    {
+      ingressId: String(update.update_id),
+      ...media,
+      storageBytes: await measureDirectoryBytes(tenant.personalRoot),
+    },
+  );
+  if (decision.allowed) return true;
+  await notifyQuota(tenant, decision.reason);
+  return false;
 }
 
 async function routeTenantUpdate(
@@ -124,10 +184,26 @@ async function routeTenantUpdate(
 ): Promise<routing.RouteMessageResult> {
   const tenant = await tenantRoutes(update);
   if (!tenant) return "dropped";
-  return routeMessageUpdate(update, {
+  return routeKnownTenantUpdate(update, tenant);
+}
+
+async function routeKnownTenantUpdate(
+  update: TelegramQueueUpdate,
+  tenant: TenantContext,
+): Promise<routing.RouteMessageResult> {
+  if (update.message && !(await chargeTenantIngress(update, tenant)))
+    return "quota-exceeded";
+  const routed = await routeMessageUpdate(update, {
     tenantId: tenant.userId,
     workerRoutes: tenant.routes,
+    reserveTurnImpl: () =>
+      reserveUserTurn(CONTROL_DIR, tenant.userId, tenant.user.limits),
+    releaseTurnImpl: (token) =>
+      releaseUserTurn(CONTROL_DIR, tenant.userId, token),
   });
+  if (routed === "quota-exceeded")
+    await notifyQuota(tenant, "concurrent-turns");
+  return routed;
 }
 
 async function acknowledgeRejectedCallback(
@@ -217,6 +293,17 @@ export async function main() {
     let pendingQueueCount = await drainReadyQueueHeads({
       resolveRoutesImpl: async (update, storedTenantId) =>
         (await tenantRoutes(update, storedTenantId))?.routes ?? null,
+      reserveTurnImpl: async (update, storedTenantId) => {
+        const tenant = await tenantRoutes(update, storedTenantId);
+        return tenant
+          ? reserveUserTurn(CONTROL_DIR, tenant.userId, tenant.user.limits)
+          : { allowed: false, reason: "concurrent-turns" };
+      },
+      releaseTurnImpl: async (token, update, storedTenantId) => {
+        const tenant = await tenantRoutes(update, storedTenantId);
+        if (tenant)
+          await releaseUserTurn(CONTROL_DIR, tenant.userId, token);
+      },
     });
     let collectorWriteFailed = false;
     for (const update of collectorTakeExpired(messageCollector, Date.now())) {
@@ -297,6 +384,7 @@ export async function main() {
         await handleControl(update, {
           user: tenant.user,
           routes: tenant.routes,
+          dataDir: tenant.personalData,
         })
       ) {
         offset = update.update_id + 1;
@@ -322,10 +410,7 @@ export async function main() {
         }
       }
 
-      const routed = await routeMessageUpdate(candidate, {
-        tenantId: tenant.userId,
-        workerRoutes: tenant.routes,
-      });
+      const routed = await routeKnownTenantUpdate(candidate, tenant);
       if (routed === "enqueue-failed") {
         if (collectedUpdate)
           collectorRestore(messageCollector, collectedUpdate);

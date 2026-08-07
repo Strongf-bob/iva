@@ -80,6 +80,12 @@ type RouteMessageOptions = {
     count: number,
   ) => Promise<void>;
   deliverImpl: (update: TelegramQueueUpdate) => Promise<boolean>;
+  reserveTurnImpl?: () => Promise<
+    | { allowed: true; token: string }
+    | { allowed: false; reason: "concurrent-turns" }
+  >;
+  releaseTurnImpl?: (token: string) => Promise<void>;
+  sendFailureImpl?: (key: string, text: string) => Promise<void>;
 };
 
 type PollModule = {
@@ -568,6 +574,30 @@ void test("an accepted head must observe its turn running and then idle before t
   running = false;
   assert.equal(await drainReadyQueueHeads(options), 0);
   assert.deepEqual(delivered, [101, 102]);
+});
+
+void test("direct tenant routing reserves a turn and releases rejected delivery", async () => {
+  const released: string[] = [];
+  const result = await routeMessageUpdate(privateUpdate(103, "fresh"), {
+    chatKeyImpl: () => "1:",
+    loadQueueImpl: async () => ({ version: 1, queues: {} }),
+    runningImpl: () => false,
+    inFlight: new Map(),
+    queueCountImpl: queueCount,
+    replyToBotImpl: () => false,
+    shouldQueueImpl: () => true,
+    enqueueImpl: async () => ({ count: 1 }),
+    acknowledgeImpl: async () => {},
+    reserveTurnImpl: async () => ({ allowed: true, token: "lease-1" }),
+    releaseTurnImpl: async (token) => {
+      released.push(token);
+    },
+    deliverImpl: async () => false,
+    sendFailureImpl: async () => {},
+  });
+
+  assert.equal(result, "rejected");
+  assert.deepEqual(released, ["lease-1"]);
 });
 
 void test("drain removes an orphaned running gate after the last queued turn becomes idle", async () => {

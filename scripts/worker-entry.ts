@@ -90,6 +90,7 @@ function filteredEnvironment(
   source: NodeJS.ProcessEnv,
   user: UserRecord,
   layout: UserLayout,
+  controlDir: string,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const key of SHARED_ENV_KEYS) {
@@ -109,6 +110,8 @@ function filteredEnvironment(
     ASSISTANT_HOST: `http://127.0.0.1:${user.port}`,
     ASSISTANT_MULTI_USER: "1",
     ASSISTANT_USER_ID: user.id,
+    ASSISTANT_USER_ROLE: user.role,
+    IVA_USER_CONTROL_DIR: controlDir,
     ASSISTANT_PERSONAL_ROOT: layout.root,
     ASSISTANT_RUNTIME_ROOT: layout.runtime,
     ASSISTANT_DATA_DIR: layout.data,
@@ -141,7 +144,12 @@ export async function prepareWorker(
   const appRoot = resolve(input.appRoot);
   const layout = resolveUserLayout(resolve(input.usersDir), id);
   verifyUserLayout(layout, appRoot);
-  const env = filteredEnvironment(input.sourceEnv ?? process.env, user, layout);
+  const env = filteredEnvironment(
+    input.sourceEnv ?? process.env,
+    user,
+    layout,
+    resolve(input.controlDir),
+  );
   return {
     user,
     layout,
