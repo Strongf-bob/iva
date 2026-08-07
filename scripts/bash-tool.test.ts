@@ -264,6 +264,20 @@ test("bash preserves stdout, stderr and the effective cwd", async () => {
   }
 });
 
+test("multi-user workers cannot execute host-native bash", async () => {
+  const previous = process.env.ASSISTANT_MULTI_USER;
+  process.env.ASSISTANT_MULTI_USER = "1";
+  try {
+    const result = await executeBash({ command: "printf must-not-run" });
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /disabled.*multi-user/u);
+  } finally {
+    if (previous === undefined) delete process.env.ASSISTANT_MULTI_USER;
+    else process.env.ASSISTANT_MULTI_USER = previous;
+  }
+});
+
 test("bash preserves an ordinary non-zero shell exit code", async () => {
   const result = await executeBash({
     command: "printf failed >&2; exit 7",

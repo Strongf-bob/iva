@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
 import { selfRestartViolation } from "../lib/self-restart-guard.ts";
+import { multiUserMode } from "../lib/safe-user-path.ts";
 
 // Host-native bash. Переопределяет встроенный sandbox-bash eve: команда выполняется
 // напрямую на реальной файловой системе VPS через node:child_process (без sandbox).
@@ -291,6 +292,14 @@ export default defineTool({
       ),
   }),
   async execute({ command, cwd, timeoutMs }) {
+    if (multiUserMode()) {
+      return {
+        stdout: "",
+        stderr:
+          "Host-native bash is disabled for Telegram users in multi-user mode.",
+        exitCode: 1,
+      };
+    }
     // Самоубийственные команды режем ДО запуска: рестарт собственного сервиса посреди
     // хода оставляет ход в running навсегда, сервис уходит в цикл переигрываний, а бот
     // немеет с HookConflictError (issue #68). Промпт-запрета мало — модели его игнорируют.
