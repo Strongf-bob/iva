@@ -123,6 +123,10 @@ void test("production Compose requires an immutable image and narrow mounts", ()
     userbot,
     /TELEGRAM_PROXY_RDNS: \$\{TELEGRAM_USERBOT_PROXY_RDNS:-true\}/u,
   );
+  assert.match(
+    userbot,
+    /TELEGRAM_USERBOT_BOT_API_PROXY: \$\{TELEGRAM_USERBOT_BOT_API_PROXY:-\}/u,
+  );
   assert.match(userbot, /\.\/data:\/app\/data:ro/u);
   assert.match(userbot, /telegram-userbot-state:\/app\/userbot-state/u);
   assert.match(userbot, /cap_drop:\s*\n\s*- ALL/u);
@@ -159,6 +163,7 @@ void test("production Compose requires an immutable image and narrow mounts", ()
   assert.match(runtime, /^TELEGRAM_USERBOT_PROXY_HOST=$/mu);
   assert.match(runtime, /^TELEGRAM_USERBOT_PROXY_PORT=$/mu);
   assert.match(runtime, /^TELEGRAM_USERBOT_PROXY_RDNS=true$/mu);
+  assert.match(runtime, /^TELEGRAM_USERBOT_BOT_API_PROXY=$/mu);
 
   const requirements = read("services/telegram-userbot/requirements.in");
   const lock = read("services/telegram-userbot/requirements.lock");
