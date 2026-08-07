@@ -173,7 +173,7 @@ npm test
 npm run test:coverage
 npm run typecheck
 npm run build
-python3 -m unittest discover -s scripts/security-defense/tests
+python3 agent/skills/security-defense/scripts/test_security.py
 ```
 
 Expected: every command exits zero. If local Node differs from the required Node 24, treat GitHub CI as the authoritative clean Node 24 run and report the local version warning separately.

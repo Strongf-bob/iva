@@ -37,7 +37,7 @@ There is no automatic escalation to DeepSeek V4 Pro or another premium text mode
 
 `qwen3.7-plus` is a narrow vision preprocessor. It receives only the image and a fixed OCR/description prompt. It returns a textual description containing visible text, numbers, objects, and relevant layout details.
 
-The description is treated as untrusted attachment content and passed to DeepSeek V4 Flash. Qwen does not receive the user's memory, does not decide the final answer, and cannot invoke tools. DeepSeek remains the only model that can propose agent actions.
+The description is passed to DeepSeek V4 Flash as attachment-derived context. Qwen does not receive the user's memory, does not decide the final answer, and cannot invoke tools. DeepSeek remains the only model that can propose agent actions. The current implementation does not wrap or sanitize the Qwen description separately, so instructions embedded in an image can influence DeepSeek and remain an accepted residual prompt-injection risk for this rollout.
 
 If vision fails, the turn degrades safely: the bot explains that it could not inspect the image instead of inventing image contents. Text-only operation remains available.
 
@@ -49,9 +49,9 @@ Text flow:
 
 Image flow:
 
-`trusted Telegram owner -> size/type checks -> Qwen vision description -> untrusted-data wrapper -> DeepSeek V4 Flash -> policy/tool boundary -> Telegram response`
+`trusted Telegram owner -> size/type checks -> Qwen vision description -> DeepSeek V4 Flash -> policy/tool boundary -> Telegram response`
 
-Both cloud models receive the minimum content required for their step. Provider responses and errors are sanitized before user delivery and logging.
+Both cloud models receive the minimum content required for their step. Provider errors can include a bounded response-body excerpt in server logs; secret scanning and log access controls reduce exposure, but provider-error redaction remains a follow-up.
 
 ## Security decisions
 
@@ -64,6 +64,7 @@ Compensating controls for this rollout:
 - keep the key only in the mode-`0600` production file;
 - never expose the bot to untrusted Telegram identities;
 - retain the current read-only Telegram userbot policy;
+- treat image-derived instructions as untrusted operationally until a dedicated wrapper and regression test are implemented;
 - keep command timeouts, process/resource limits, log rotation, and outbound secret redaction enabled;
 - stop the model-enabled release if the key appears in logs, Git, container inspection output, or Telegram output;
 - rotate the OpenCode key immediately if exposure is suspected.
