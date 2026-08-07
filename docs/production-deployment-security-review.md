@@ -6,7 +6,17 @@ Scope: `Strongf-bob/iva` production delivery and the rootless Docker runtime on 
 
 ## Decision
 
-The deployment infrastructure is suitable for the single-owner bot. The release path is fail-closed on CI result, commit identity, SSH command shape, runtime health, and Telegram identity. OpenCode Go enablement is in progress with DeepSeek V4 Flash for text/tool turns and Qwen3.7 Plus for bounded image description; production model evidence will be added after postflight. No active adversarial scan is authorized against production; the evidence below comes from configuration, unit/security tests, workflow results, and bounded postflight checks.
+The deployment infrastructure is suitable for the single-owner bot with the residual risks below accepted for this rollout. The release path is fail-closed on CI result, commit identity, SSH command shape, runtime health, and Telegram identity. OpenCode Go is production-verified with DeepSeek V4 Flash for text/tool turns and Qwen3.7 Plus for bounded image description. No active adversarial scan was run against production; the evidence below comes from configuration, unit/security tests, workflow results, and bounded postflight checks.
+
+## Production evidence
+
+- Pull request CI run `31180104824` and protected-`main` CI run `31180421555` completed successfully, including the full Node suite, coverage gate, production Compose validation, replica smoke, Python security tests, and userbot guardrails.
+- Deploy run `31180720033` published and deployed `ghcr.io/strongf-bob/iva:sha-0f66ca4c8915aae8dfaee5e3de0ee8422d07cb56`.
+- Both production services ran that exact image with zero restarts; Eve reported `ready`, and the `iva` service was Docker-healthy.
+- The server environment remained mode `0600`, contained the four expected non-secret routing values and one non-empty OpenCode credential, and contained no legacy Codex model entries.
+- An authenticated request from inside the production container returned HTTP 200 from `deepseek-v4-flash` with the expected tool call. A valid 16 by 16 PNG returned HTTP 200 and non-empty content from `qwen3.7-plus`.
+- An owner-only synthetic Telegram acceptance turn returned HTTP 204 with a `turn` receipt and reached Telegram in 4.976 seconds. The bounded postflight log window contained no error lines, secret-like key matches, or container restarts.
+- Mihomo was active and enabled. `AUTO-NON-RU` remained a 60-second `URLTest` group with 12 members, zero Russian-named nodes, a non-Russian selected node, seven responsive candidates, and a best measured delay of 185 ms. The OpenCode model catalog returned HTTP 200 through the SOCKS listener in 0.483 seconds.
 
 ## SHAD review
 
@@ -30,7 +40,6 @@ The deployment infrastructure is suitable for the single-owner bot. The release 
 - Provider errors can place a bounded response-body excerpt in server logs. Access is restricted and logs rotate, but explicit provider-error redaction remains a follow-up.
 - The operator accepted direct `.env` storage for this rollout. The unrestricted shell, file tools, agent-visible credentials, and broad outbound network mean a successful prompt/tool injection could read or exfiltrate the OpenCode key. Telegram redaction cannot prevent non-Telegram exfiltration from inside the agent container; credential isolation remains the highest-priority follow-up.
 - The application and Telegram depend on the selected third-party VPN endpoint. Mihomo tests candidates every minute, excludes Russian-named nodes, and can switch automatically, but a provider-wide outage still interrupts the bot.
-- OpenCode Go production verification is pending. Until authenticated text and image postflight succeeds, real assistant replies remain unconfirmed.
 - `data`, `memory`, `vault`, and Codex OAuth state are not yet backed up off-host. Server loss would lose this state.
 - A code rollback reuses writable persistent state. Releases that change persisted formats need an explicit compatible migration and restore procedure.
 - GitHub Actions and GHCR are release dependencies. An outage blocks new releases but does not stop the already running image.
