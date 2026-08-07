@@ -38,7 +38,7 @@ The rest — for business owners, specialists, executives and everyday life: **[
 
 <img src="assets/iva-flow.webp" alt="How Iva works: voice, text, photos and PDFs fly from Telegram into the willow-tree agent, wired to memory, nightly rollup, cron, reminders, search, web, workspace and docs" width="100%">
 
-The bridge long-polls Telegram, so no public HTTPS, domain or webhook is needed. Upstream Iva runs as two systemd user services, two systemd watchdog timers and five in-process eve schedules; this fork also adds a server path through Podman: [docs/podman.md](docs/podman.md). Upstream operations live in [docs/deploy.md](docs/deploy.md).
+The bridge long-polls Telegram, so no public HTTPS, domain or webhook is needed. Upstream Iva runs as systemd user services; this fork adds automated production delivery from verified `main` commits through GitHub Actions and GHCR to rootless Docker Compose. Podman remains available as an alternative: [docs/podman.md](docs/podman.md). Upstream operations live in [docs/deploy.md](docs/deploy.md).
 
 **Wondering what you'd actually use an agent for?** → [25+ real scenarios — business, work, everyday life](docs/use-cases.md).
 

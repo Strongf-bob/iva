@@ -3,6 +3,9 @@ name: iva
 services:
   iva:
     image: ${IVA_IMAGE:?IVA_IMAGE is required}
+    # The daemon itself is rootless. Container UID 0 maps to the unprivileged
+    # host deploy user, preserving access to 0600/0700 bind-mounted state.
+    user: "0:0"
     env_file:
       - ${IVA_ENV_FILE:-./.env}
     environment:
@@ -15,7 +18,10 @@ services:
       - ./data:/app/data
       - ./memory:/app/memory
       - ./vault:/app/vault
+      - ./.eve:/app/.eve
       - ./.env:/app/.env:ro
+    tmpfs:
+      - /app/node_modules/.cache/eve:rw,noexec,nosuid,nodev,mode=0700
     healthcheck:
       test:
         [
@@ -31,6 +37,16 @@ services:
       start_period: 20s
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 512
+    mem_limit: 4g
+    cpus: "2.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
     stop_grace_period: 30s
     networks:
@@ -38,6 +54,7 @@ services:
 
   telegram-poll:
     image: ${IVA_IMAGE:?IVA_IMAGE is required}
+    user: "0:0"
     env_file:
       - ${IVA_ENV_FILE:-./.env}
     environment:
@@ -52,9 +69,22 @@ services:
       - ./data:/app/data
       - ./memory:/app/memory
       - ./vault:/app/vault
+      - ./.eve:/app/.eve
       - ./.env:/app/.env:ro
+    tmpfs:
+      - /app/node_modules/.cache/eve:rw,noexec,nosuid,nodev,mode=0700
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 512
+    mem_limit: 4g
+    cpus: "2.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
     stop_grace_period: 30s
     networks:

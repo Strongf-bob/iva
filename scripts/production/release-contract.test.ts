@@ -53,10 +53,23 @@ void test("production Compose requires an immutable image and narrow mounts", ()
   assert.match(compose, /\/eve\/v1\/health/u);
   assert.match(compose, /condition: service_healthy/u);
   assert.equal(compose.match(/restart: unless-stopped/gu)?.length, 2);
+  assert.equal(compose.match(/^\s+user: "0:0"$/gmu)?.length, 2);
+  assert.equal(compose.match(/^\s+pids_limit: 512$/gmu)?.length, 2);
+  assert.equal(compose.match(/^\s+mem_limit: 4g$/gmu)?.length, 2);
+  assert.equal(compose.match(/^\s+cpus: "2\.0"$/gmu)?.length, 2);
+  assert.equal(compose.match(/max-size: "10m"/gu)?.length, 2);
+  assert.equal(compose.match(/max-file: "3"/gu)?.length, 2);
+  assert.equal(
+    compose.match(
+      /\/app\/node_modules\/\.cache\/eve:rw,noexec,nosuid,nodev,mode=0700/gu,
+    )?.length,
+    2,
+  );
   for (const mount of [
     "./data:/app/data",
     "./memory:/app/memory",
     "./vault:/app/vault",
+    "./.eve:/app/.eve",
     "./.env:/app/.env:ro",
   ]) {
     assert.equal(
@@ -67,6 +80,10 @@ void test("production Compose requires an immutable image and narrow mounts", ()
   }
   assert.doesNotMatch(compose, /docker\.sock/u);
   assert.doesNotMatch(compose, /^\s*-\s*["']?8723:8723/mu);
+
+  const deployScript = read("deploy/container/deploy.sh");
+  assert.match(deployScript, /docker info.*SecurityOptions/u);
+  assert.match(deployScript, /rootless/u);
 });
 
 void test("deployment waits for successful main CI and keeps least privilege", () => {
@@ -94,6 +111,10 @@ void test("deployment waits for successful main CI and keeps least privilege", (
   assert.match(workflow, /concurrency:/u);
   assert.match(workflow, /cancel-in-progress: false/u);
   assert.match(workflow, /environment: production/u);
+  assert.match(workflow, /ssh-keyscan .*?-t ed25519/u);
+  assert.match(workflow, /SHA256:nTB3CvC0D6hDKFnhSSCRmwoHDLxXtzEHJmrSnuyTW3I/u);
+  assert.match(workflow, /ssh-keygen -lf/u);
+  assert.doesNotMatch(workflow, /DEPLOY_KNOWN_HOSTS/u);
   assert.doesNotMatch(workflow, /pull_request_target/u);
 
   for (const line of workflow.split("\n")) {

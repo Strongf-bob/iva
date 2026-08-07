@@ -273,33 +273,33 @@ Confirm the selector still has no Russian node, a direct request and a proxied r
 - Consumes: verified branch commits, the dedicated deployment key, and server host fingerprint.
 - Produces: protected `main`, a public/pullable GHCR package, and the first healthy production release.
 
-- [ ] **Step 1: Run the full local verification suite**
+- [x] **Step 1: Run the full verification suite**
 
 Run: `npm run lint && npm run format:check && npm test && npm run test:coverage && npm run typecheck && npm run build && npm run replica && python3 scripts/autograph/tests/test_autograph.py && python3 agent/skills/security-defense/scripts/test_security.py`
 
 Expected: all commands exit 0.
 
-- [ ] **Step 2: Audit the staged publication boundary**
+- [x] **Step 2: Audit the staged publication boundary**
 
 Run tracked-file and diff scans for `.env`, Telegram token shapes, authorization headers, private keys, `codex-auth.json`, and files under `memory`, `data`, or `vault`. Inspect the complete staged diff before commit.
 
-- [ ] **Step 3: Commit and push the implementation branch**
+- [x] **Step 3: Commit and push the implementation branch**
 
 Create Conventional Commits with detailed bodies, push `strongf/production-deploy`, open a ready PR, and wait for CI to succeed.
 
-- [ ] **Step 4: Merge and protect `main`**
+- [x] **Step 4: Merge and protect `main`**
 
 Require the `verify` status check, at least one pull-request approval where GitHub permits it, conversation resolution, and no force pushes or deletions. Merge only after CI is green.
 
-- [ ] **Step 5: Configure deployment secrets and GHCR visibility**
+- [x] **Step 5: Configure deployment secrets and GHCR visibility**
 
-Set `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, and `DEPLOY_KNOWN_HOSTS` through authenticated GitHub CLI input without echoing values. Make the image package pullable by the production server without placing a broad GitHub token in runtime state.
+Set `DEPLOY_HOST`, `DEPLOY_USER`, and `DEPLOY_SSH_KEY` through authenticated GitHub CLI input without echoing values. Pin the public server ED25519 fingerprint in the workflow and verify a freshly scanned host key against it. Make the image package pullable by the production server without placing a broad GitHub token in runtime state.
 
-- [ ] **Step 6: Observe the first deployment**
+- [x] **Step 6: Observe the first deployment**
 
 Wait for the Deploy workflow, record its commit SHA, then verify the running image label/tag matches that SHA, both containers are healthy, and only port `127.0.0.1:8723` is published.
 
-- [ ] **Step 7: Prove rollback**
+- [x] **Step 7: Prove rollback**
 
 Invoke the deploy script in its test harness with a deliberately unhealthy candidate, not against the live production image. Verify the harness restores its previous tag and returns non-zero.
 
@@ -314,13 +314,15 @@ Invoke the deploy script in its test harness with a deliberately unhealthy candi
 - Consumes: the running Iva image and an interactive OpenAI device-code confirmation by the user.
 - Produces: a mode-`0600` OAuth token and a successful owner-only Telegram conversation.
 
-- [ ] **Step 1: Start the device-code login inside the production image**
+- [x] **Step 1: Start the device-code login inside the production image**
 
 Run `docker compose run --rm iva node bin/iva.mjs login` with the production runtime mounts and relay only the public verification URL and one-time device code to the user.
 
 - [ ] **Step 2: Wait for the user confirmation and verify token permissions**
 
 Expected: the command reports successful login; `codex-auth.json` exists in `data`, is owned by `strongf`, has mode `0600`, and is absent from container layers and Git.
+
+Operator decision: OpenAI device codes were declined. No OAuth token was stored; model authorization and live model-turn verification remain intentionally incomplete until another provider credential is selected.
 
 - [ ] **Step 3: Restart and test the owner flow**
 
@@ -343,11 +345,11 @@ Run the Telegram authorization unit/integration test with a synthetic non-owner 
 - Consumes: fresh repository, GitHub Actions, server, bot, and VPN evidence.
 - Produces: an evidence-backed SHAD review and final operator handoff.
 
-- [ ] **Step 1: Run the focused SHAD review**
+- [x] **Step 1: Run the focused SHAD review**
 
 Record evidence for prompt-injection handling, tool-command smuggling, Telegram identity enforcement, secret boundaries, deployment authorization, dependency pinning, resource limits, log redaction, incident rollback, and recovery. Classify remaining risks and do not claim coverage without a test or configuration reference.
 
-- [ ] **Step 2: Audit README accuracy**
+- [x] **Step 2: Audit README accuracy**
 
 Use the README audit workflow because `main` changes. Update only setup, deployment, architecture, command, or proof statements that became inaccurate; otherwise record that no README change is required.
 

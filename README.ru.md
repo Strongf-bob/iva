@@ -36,7 +36,7 @@ curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash
 
 <img src="assets/iva-flow.webp" alt="Как работает Iva: голосовые, тексты, фото и PDF летят из Telegram в агента-иву, вокруг - память, ночная сборка, cron, напоминания, поиск, веб, workspace и документы" width="100%">
 
-Мост опрашивает Telegram через long-poll, так что публичный HTTPS, домен и webhook не нужны. В upstream Iva работают два systemd user service, два systemd watchdog-таймера и пять внутрипроцессных eve schedules; в этом fork для серверного запуска добавлен отдельный путь через Podman: [docs/ru/podman.md](docs/ru/podman.md). Upstream-эксплуатация описана в [docs/deploy.md](docs/deploy.md).
+Мост опрашивает Telegram через long-poll, так что публичный HTTPS, домен и webhook не нужны. Upstream Iva работает через пользовательские systemd-сервисы; в этом fork проверенные коммиты `main` автоматически проходят путь GitHub Actions → GHCR → rootless Docker Compose. Podman остаётся альтернативой: [docs/ru/podman.md](docs/ru/podman.md). Upstream-эксплуатация описана в [docs/deploy.md](docs/deploy.md).
 
 **Зачем вам это** → [25+ живых сценариев - бизнес, работа, жизнь](docs/ru/use-cases.md).
 
