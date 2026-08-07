@@ -31,6 +31,72 @@ import sys
 from pathlib import Path
 
 
+# Explicit allowlist: upstream readOnlyHint annotations are useful but not sufficient
+# as a security boundary. New or mis-annotated tools fail closed until reviewed here.
+APPROVED_READ_ONLY_TOOLS = frozenset(
+    {
+        "export_contacts",
+        "get_admins",
+        "get_banned_users",
+        "get_blocked_users",
+        "get_bot_info",
+        "get_chat",
+        "get_chats",
+        "get_common_chats",
+        "get_contact_chats",
+        "get_contact_ids",
+        "get_direct_chat_by_contact",
+        "get_drafts",
+        "get_folder",
+        "get_full_chat",
+        "get_full_user",
+        "get_gif_search",
+        "get_history",
+        "get_last_interaction",
+        "get_me",
+        "get_media_info",
+        "get_message_context",
+        "get_message_link",
+        "get_message_reactions",
+        "get_message_read_by",
+        "get_messages",
+        "get_participants",
+        "get_pinned_messages",
+        "get_privacy_settings",
+        "get_recent_actions",
+        "get_scheduled_messages",
+        "get_sticker_sets",
+        "get_user_photos",
+        "get_user_status",
+        "list_accounts",
+        "list_chats",
+        "list_contacts",
+        "list_folders",
+        "list_inline_buttons",
+        "list_messages",
+        "list_topics",
+        "resolve_username",
+        "search_contacts",
+        "search_global",
+        "search_messages",
+        "search_public_chats",
+        "wait_for_new_message",
+        "wait_for_settled_message",
+    }
+)
+
+
+def apply_exposed_tool_policy(server, *, upstream_apply, mode: str) -> list[str]:
+    """Apply upstream annotations, then the local fail-closed read allowlist."""
+    removed = set(upstream_apply(server, mode))
+    if mode.strip().lower() == "read-only":
+        for tool in list(server._tool_manager.list_tools()):
+            if tool.name not in APPROVED_READ_ONLY_TOOLS:
+                server._tool_manager.remove_tool(tool.name)
+                removed.add(tool.name)
+    return sorted(removed)
+
+
 async def _health_payload(client) -> dict[str, str]:
     """Report authorization from the proxy's existing Telethon client."""
     return {"state": "ready" if await client.is_user_authorized() else "unauthorized"}
@@ -122,9 +188,17 @@ def main() -> None:
 
     # Honor TELEGRAM_EXPOSED_TOOLS (e.g. "read-only"); upstream normally does this in
     # its runner, which we bypass. Default "all".
-    removed = _apply_exposed_tools_mode(mcp)
+    exposed_mode = os.getenv("TELEGRAM_EXPOSED_TOOLS", "all")
+    removed = apply_exposed_tool_policy(
+        mcp,
+        upstream_apply=_apply_exposed_tools_mode,
+        mode=exposed_mode,
+    )
     if removed:
-        print(f"telegram-userbot: read-only mode, pruned {len(removed)} write tools", file=sys.stderr)
+        print(
+            f"telegram-userbot: read-only mode, pruned {len(removed)} non-approved tools",
+            file=sys.stderr,
+        )
 
     client = get_client()
 
