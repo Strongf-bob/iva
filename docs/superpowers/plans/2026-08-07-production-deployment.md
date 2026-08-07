@@ -24,6 +24,7 @@
 ### Task 1: Repository and image safety contract
 
 **Files:**
+
 - Modify: `.gitignore`
 - Modify: `.dockerignore`
 - Modify: `Containerfile`
@@ -31,6 +32,7 @@
 - Modify: `package.json`
 
 **Interfaces:**
+
 - Consumes: the existing multi-stage `Containerfile` and Node test runner.
 - Produces: `npm run test:release`, a static release-safety gate used by CI.
 
@@ -72,11 +74,13 @@ Expected: remaining failures name only the production files introduced in Tasks 
 ### Task 2: Production Compose runtime and health checks
 
 **Files:**
+
 - Create: `deploy/container/compose.production.yml`
 - Create: `deploy/container/runtime.env.example`
 - Modify: `scripts/production/release-contract.test.ts`
 
 **Interfaces:**
+
 - Consumes: `IVA_IMAGE`, `/home/strongf/iva-runtime/.env`, and persistent runtime directories.
 - Produces: services `iva` and `telegram-poll`, both on the internal `iva-internal` network; only `iva` exposes loopback port `8723`.
 
@@ -116,25 +120,27 @@ Expected: exit 0.
 ### Task 3: Restricted deployment with automatic rollback
 
 **Files:**
+
 - Create: `deploy/container/deploy.sh`
 - Create: `scripts/production/deploy-script.test.ts`
 - Modify: `package.json`
 
 **Interfaces:**
+
 - Consumes: a forced SSH command `deploy <40-lowercase-hex-sha>` and runtime root `/home/strongf/iva-runtime`.
 - Produces: atomic `deploy/current-image`, `deploy/previous-image`, a healthy Compose stack, and non-secret deployment logs.
 
-- [ ] **Step 1: Write failing shell-contract tests**
+- [x] **Step 1: Write failing shell-contract tests**
 
 Test rejection of empty commands, shell metacharacters, tags other than a 40-character lowercase commit SHA, and commands other than `deploy`. With mocked `docker`, `curl`, `flock`, and `timeout`, assert that a failed candidate health check restores the prior image and that successful deployment advances `current-image` only after health passes.
 
-- [ ] **Step 2: Run the tests and observe failure**
+- [x] **Step 2: Run the tests and observe failure**
 
 Run: `node --test scripts/production/deploy-script.test.ts`
 
 Expected: FAIL because `deploy/container/deploy.sh` is absent.
 
-- [ ] **Step 3: Implement the forced-command entrypoint**
+- [x] **Step 3: Implement the forced-command entrypoint**
 
 Use `set -eu`, a fixed `PATH`, `umask 077`, and `flock`. Read `${SSH_ORIGINAL_COMMAND:-}` and accept only this regular expression:
 
@@ -144,12 +150,12 @@ Use `set -eu`, a fixed `PATH`, `umask 077`, and `flock`. Read `${SSH_ORIGINAL_CO
 
 Build the image as `ghcr.io/strongf-bob/iva:sha-<sha>`. Pull it, render Compose with `IVA_IMAGE`, start `iva` and `telegram-poll`, poll the container health plus `http://127.0.0.1:8723/eve/v1/health`, and query Telegram `getMe` without printing the token. On failure, restore `previous-image`, start it, re-run health checks, and exit non-zero.
 
-- [ ] **Step 4: Add the deploy test command and pass focused tests**
+- [x] **Step 4: Add the deploy test command and pass focused tests**
 
 Add:
 
 ```json
-"test:deploy": "node --test scripts/production/deploy-script.test.ts scripts/production/release-contract.test.ts"
+"test:deploy": "node --test scripts/production/deploy-script.test.ts"
 ```
 
 Run: `npm run test:deploy`
@@ -159,10 +165,12 @@ Expected: PASS.
 ### Task 4: GitHub Actions image publication and deployment
 
 **Files:**
+
 - Create: `.github/workflows/deploy.yml`
 - Modify: `scripts/production/release-contract.test.ts`
 
 **Interfaces:**
+
 - Consumes: successful `CI` workflow runs for `main`, repository `GITHUB_TOKEN`, and secrets `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`.
 - Produces: GHCR tags `sha-<40-hex-sha>` and `main`, followed by the forced SSH command `deploy <sha>`.
 
@@ -189,6 +197,7 @@ Expected: all commands exit 0.
 ### Task 5: Provision server runtime and migrate Telegram identity
 
 **Files:**
+
 - Server create: `/home/strongf/iva-runtime/.env`
 - Server create: `/home/strongf/iva-runtime/compose.yml`
 - Server create: `/home/strongf/iva-runtime/deploy/deploy.sh`
@@ -196,6 +205,7 @@ Expected: all commands exit 0.
 - Server modify: `/home/strongf/.ssh/authorized_keys`
 
 **Interfaces:**
+
 - Consumes: the validated legacy bot token and owner ID, repository deployment files, and a newly generated dedicated Ed25519 key.
 - Produces: mode-`0600` runtime secrets, persistent directories, and a forced-command deployment identity.
 
@@ -224,9 +234,11 @@ Expected: `.env` is `600`, private directories are `700`, the unsupported comman
 ### Task 6: Remove the exact legacy resources and preserve VPN
 
 **Files:**
+
 - Server create: `/home/strongf/iva-runtime/deploy/legacy-cleanup-manifest.txt`
 
 **Interfaces:**
+
 - Consumes: the exact approved resource list from the design and a validated Telegram migration.
 - Produces: a clean home directory with Mihomo and rootless Docker intact.
 
@@ -253,9 +265,11 @@ Confirm the selector still has no Russian node, a direct request and a proxied r
 ### Task 7: Publish, protect `main`, and perform the first deployment
 
 **Files:**
+
 - GitHub repository settings and Actions secrets for `Strongf-bob/iva`.
 
 **Interfaces:**
+
 - Consumes: verified branch commits, the dedicated deployment key, and server host fingerprint.
 - Produces: protected `main`, a public/pullable GHCR package, and the first healthy production release.
 
@@ -292,9 +306,11 @@ Invoke the deploy script in its test harness with a deliberately unhealthy candi
 ### Task 8: Authorize Codex and verify the live bot
 
 **Files:**
+
 - Server create: `/home/strongf/iva-runtime/data/codex-auth.json`
 
 **Interfaces:**
+
 - Consumes: the running Iva image and an interactive OpenAI device-code confirmation by the user.
 - Produces: a mode-`0600` OAuth token and a successful owner-only Telegram conversation.
 
@@ -317,11 +333,13 @@ Run the Telegram authorization unit/integration test with a synthetic non-owner 
 ### Task 9: Final security and operations verification
 
 **Files:**
+
 - Create: `docs/security/production-deployment-review.md`
 - Modify: `README.md` only if the finished default-branch behavior changes documented setup or operation.
 - Modify: `README.ru.md` only if the same documentation update is needed in Russian.
 
 **Interfaces:**
+
 - Consumes: fresh repository, GitHub Actions, server, bot, and VPN evidence.
 - Produces: an evidence-backed SHAD review and final operator handoff.
 
