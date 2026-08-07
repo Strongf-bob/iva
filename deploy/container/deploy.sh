@@ -122,6 +122,22 @@ telegram_ok() {
     grep -Eq '"id"[[:space:]]*:[[:space:]]*'"$expected_id"'([^0-9]|$)'
 }
 
+userbot_session_ok() {
+  local container_id="$1"
+  [ -f "$RUNTIME_ROOT/data/telegram-userbot.enabled" ] || return 0
+  docker exec "$container_id" /bin/sh -c '
+    set -eu
+    token="$(cat /app/data/telegram-userbot.token)"
+    case "$token" in
+      ""|*[!A-Za-z0-9_-]*) exit 1 ;;
+    esac
+    [ "${#token}" -ge 40 ]
+    printf '\''header = "Authorization: Bearer %s"\n'\'' "$token" |
+      curl --config - --fail --silent --show-error --max-time 5 \
+        http://127.0.0.1:8724/healthz >/dev/null
+  '
+}
+
 runtime_ok() {
   local image="$1" allow_inert="$2" container_id health poller_id poller_state userbot_id userbot_state
   container_id="$(compose "$image" "$allow_inert" ps -q iva)" || return 1
@@ -140,6 +156,7 @@ runtime_ok() {
     docker inspect --format '{{.State.Status}} {{.RestartCount}}' "$userbot_id"
   )" || return 1
   [ "$userbot_state" = "running 0" ] || return 1
+  userbot_session_ok "$userbot_id" || return 1
   curl --fail --silent --show-error --max-time 5 \
     "http://127.0.0.1:8723/eve/v1/health" >/dev/null || return 1
   telegram_ok

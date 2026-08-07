@@ -107,6 +107,22 @@ void test("production Compose requires an immutable image and narrow mounts", ()
   assert.match(userbot, /exec sleep infinity/u);
   assert.match(userbot, /TELEGRAM_USERBOT_ALLOW_INERT/u);
   assert.match(userbot, /TELEGRAM_MCP_HOST: "0\.0\.0\.0"/u);
+  assert.match(
+    userbot,
+    /TELEGRAM_PROXY_TYPE: \$\{TELEGRAM_USERBOT_PROXY_TYPE:-\}/u,
+  );
+  assert.match(
+    userbot,
+    /TELEGRAM_PROXY_HOST: \$\{TELEGRAM_USERBOT_PROXY_HOST:-\}/u,
+  );
+  assert.match(
+    userbot,
+    /TELEGRAM_PROXY_PORT: \$\{TELEGRAM_USERBOT_PROXY_PORT:-\}/u,
+  );
+  assert.match(
+    userbot,
+    /TELEGRAM_PROXY_RDNS: \$\{TELEGRAM_USERBOT_PROXY_RDNS:-true\}/u,
+  );
   assert.match(userbot, /\.\/data:\/app\/data:ro/u);
   assert.match(userbot, /telegram-userbot-state:\/app\/userbot-state/u);
   assert.match(userbot, /cap_drop:\s*\n\s*- ALL/u);
@@ -132,11 +148,28 @@ void test("production Compose requires an immutable image and narrow mounts", ()
     2,
   );
 
+  const runtime = read("deploy/container/runtime.env.example");
+  assert.match(runtime, /^TELEGRAM_USERBOT_PROXY_TYPE=$/mu);
+  assert.match(runtime, /^TELEGRAM_USERBOT_PROXY_HOST=$/mu);
+  assert.match(runtime, /^TELEGRAM_USERBOT_PROXY_PORT=$/mu);
+  assert.match(runtime, /^TELEGRAM_USERBOT_PROXY_RDNS=true$/mu);
+
+  const requirements = read("services/telegram-userbot/requirements.in");
+  const lock = read("services/telegram-userbot/requirements.lock");
+  assert.match(requirements, /^python-socks>=2\.7,<3$/mu);
+  assert.match(lock, /^python-socks==/mu);
+
   const deployScript = read("deploy/container/deploy.sh");
   assert.match(deployScript, /docker info.*SecurityOptions/u);
   assert.match(deployScript, /rootless/u);
   assert.match(deployScript, /ps -q telegram-userbot/u);
   assert.match(deployScript, /telegram-userbot.*running 0/su);
+  assert.match(deployScript, /userbot_session_ok/u);
+  assert.match(deployScript, /cat \/app\/data\/telegram-userbot\.token/u);
+  assert.match(
+    deployScript,
+    /Authorization: Bearer %s.*127\.0\.0\.1:8724\/healthz/su,
+  );
   assert.match(deployScript, /org\.opencontainers\.image\.revision/u);
   assert.match(
     deployScript,

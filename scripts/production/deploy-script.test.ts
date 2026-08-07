@@ -60,12 +60,21 @@ function harness(): {
       'last=""; for arg in "$@"; do last="$arg"; done\n' +
       'if [ "${1:-}" = "inspect" ] && [ "$last" = "poller-container" ]; then printf "%s 0\\n" "${MOCK_POLLER_STATE:-running}"; exit 0; fi\n' +
       'if [ "${1:-}" = "inspect" ] && [ "$last" = "userbot-container" ]; then printf "%s %s\\n" "${MOCK_USERBOT_STATE:-running}" "${MOCK_USERBOT_RESTARTS:-0}"; exit 0; fi\n' +
-      'if [ "${1:-}" = "inspect" ]; then image=$(cat "$MOCK_IMAGE_STATE"); case "$image" in *sha-b*) printf "unhealthy\\n" ;; *) printf "healthy\\n" ;; esac; fi\n',
+      'if [ "${1:-}" = "exec" ] && [ "${2:-}" = "userbot-container" ]; then if [ "${MOCK_USERBOT_EXECUTE:-0}" = "1" ]; then /bin/sh -c "${5:-}"; else [ "${MOCK_USERBOT_HEALTH:-1}" = "1" ]; fi; exit; fi\n' +
+      'if [ "${1:-}" = "inspect" ]; then image=$(/bin/cat "$MOCK_IMAGE_STATE"); case "$image" in *sha-b*) printf "unhealthy\\n" ;; *) printf "healthy\\n" ;; esac; fi\n',
+  );
+  executable(
+    join(mockBin, "cat"),
+    'if [ "$#" = "1" ] && [ "$1" = "/app/data/telegram-userbot.token" ]; then /bin/cat "$IVA_RUNTIME_ROOT/data/telegram-userbot.token"; else /bin/cat "$@"; fi\n',
   );
   executable(
     join(mockBin, "curl"),
     `printf "curl args=%s\\n" "$*" >> "$MOCK_LOG"
 cat >/dev/null || true
+if printf "%s" "$*" | grep -q "127.0.0.1:8724/healthz"; then
+  [ "\${MOCK_USERBOT_HEALTH:-1}" = "1" ]
+  exit
+fi
 printf '{"ok":true,"result":{"id":777}}\\n'
 `,
   );
@@ -216,6 +225,76 @@ void test("a stopped or restarted userbot supervisor fails deployment", () => {
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /candidate failed health checks/u);
   }
+});
+
+void test("an enabled userbot must pass its authenticated child health check", () => {
+  const { root, env, log } = harness();
+  mkdirSync(join(root, "data"));
+  writeFileSync(join(root, "data/telegram-userbot.enabled"), "enabled\n");
+  writeFileSync(join(root, "data/telegram-userbot.token"), "a".repeat(64));
+
+  const healthy = run(`deploy ${goodSha}`, {
+    ...env,
+    MOCK_USERBOT_EXECUTE: "1",
+  });
+  assert.equal(healthy.status, 0, healthy.stderr);
+  assert.match(
+    readFileSync(log, "utf8"),
+    /exec userbot-container \/bin\/sh -c/u,
+  );
+  assert.match(
+    readFileSync(log, "utf8"),
+    /^curl args=.*127\.0\.0\.1:8724\/healthz$/mu,
+  );
+
+  const unhealthy = run(`deploy ${goodSha}`, {
+    ...env,
+    MOCK_USERBOT_EXECUTE: "1",
+    MOCK_USERBOT_HEALTH: "0",
+  });
+  assert.notEqual(unhealthy.status, 0);
+  assert.match(unhealthy.stderr, /candidate failed health checks/u);
+});
+
+void test("the userbot health probe rejects curl-config injection in its token", () => {
+  const { root, env, log } = harness();
+  mkdirSync(join(root, "data"));
+  writeFileSync(join(root, "data/telegram-userbot.enabled"), "enabled\n");
+  writeFileSync(
+    join(root, "data/telegram-userbot.token"),
+    `${"a".repeat(40)}\nurl = "file:///etc/passwd"\nupload-file = "/etc/passwd"`,
+  );
+
+  const result = run(`deploy ${goodSha}`, {
+    ...env,
+    MOCK_USERBOT_EXECUTE: "1",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /candidate failed health checks/u);
+  assert.doesNotMatch(
+    readFileSync(log, "utf8"),
+    /^curl args=.*127\.0\.0\.1:8724\/healthz$/mu,
+  );
+});
+
+void test("rollback never claims restoration when the enabled userbot stays unhealthy", () => {
+  const { root, env, imageState } = harness();
+  const previous = `ghcr.io/strongf-bob/iva:sha-${goodSha}`;
+  mkdirSync(join(root, "data"));
+  writeFileSync(join(root, "data/telegram-userbot.enabled"), "enabled\n");
+  writeFileSync(join(root, "data/telegram-userbot.token"), "a".repeat(64));
+  writeFileSync(join(root, "deploy/current-image"), `${previous}\n`);
+  writeFileSync(imageState, `${previous}\n`);
+
+  const result = run(`deploy ${badSha}`, {
+    ...env,
+    MOCK_USERBOT_HEALTH: "0",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.doesNotMatch(result.stderr, /previous image restored/u);
+  assert.match(result.stderr, /candidate and rollback image are unhealthy/u);
 });
 
 void test("an unhealthy candidate restores the previous healthy image", () => {
