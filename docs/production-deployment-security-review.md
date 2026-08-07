@@ -6,7 +6,7 @@ Scope: `Strongf-bob/iva` production delivery and the rootless Docker runtime on 
 
 ## Decision
 
-The deployment is suitable for the single-owner bot after the owner completes Codex OAuth. The release path is fail-closed on CI result, commit identity, SSH command shape, runtime health, and Telegram identity. No active adversarial scan was run against production; the evidence below comes from configuration, unit/security tests, workflow results, and bounded postflight checks.
+The deployment infrastructure is suitable for the single-owner bot. The release path is fail-closed on CI result, commit identity, SSH command shape, runtime health, and Telegram identity. The operator declined OpenAI device-code authorization, so the bot transport can run but model turns remain unavailable until a provider credential is chosen. No active adversarial scan was run against production; the evidence below comes from configuration, unit/security tests, workflow results, and bounded postflight checks.
 
 ## SHAD review
 
@@ -27,6 +27,7 @@ The deployment is suitable for the single-owner bot after the owner completes Co
 
 - The model can still make unsafe tool decisions after novel prompt injection. The container boundary limits impact but does not replace human review for destructive or external actions.
 - The application and Telegram depend on the selected third-party VPN endpoint. Mihomo tests candidates every minute, excludes Russian-named nodes, and can switch automatically, but a provider-wide outage still interrupts the bot.
+- No model credential is installed. This is an intentional operator choice; real assistant replies require a separately authorized provider.
 - `data`, `memory`, `vault`, and Codex OAuth state are not yet backed up off-host. Server loss would lose this state.
 - GitHub Actions and GHCR are release dependencies. An outage blocks new releases but does not stop the already running image.
 - The Telegram userbot remains read-only in this deployment. Enabling writes would expand account-ban and external-action risk and requires a separate review.

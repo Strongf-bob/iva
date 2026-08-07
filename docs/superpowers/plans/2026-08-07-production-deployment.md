@@ -322,6 +322,8 @@ Run `docker compose run --rm iva node bin/iva.mjs login` with the production run
 
 Expected: the command reports successful login; `codex-auth.json` exists in `data`, is owned by `strongf`, has mode `0600`, and is absent from container layers and Git.
 
+Operator decision: OpenAI device codes were declined. No OAuth token was stored; model authorization and live model-turn verification remain intentionally incomplete until another provider credential is selected.
+
 - [ ] **Step 3: Restart and test the owner flow**
 
 Restart the two services, send a benign message from the configured owner account, and verify a real model response arrives. Confirm logs contain update IDs and status but not message text or credentials.
