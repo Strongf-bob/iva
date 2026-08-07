@@ -65,6 +65,16 @@ def _resolve_token() -> str:
     return f.read_text().strip() if f.exists() else ""
 
 
+def _load_credentials_file() -> None:
+    """Load the strict container credential file while preserving legacy env use."""
+    path = os.getenv("TELEGRAM_USERBOT_CREDENTIALS_FILE")
+    if not path or (os.getenv("TELEGRAM_API_ID") and os.getenv("TELEGRAM_API_HASH")):
+        return
+    from container_supervisor import load_credentials
+
+    os.environ.update(load_credentials(Path(path)))
+
+
 def _seed_session_env() -> Path:
     """Point upstream at our SQLite session file (created empty if absent = onboarding).
 
@@ -99,6 +109,7 @@ def main() -> None:
     token = _resolve_token()
     if not token:
         _fail("no proxy token — run `iva userbot setup` (writes data/telegram-userbot.token)")
+    _load_credentials_file()
     if not os.getenv("TELEGRAM_API_ID") or not os.getenv("TELEGRAM_API_HASH"):
         _fail("TELEGRAM_API_ID and TELEGRAM_API_HASH are required (create an app at my.telegram.org)")
 
