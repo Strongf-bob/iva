@@ -16,6 +16,7 @@ import {
   defaultUserLimits,
   parseTelegramUserId,
   readUserRegistry,
+  removeUser,
   setUserStatus,
   updateUserLimits,
 } from "./user-registry.ts";
@@ -107,6 +108,28 @@ void test("registry permits at most ten active users and reuses a blocked slot",
   const added = await addUser(control, { id: "11", role: "user" });
   assert.equal(added.port, 8810);
   assert.equal(added.status, "active");
+});
+
+void test("registry can stage blocked users and remove only the requested record", async (t) => {
+  const control = fixture(t);
+  const staged = await addUser(control, {
+    id: "101",
+    role: "owner",
+    status: "blocked",
+  });
+  await addUser(control, { id: "202", role: "user" });
+
+  assert.equal(staged.status, "blocked");
+  const removed = await removeUser(control, parseTelegramUserId("101")!);
+  assert.equal(removed.id, "101");
+  assert.deepEqual(
+    (await readUserRegistry(control)).users.map((user) => user.id),
+    ["202"],
+  );
+  await assert.rejects(
+    () => removeUser(control, parseTelegramUserId("101")!),
+    /not found/u,
+  );
 });
 
 void test("registry rejects duplicate users, a second owner, and invalid limit patches", async (t) => {

@@ -219,7 +219,12 @@ export async function mutateUserRegistry(
 
 export async function addUser(
   controlDir: string,
-  input: { id: string; role: "owner" | "user"; now?: Date },
+  input: {
+    id: string;
+    role: "owner" | "user";
+    status?: "active" | "blocked";
+    now?: Date;
+  },
 ): Promise<UserRecord> {
   const id = parseTelegramUserId(input.id);
   if (!id)
@@ -234,9 +239,11 @@ export async function addUser(
     ) {
       throw new Error("owner already exists");
     }
+    const status = input.status ?? "active";
     if (
+      status === "active" &&
       registry.users.filter((user) => user.status === "active").length >=
-      MAX_ACTIVE_USERS
+        MAX_ACTIVE_USERS
     ) {
       throw new Error(
         `registry supports at most ${MAX_ACTIVE_USERS} active users`,
@@ -245,7 +252,7 @@ export async function addUser(
     const added: UserRecord = {
       id,
       role: input.role,
-      status: "active",
+      status,
       port: allocatePort(registry),
       limits: defaultUserLimits(),
       createdAt: (input.now ?? new Date()).toISOString(),
@@ -253,6 +260,19 @@ export async function addUser(
     registry.users.push(added);
   });
   return registry.users.find((user) => user.id === id)!;
+}
+
+export async function removeUser(
+  controlDir: string,
+  id: TelegramUserId,
+): Promise<UserRecord> {
+  let removed: UserRecord | undefined;
+  await mutateUserRegistry(controlDir, (registry) => {
+    const index = registry.users.findIndex((candidate) => candidate.id === id);
+    if (index < 0) throw new Error(`Telegram user ${id} not found`);
+    [removed] = registry.users.splice(index, 1);
+  });
+  return removed!;
 }
 
 export async function setUserStatus(
