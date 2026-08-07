@@ -74,10 +74,17 @@ exec 9>"$DEPLOY_DIR/deploy.lock"
 flock -n 9 || fail "another deployment is running"
 
 compose() {
-  IVA_IMAGE="$1" docker compose \
+  local image="$1" allow_inert="$2"
+  shift 2
+  IVA_IMAGE="$image" TELEGRAM_USERBOT_ALLOW_INERT="$allow_inert" docker compose \
     --project-directory "$RUNTIME_ROOT" \
     -f "$COMPOSE_FILE" \
-    "${@:2}"
+    "$@"
+}
+
+image_supports_userbot() {
+  docker run --rm --entrypoint /bin/sh "$1" -c \
+    'test -x /opt/iva-userbot-venv/bin/python && test -f /app/services/telegram-userbot/container_supervisor.py'
 }
 
 telegram_token() {
@@ -116,18 +123,18 @@ telegram_ok() {
 }
 
 runtime_ok() {
-  local image="$1" container_id health poller_id poller_state userbot_id userbot_state
-  container_id="$(compose "$image" ps -q iva)" || return 1
+  local image="$1" allow_inert="$2" container_id health poller_id poller_state userbot_id userbot_state
+  container_id="$(compose "$image" "$allow_inert" ps -q iva)" || return 1
   [ -n "$container_id" ] || return 1
   health="$(docker inspect --format '{{.State.Health.Status}}' "$container_id")" || return 1
   [ "$health" = "healthy" ] || return 1
-  poller_id="$(compose "$image" ps -q telegram-poll)" || return 1
+  poller_id="$(compose "$image" "$allow_inert" ps -q telegram-poll)" || return 1
   [ -n "$poller_id" ] || return 1
   poller_state="$(
     docker inspect --format '{{.State.Status}} {{.RestartCount}}' "$poller_id"
   )" || return 1
   [ "$poller_state" = "running 0" ] || return 1
-  userbot_id="$(compose "$image" ps -q telegram-userbot)" || return 1
+  userbot_id="$(compose "$image" "$allow_inert" ps -q telegram-userbot)" || return 1
   [ -n "$userbot_id" ] || return 1
   userbot_state="$(
     docker inspect --format '{{.State.Status}} {{.RestartCount}}' "$userbot_id"
@@ -139,9 +146,9 @@ runtime_ok() {
 }
 
 wait_healthy() {
-  local image="$1" attempt=1
+  local image="$1" allow_inert="$2" attempt=1
   while [ "$attempt" -le "$HEALTH_ATTEMPTS" ]; do
-    if runtime_ok "$image"; then
+    if runtime_ok "$image" "$allow_inert"; then
       return 0
     fi
     sleep "$HEALTH_DELAY"
@@ -151,10 +158,10 @@ wait_healthy() {
 }
 
 start_image() {
-  local image="$1"
-  compose "$image" up -d --remove-orphans iva telegram-poll telegram-userbot || return 1
+  local image="$1" allow_inert="$2"
+  compose "$image" "$allow_inert" up -d --remove-orphans iva telegram-poll telegram-userbot || return 1
   sleep "$POLLER_SETTLE_DELAY"
-  wait_healthy "$image"
+  wait_healthy "$image" "$allow_inert"
 }
 
 write_state() {
@@ -170,17 +177,23 @@ if [ -f "$CURRENT_IMAGE_FILE" ]; then
   previous_image="$(sed -n '1p' "$CURRENT_IMAGE_FILE")"
 fi
 
-if ! start_image "$candidate_image"; then
+image_supports_userbot "$candidate_image" || fail "candidate image lacks the userbot runtime"
+
+if ! start_image "$candidate_image" 0; then
   printf 'deploy: candidate failed health checks; rolling back\n' >&2
   if [ -n "$previous_image" ] && [ "$previous_image" != "$candidate_image" ]; then
     docker pull "$previous_image" >/dev/null 2>&1 || true
-    if start_image "$previous_image"; then
+    rollback_allow_inert=0
+    if ! image_supports_userbot "$previous_image"; then
+      rollback_allow_inert=1
+    fi
+    if start_image "$previous_image" "$rollback_allow_inert"; then
       printf 'deploy: previous image restored\n' >&2
     else
       fail "candidate and rollback image are unhealthy"
     fi
   else
-    compose "$candidate_image" down >/dev/null 2>&1 || true
+    compose "$candidate_image" 0 down >/dev/null 2>&1 || true
   fi
   exit 1
 fi

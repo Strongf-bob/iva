@@ -127,6 +127,10 @@ class ContainerSupervisorTest(unittest.TestCase):
             self.assertTrue(starts[0][2])
             self.assertEqual(starts[0][1]["TELEGRAM_API_ID"], "12345")
             self.assertEqual(starts[0][1]["TELEGRAM_API_HASH"], "abcdef123456")
+            self.assertEqual(
+                starts[0][1]["TELEGRAM_MCP_TOKEN"],
+                "synthetic-bearer-token-value-with-length",
+            )
 
             enabled.unlink()
             supervisor.tick(now=2)

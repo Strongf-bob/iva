@@ -125,8 +125,8 @@ class Supervisor:
     def _runtime_environment(self) -> dict[str, str]:
         _require_enabled(self.paths.enabled)
         credentials = load_credentials(self.paths.credentials)
-        _load_token(self.paths.token)
-        return {**os.environ, **credentials}
+        token = _load_token(self.paths.token)
+        return {**os.environ, **credentials, "TELEGRAM_MCP_TOKEN": token}
 
     def _stop_child(self) -> None:
         if self.child is None:

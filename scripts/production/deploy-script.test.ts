@@ -52,7 +52,7 @@ function harness(): {
     'printf "docker image=%s args=%s\\n" "${IVA_IMAGE:-}" "$*" >> "$MOCK_LOG"\n' +
       'if [ "${1:-}" = "info" ]; then printf \'["name=rootless"]\\n\'; exit 0; fi\n' +
       'if [ "${1:-}" = "image" ] && [ "${2:-}" = "inspect" ]; then printf "%s\\n" "${SSH_ORIGINAL_COMMAND#deploy }"; exit 0; fi\n' +
-      'if [ "${1:-}" = "run" ]; then last=""; for arg in "$@"; do last="$arg"; done; case "$last" in */deploy.sh) cat "$MOCK_REPO_ROOT/deploy/container/deploy.sh" ;; */compose.production.yml) cat "$MOCK_REPO_ROOT/deploy/container/compose.production.yml" ;; *) exit 1 ;; esac; exit 0; fi\n' +
+      'if [ "${1:-}" = "run" ]; then if printf "%s" "$*" | grep -q -- "--entrypoint /bin/sh"; then [ "${MOCK_CANDIDATE_COMPAT:-1}" = "1" ]; exit; fi; last=""; for arg in "$@"; do last="$arg"; done; case "$last" in */deploy.sh) cat "$MOCK_REPO_ROOT/deploy/container/deploy.sh" ;; */compose.production.yml) cat "$MOCK_REPO_ROOT/deploy/container/compose.production.yml" ;; *) exit 1 ;; esac; exit 0; fi\n' +
       'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "up -d"; then printf "%s\\n" "$IVA_IMAGE" > "$MOCK_IMAGE_STATE"; fi\n' +
       'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "ps -q iva"; then printf "iva-container\\n"; fi\n' +
       'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "ps -q telegram-poll"; then printf "poller-container\\n"; fi\n' +
@@ -167,6 +167,16 @@ void test("a healthy candidate advances the current immutable image", () => {
     readFileSync(log, "utf8"),
     /up -d --remove-orphans iva telegram-poll telegram-userbot/u,
   );
+});
+
+void test("a candidate without the real supervisor cannot pass via the inert fallback", () => {
+  const { env } = harness();
+  const result = run(`deploy ${goodSha}`, {
+    ...env,
+    MOCK_CANDIDATE_COMPAT: "0",
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /candidate image lacks the userbot runtime/u);
 });
 
 void test("a valid token for the wrong Telegram bot fails deployment", () => {
