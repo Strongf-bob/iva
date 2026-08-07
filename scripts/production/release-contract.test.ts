@@ -147,6 +147,12 @@ void test("production Compose requires an immutable image and narrow mounts", ()
       ?.length,
     2,
   );
+  assert.equal(
+    compose.match(
+      /NO_PROXY: \$\{NO_PROXY:-iva,127\.0\.0\.1,localhost\},telegram-userbot/gu,
+    )?.length,
+    2,
+  );
 
   const runtime = read("deploy/container/runtime.env.example");
   assert.match(runtime, /^TELEGRAM_USERBOT_PROXY_TYPE=$/mu);
