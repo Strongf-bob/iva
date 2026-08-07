@@ -12,6 +12,8 @@ services:
       ASSISTANT_HOST: http://iva:8723
       IVA_PORT: "8723"
       PORT: "8723"
+      TELEGRAM_USERBOT_RUNTIME: "container"
+      TELEGRAM_MCP_URL: http://telegram-userbot:8724/mcp
     ports:
       - "127.0.0.1:8723:8723"
     volumes:
@@ -49,6 +51,9 @@ services:
         max-file: "3"
     restart: unless-stopped
     stop_grace_period: 30s
+    depends_on:
+      telegram-userbot:
+        condition: service_started
     networks:
       - iva-internal
 
@@ -61,10 +66,14 @@ services:
       ASSISTANT_HOST: http://iva:8723
       IVA_PORT: "8723"
       PORT: "8723"
+      TELEGRAM_USERBOT_RUNTIME: "container"
+      TELEGRAM_MCP_URL: http://telegram-userbot:8724/mcp
     command: ["npm", "run", "poll"]
     depends_on:
       iva:
         condition: service_healthy
+      telegram-userbot:
+        condition: service_started
     volumes:
       - ./data:/app/data
       - ./memory:/app/memory
@@ -90,6 +99,52 @@ services:
     networks:
       - iva-internal
 
+  telegram-userbot:
+    image: ${IVA_IMAGE:?IVA_IMAGE is required}
+    # Root is namespaced by the required rootless Docker daemon. It is needed
+    # only to initialize the private named volume on first boot.
+    user: "0:0"
+    environment:
+      ASSISTANT_DATA_DIR: /app/data
+      PYTHONDONTWRITEBYTECODE: "1"
+      TELEGRAM_USERBOT_CREDENTIALS_FILE: /app/data/telegram-userbot.env
+      TELEGRAM_SESSION_FILE: /app/userbot-state/telegram-userbot.session
+      TELEGRAM_MCP_HOST: "0.0.0.0"
+      TELEGRAM_MCP_PORT: "8724"
+      TELEGRAM_EXPOSED_TOOLS: "read-only"
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_ALLOWED_USER_IDS: ${TELEGRAM_ALLOWED_USER_IDS:-}
+    command:
+      [
+        "/opt/iva-userbot-venv/bin/python",
+        "/app/services/telegram-userbot/container_supervisor.py",
+      ]
+    volumes:
+      - ./data:/app/data:ro
+      - telegram-userbot-state:/app/userbot-state
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,mode=0700,size=16m
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 768m
+    cpus: "0.5"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    stop_grace_period: 15s
+    networks:
+      - iva-internal
+
 networks:
   iva-internal:
     driver: bridge
+
+volumes:
+  telegram-userbot-state:

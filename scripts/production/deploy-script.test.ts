@@ -53,8 +53,10 @@ function harness(): {
       'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "up -d"; then printf "%s\\n" "$IVA_IMAGE" > "$MOCK_IMAGE_STATE"; fi\n' +
       'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "ps -q iva"; then printf "iva-container\\n"; fi\n' +
       'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "ps -q telegram-poll"; then printf "poller-container\\n"; fi\n' +
+      'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "ps -q telegram-userbot"; then printf "userbot-container\\n"; fi\n' +
       'last=""; for arg in "$@"; do last="$arg"; done\n' +
       'if [ "${1:-}" = "inspect" ] && [ "$last" = "poller-container" ]; then printf "%s 0\\n" "${MOCK_POLLER_STATE:-running}"; exit 0; fi\n' +
+      'if [ "${1:-}" = "inspect" ] && [ "$last" = "userbot-container" ]; then printf "%s %s\\n" "${MOCK_USERBOT_STATE:-running}" "${MOCK_USERBOT_RESTARTS:-0}"; exit 0; fi\n' +
       'if [ "${1:-}" = "inspect" ]; then image=$(cat "$MOCK_IMAGE_STATE"); case "$image" in *sha-b*) printf "unhealthy\\n" ;; *) printf "healthy\\n" ;; esac; fi\n',
   );
   executable(
@@ -133,6 +135,11 @@ void test("a healthy candidate advances the current immutable image", () => {
     /curl args=--proxy socks5h:\/\/127\.0\.0\.1:7891/u,
   );
   assert.match(readFileSync(log, "utf8"), /ps -q telegram-poll/u);
+  assert.match(readFileSync(log, "utf8"), /ps -q telegram-userbot/u);
+  assert.match(
+    readFileSync(log, "utf8"),
+    /up -d --remove-orphans iva telegram-poll telegram-userbot/u,
+  );
 });
 
 void test("a valid token for the wrong Telegram bot fails deployment", () => {
@@ -160,6 +167,18 @@ void test("a stopped Telegram poller fails deployment", () => {
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /candidate failed health checks/u);
+});
+
+void test("a stopped or restarted userbot supervisor fails deployment", () => {
+  for (const override of [
+    { MOCK_USERBOT_STATE: "exited" },
+    { MOCK_USERBOT_RESTARTS: "1" },
+  ]) {
+    const { env } = harness();
+    const result = run(`deploy ${goodSha}`, { ...env, ...override });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /candidate failed health checks/u);
+  }
 });
 
 void test("an unhealthy candidate restores the previous healthy image", () => {

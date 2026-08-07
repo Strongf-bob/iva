@@ -23,7 +23,12 @@ RUN npm ci
 
 FROM deps AS build
 COPY . .
-RUN npm run build
+RUN uv venv --python python3 /opt/iva-userbot-venv \
+  && uv pip sync --python /opt/iva-userbot-venv/bin/python \
+    --require-hashes \
+    --strict \
+    services/telegram-userbot/requirements.lock \
+  && npm run build
 
 FROM node:24-bookworm-slim AS runtime
 
@@ -48,6 +53,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app /app
+COPY --from=build /opt/iva-userbot-venv /opt/iva-userbot-venv
 RUN mkdir -p /app/data /app/memory /app/vault \
   && chown -R node:node /app
 

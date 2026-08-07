@@ -87,7 +87,7 @@ telegram_ok() {
 }
 
 runtime_ok() {
-  local image="$1" container_id health poller_id poller_state
+  local image="$1" container_id health poller_id poller_state userbot_id userbot_state
   container_id="$(compose "$image" ps -q iva)" || return 1
   [ -n "$container_id" ] || return 1
   health="$(docker inspect --format '{{.State.Health.Status}}' "$container_id")" || return 1
@@ -98,6 +98,12 @@ runtime_ok() {
     docker inspect --format '{{.State.Status}} {{.RestartCount}}' "$poller_id"
   )" || return 1
   [ "$poller_state" = "running 0" ] || return 1
+  userbot_id="$(compose "$image" ps -q telegram-userbot)" || return 1
+  [ -n "$userbot_id" ] || return 1
+  userbot_state="$(
+    docker inspect --format '{{.State.Status}} {{.RestartCount}}' "$userbot_id"
+  )" || return 1
+  [ "$userbot_state" = "running 0" ] || return 1
   curl --fail --silent --show-error --max-time 5 \
     "http://127.0.0.1:8723/eve/v1/health" >/dev/null || return 1
   telegram_ok
@@ -117,7 +123,7 @@ wait_healthy() {
 
 start_image() {
   local image="$1"
-  compose "$image" up -d --remove-orphans iva telegram-poll || return 1
+  compose "$image" up -d --remove-orphans iva telegram-poll telegram-userbot || return 1
   sleep "$POLLER_SETTLE_DELAY"
   wait_healthy "$image"
 }
