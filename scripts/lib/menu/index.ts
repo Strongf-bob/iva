@@ -358,6 +358,7 @@ export function createMenu({
             "Не смог удалить сообщение — удали его вручную.",
           ),
         );
+        return true;
       }
     }
     const screen = typeof st.screen === "string" ? st.screen : "";

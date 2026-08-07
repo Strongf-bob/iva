@@ -2,12 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export type UserbotOnboardingState =
-  | "idle"
-  | "code_sent"
-  | "password_needed"
-  | "authorized"
-  | "expired"
-  | "error";
+  "idle" | "code_sent" | "password_needed" | "authorized" | "expired" | "error";
 
 export type UserbotOnboardingReason =
   | "idle"

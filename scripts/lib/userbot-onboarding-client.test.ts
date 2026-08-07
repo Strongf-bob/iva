@@ -75,7 +75,11 @@ void test("client derives private routes and reads a fresh bearer for every requ
 
 void test("client exposes all five operations with fixed methods and paths", async () => {
   const { root, requests, fetchImpl } = await fixture();
-  const client = createUserbotOnboardingClient({ root, port: "9000", fetchImpl });
+  const client = createUserbotOnboardingClient({
+    root,
+    port: "9000",
+    fetchImpl,
+  });
 
   await client.password("synthetic-password");
   await client.cancel();
