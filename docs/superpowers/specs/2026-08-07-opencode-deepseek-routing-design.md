@@ -1,7 +1,7 @@
 # OpenCode Go model routing design
 
 Date: 2026-08-07
-Status: implementation in progress
+Status: implemented and production-verified
 
 ## Goal
 
@@ -17,6 +17,8 @@ The production runtime uses these non-secret settings:
 - `THINKING_EFFORT=medium`
 
 The OpenCode Go key is stored only in `/home/strongf/iva-runtime/.env`, which remains mode `0600`. The key must never be committed, copied into GitHub Actions, printed by deployment commands, included in test fixtures, or written to application logs.
+
+Production release `0f66ca4c8915aae8dfaee5e3de0ee8422d07cb56` was verified on 2026-08-07. The deployed container returned an authenticated DeepSeek tool call and a non-empty Qwen description for a valid image. A bounded owner-only Telegram acceptance turn was delivered in 4.976 seconds.
 
 ## Routing
 
