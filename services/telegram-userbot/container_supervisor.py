@@ -30,20 +30,45 @@ class RuntimePaths:
     enabled: Path
 
 
-def _require_private_regular_file(path: Path) -> None:
-    metadata = path.lstat()
-    if not stat.S_ISREG(metadata.st_mode):
-        raise ValueError(f"{path.name} must be a regular file")
-    if stat.S_IMODE(metadata.st_mode) & 0o077:
-        raise ValueError(f"{path.name} must have private permissions")
+def read_private_file(path: Path) -> str:
+    """Read one owner-private file through no-follow descriptors."""
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | nofollow)
+    try:
+        directory = os.fstat(directory_fd)
+        if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != os.geteuid():
+            raise ValueError(f"{path.parent.name} must be an owned directory")
+        if stat.S_IMODE(directory.st_mode) & 0o077:
+            raise ValueError(f"{path.parent.name} must have private permissions")
+        try:
+            file_fd = os.open(path.name, os.O_RDONLY | nofollow, dir_fd=directory_fd)
+        except OSError as exc:
+            if path.is_symlink():
+                raise ValueError(f"{path.name} must be a regular file") from exc
+            raise
+        try:
+            metadata = os.fstat(file_fd)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ValueError(f"{path.name} must be a regular file")
+            if metadata.st_uid != os.geteuid():
+                raise ValueError(f"{path.name} must be owned by the runtime user")
+            if stat.S_IMODE(metadata.st_mode) & 0o077:
+                raise ValueError(f"{path.name} must have private permissions")
+            with os.fdopen(file_fd, "r", encoding="utf-8") as handle:
+                file_fd = -1
+                return handle.read()
+        finally:
+            if file_fd >= 0:
+                os.close(file_fd)
+    finally:
+        os.close(directory_fd)
 
 
 def load_credentials(path: Path) -> dict[str, str]:
     """Load the two expected values without evaluating shell syntax."""
 
-    _require_private_regular_file(path)
     values: dict[str, str] = {}
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
+    for raw_line in read_private_file(path).splitlines():
         line = raw_line.strip()
         if not line:
             continue
@@ -68,16 +93,14 @@ def load_credentials(path: Path) -> dict[str, str]:
 
 
 def _load_token(path: Path) -> str:
-    _require_private_regular_file(path)
-    token = path.read_text(encoding="utf-8").strip()
+    token = read_private_file(path).strip()
     if not TOKEN_RE.fullmatch(token):
         raise ValueError("invalid proxy token")
     return token
 
 
 def _require_enabled(path: Path) -> None:
-    _require_private_regular_file(path)
-    if path.read_text(encoding="utf-8").strip() != "enabled":
+    if read_private_file(path).strip() != "enabled":
         raise ValueError("invalid enable marker")
 
 

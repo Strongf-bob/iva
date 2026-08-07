@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from container_supervisor import RuntimePaths, Supervisor, load_credentials
+from container_supervisor import RuntimePaths, Supervisor, load_credentials, read_private_file
 
 
 VALID_CREDENTIALS = (
@@ -82,6 +82,18 @@ class ContainerSupervisorTest(unittest.TestCase):
             path.symlink_to(target)
             with self.assertRaisesRegex(ValueError, "regular file"):
                 load_credentials(path)
+
+    def test_private_reader_rejects_foreign_owner_and_parent_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            real = root / "real"
+            real.mkdir(mode=0o700)
+            path = real / "token"
+            self.private_file(path, "secret")
+            alias = root / "alias"
+            alias.symlink_to(real, target_is_directory=True)
+            with self.assertRaises((OSError, ValueError)):
+                read_private_file(alias / "token")
 
     def test_marker_removal_stops_the_only_child_without_exposing_secrets(self):
         with tempfile.TemporaryDirectory() as directory:

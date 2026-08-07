@@ -13,7 +13,8 @@ fi
 export PATH
 
 DEPLOY_DIR="$RUNTIME_ROOT/deploy"
-COMPOSE_FILE="$RUNTIME_ROOT/compose.yml"
+ACTIVE_COMPOSE_FILE="$RUNTIME_ROOT/compose.yml"
+COMPOSE_FILE="${IVA_RELEASE_COMPOSE_FILE:-$ACTIVE_COMPOSE_FILE}"
 ENV_FILE="$RUNTIME_ROOT/.env"
 CURRENT_IMAGE_FILE="$DEPLOY_DIR/current-image"
 PREVIOUS_IMAGE_FILE="$DEPLOY_DIR/previous-image"
@@ -35,11 +36,39 @@ fi
 sha="${command_text#deploy }"
 candidate_image="$REGISTRY_IMAGE:sha-$sha"
 
-[ -f "$COMPOSE_FILE" ] || fail "compose file is missing"
 [ -f "$ENV_FILE" ] || fail "runtime environment is missing"
 docker info --format '{{json .SecurityOptions}}' | grep -q rootless ||
   fail "rootless Docker is required"
 mkdir -p "$DEPLOY_DIR"
+
+printf 'deploy: pulling immutable image for %s\n' "$sha"
+docker pull "$candidate_image" || fail "image pull failed"
+
+# The installed forced command is a stable bootstrap. Each release supplies its
+# own Compose and deploy logic inside the exact image that CI published.
+if [ "${IVA_DEPLOY_RELEASE_BUNDLE:-}" != "1" ] && [ "${IVA_DEPLOY_SKIP_BUNDLE:-}" != "1" ]; then
+  revision="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$candidate_image")"
+  [ "$revision" = "$sha" ] || fail "image revision does not match deployment command"
+  release_dir="$DEPLOY_DIR/releases/$sha"
+  temporary_dir="$release_dir.tmp.$$"
+  rm -rf "$temporary_dir"
+  mkdir -p "$temporary_dir"
+  docker run --rm --entrypoint cat "$candidate_image" \
+    /app/deploy/container/deploy.sh >"$temporary_dir/deploy.sh" ||
+    fail "release deploy script extraction failed"
+  docker run --rm --entrypoint cat "$candidate_image" \
+    /app/deploy/container/compose.production.yml >"$temporary_dir/compose.yml" ||
+    fail "release compose extraction failed"
+  chmod 700 "$temporary_dir/deploy.sh"
+  chmod 600 "$temporary_dir/compose.yml"
+  rm -rf "$release_dir"
+  mv "$temporary_dir" "$release_dir"
+  exec env IVA_DEPLOY_RELEASE_BUNDLE=1 \
+    IVA_RELEASE_COMPOSE_FILE="$release_dir/compose.yml" \
+    bash "$release_dir/deploy.sh"
+fi
+
+[ -f "$COMPOSE_FILE" ] || fail "compose file is missing"
 
 exec 9>"$DEPLOY_DIR/deploy.lock"
 flock -n 9 || fail "another deployment is running"
@@ -141,9 +170,6 @@ if [ -f "$CURRENT_IMAGE_FILE" ]; then
   previous_image="$(sed -n '1p' "$CURRENT_IMAGE_FILE")"
 fi
 
-printf 'deploy: pulling immutable image for %s\n' "$sha"
-docker pull "$candidate_image" || fail "image pull failed"
-
 if ! start_image "$candidate_image"; then
   printf 'deploy: candidate failed health checks; rolling back\n' >&2
   if [ -n "$previous_image" ] && [ "$previous_image" != "$candidate_image" ]; then
@@ -163,5 +189,11 @@ if [ -n "$previous_image" ] && [ "$previous_image" != "$candidate_image" ]; then
   write_state "$PREVIOUS_IMAGE_FILE" "$previous_image"
 fi
 write_state "$CURRENT_IMAGE_FILE" "$candidate_image"
+if [ "$COMPOSE_FILE" != "$ACTIVE_COMPOSE_FILE" ]; then
+  temporary_compose="$ACTIVE_COMPOSE_FILE.tmp.$$"
+  cp "$COMPOSE_FILE" "$temporary_compose"
+  chmod 600 "$temporary_compose"
+  mv "$temporary_compose" "$ACTIVE_COMPOSE_FILE"
+fi
 
 printf 'deploy: healthy release %s is active\n' "$sha"

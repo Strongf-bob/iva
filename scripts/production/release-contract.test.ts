@@ -103,6 +103,8 @@ void test("production Compose requires an immutable image and narrow mounts", ()
   assert.notEqual(networksStart, -1);
   const userbot = compose.slice(userbotStart, networksStart);
   assert.match(userbot, /TELEGRAM_EXPOSED_TOOLS: "read-only"/u);
+  assert.match(userbot, /if \[ -x \/opt\/iva-userbot-venv\/bin\/python \]/u);
+  assert.match(userbot, /exec sleep infinity/u);
   assert.match(userbot, /TELEGRAM_MCP_HOST: "0\.0\.0\.0"/u);
   assert.match(userbot, /\.\/data:\/app\/data:ro/u);
   assert.match(userbot, /telegram-userbot-state:\/app\/userbot-state/u);
@@ -134,6 +136,12 @@ void test("production Compose requires an immutable image and narrow mounts", ()
   assert.match(deployScript, /rootless/u);
   assert.match(deployScript, /ps -q telegram-userbot/u);
   assert.match(deployScript, /telegram-userbot.*running 0/su);
+  assert.match(deployScript, /org\.opencontainers\.image\.revision/u);
+  assert.match(
+    deployScript,
+    /\/app\/deploy\/container\/compose\.production\.yml/u,
+  );
+  assert.match(deployScript, /IVA_DEPLOY_RELEASE_BUNDLE/u);
 });
 
 void test("deployment waits for successful main CI and keeps least privilege", () => {

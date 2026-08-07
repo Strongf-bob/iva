@@ -27,6 +27,7 @@ Env:
                          (default $ASSISTANT_DATA_DIR/telegram-userbot.session, else ./telegram-userbot.session)
 """
 import os
+import stat
 import sys
 from pathlib import Path
 
@@ -154,6 +155,16 @@ def _seed_session_env() -> Path:
     """
     path = _session_file()
     path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    parent = path.parent.lstat()
+    if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.geteuid():
+        _fail("session directory must be an owned regular directory")
+    path.parent.chmod(0o700)
+    if path.exists() or path.is_symlink():
+        metadata = path.lstat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid():
+            _fail("session file must be an owned regular file")
+        if metadata.st_mode & 0o077:
+            _fail("session file must have private permissions")
     # Telethon appends ".session" to the name; strip it so we don't get ".session.session".
     name = str(path)
     if name.endswith(".session"):

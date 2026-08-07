@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -61,4 +61,25 @@ void test("container credential validation fails before writing secret material"
 void test("missing container credentials read as an empty record", async () => {
   const root = await mkdtemp(join(tmpdir(), "iva-userbot-missing-"));
   assert.deepEqual(await readUserbotCredentials(root), {});
+});
+
+void test("container runtime rejects symlinked secret files and data directories", async () => {
+  const root = await mkdtemp(join(tmpdir(), "iva-userbot-symlink-"));
+  const outside = await mkdtemp(join(tmpdir(), "iva-userbot-outside-"));
+  const paths = userbotRuntimePaths(root);
+  await writeUserbotCredentials(root, "12345", "abcdef123456");
+
+  const tokenTarget = join(outside, "token");
+  await writeFile(tokenTarget, "synthetic-bearer-token-value-with-length\n", {
+    mode: 0o600,
+  });
+  await symlink(tokenTarget, paths.token);
+  await assert.rejects(enableContainerUserbot(root), /regular file|symlink/u);
+
+  const otherRoot = await mkdtemp(join(tmpdir(), "iva-userbot-dirlink-"));
+  await symlink(outside, userbotRuntimePaths(otherRoot).directory, "dir");
+  await assert.rejects(
+    writeUserbotCredentials(otherRoot, "12345", "abcdef123456"),
+    /directory|symlink/u,
+  );
 });

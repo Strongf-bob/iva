@@ -181,23 +181,23 @@ All 18 catalog statuses:
 
 ## 6. Fifteen practical controls
 
-| Control                       | Status                      | Evidence                                                    | Next action                            |
-| ----------------------------- | --------------------------- | ----------------------------------------------------------- | -------------------------------------- |
-| 1.1 Input validation          | Confirmed for runtime files | strict key/token/mode parser tests                          | Add result-size limits                 |
-| 1.2 Rate limiting             | Partial                     | sidecar CPU/PID and bounded restart                         | Bound MCP call/result rates            |
-| 1.3 Output validation         | Partial                     | server tool allowlist; secret redaction elsewhere           | Add Telegram-result schema/size tests  |
-| 2.1 System prompt hardening   | Partial                     | existing injection policy                                   | Keep server policy authoritative       |
-| 2.2 Timeouts/circuit breakers | Confirmed                   | 1.5 s health probe, retry delay, deploy timeout             | Alert on repeated failures             |
-| 2.3 Decision audit            | Partial                     | lifecycle/deploy logs                                       | Add structured policy events           |
-| 3.1 Data RBAC                 | Confirmed for single owner  | bot allowlist and bearer middleware                         | Re-review before multi-user use        |
-| 3.2 Depersonalization         | Absent                      | personal-account reading is the feature                     | Minimize data sent per request         |
-| 3.3 Knowledge integrity       | Partial                     | no automatic trust widening                                 | Add provenance to summaries            |
-| 4.1 Least-privilege tools     | Confirmed                   | explicit 47-tool read allowlist plus four onboarding tools  | Ratchet registry on dependency updates |
-| 4.2 Sandboxing                | Confirmed                   | isolated volume, read-only root, caps dropped, no host port | Evaluate egress policy/seccomp         |
-| 4.3 HITL                      | N/A                         | no account write tools                                      | Require a new review before writes     |
-| 5.1 Supply chain              | Partial                     | hashes, lock reproducibility, immutable SHA image           | Add SBOM/signature/scanning            |
-| 5.2 Denial of Wallet          | Partial                     | model limits plus sidecar resources                         | Add per-request budget telemetry       |
-| 5.3 Multi-agent isolation     | N/A                         | no multi-agent integration                                  | Reassess if delegation is added        |
+| Control                       | Status                      | Evidence                                                                                                    | Next action                            |
+| ----------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| 1.1 Input validation          | Confirmed for runtime files | strict key/token/mode parser tests                                                                          | Add result-size limits                 |
+| 1.2 Rate limiting             | Partial                     | sidecar CPU/PID and bounded restart                                                                         | Bound MCP call/result rates            |
+| 1.3 Output validation         | Partial                     | server tool allowlist; secret redaction elsewhere                                                           | Add Telegram-result schema/size tests  |
+| 2.1 System prompt hardening   | Partial                     | existing injection policy                                                                                   | Keep server policy authoritative       |
+| 2.2 Timeouts/circuit breakers | Confirmed                   | 1.5 s health probe, retry delay, deploy timeout                                                             | Alert on repeated failures             |
+| 2.3 Decision audit            | Partial                     | lifecycle/deploy logs                                                                                       | Add structured policy events           |
+| 3.1 Data RBAC                 | Confirmed for single owner  | bot allowlist and bearer middleware                                                                         | Re-review before multi-user use        |
+| 3.2 Depersonalization         | Absent                      | personal-account reading is the feature                                                                     | Minimize data sent per request         |
+| 3.3 Knowledge integrity       | Partial                     | no automatic trust widening                                                                                 | Add provenance to summaries            |
+| 4.1 Least-privilege tools     | Confirmed                   | explicit 47-tool read allowlist plus four scoped onboarding tools; start/password are marked side-effecting | Ratchet registry on dependency updates |
+| 4.2 Sandboxing                | Confirmed                   | isolated volume, read-only root, caps dropped, no host port                                                 | Evaluate egress policy/seccomp         |
+| 4.3 HITL                      | N/A                         | no account write tools                                                                                      | Require a new review before writes     |
+| 5.1 Supply chain              | Partial                     | hashes, lock reproducibility, immutable SHA image                                                           | Add SBOM/signature/scanning            |
+| 5.2 Denial of Wallet          | Partial                     | model limits plus sidecar resources                                                                         | Add per-request budget telemetry       |
+| 5.3 Multi-agent isolation     | N/A                         | no multi-agent integration                                                                                  | Reassess if delegation is added        |
 
 ## 7. Action plan
 
@@ -226,7 +226,9 @@ All 18 catalog statuses:
 - **Kill switch:** the private enable marker; Telegram's Devices screen is the
   account-level revocation backstop.
 - **Safe fallback:** IVA and the normal bot remain usable with the userbot off.
-- **Rollback:** forced deployment keeps the previous healthy image reference.
+- **Rollback:** forced deployment keeps the previous healthy image reference;
+  release assets come from the revision-labelled image and pre-feature images
+  use an inert sidecar placeholder while the core bot recovers.
 - **Last rehearsal:** automated marker removal and deployment rollback paths are
   tested; live Telegram revocation has not yet been rehearsed.
 

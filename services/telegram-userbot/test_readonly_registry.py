@@ -53,9 +53,11 @@ class ReadOnlyRegistryTest(unittest.TestCase):
         names = {tool.name for tool in tools}
         self.assertEqual(names, APPROVED_READ_ONLY_TOOLS | ONBOARDING_TOOLS)
         for tool in tools:
-            self.assertTrue(
+            expected_read_only = tool.name not in {"qr_login_start", "qr_login_password"}
+            self.assertEqual(
                 getattr(tool.annotations, "readOnlyHint", False),
-                f"retained tool lacks readOnlyHint: {tool.name}",
+                expected_read_only,
+                f"incorrect readOnlyHint: {tool.name}",
             )
 
 

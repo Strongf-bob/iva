@@ -62,7 +62,9 @@ TELEGRAM_EXPOSED_TOOLS=read-only
 This value is set in Compose rather than inherited from `.env`, so a menu write,
 stale host configuration, or missing variable cannot widen the tool set. The
 existing onboarding tools remain available only to establish and inspect the QR
-login; they do not expose Telegram message mutations.
+login. `qr_login_start` and `qr_login_password` are accurately marked as
+side-effecting onboarding exceptions; they do not expose Telegram message
+mutations.
 
 The sidecar runs with `no-new-privileges`, all Linux capabilities dropped, a
 process limit, CPU/memory limits, log rotation, and the same private bridge as
@@ -266,9 +268,10 @@ message-content inspection is authorized.
 - **Credential concern:** rotate the bearer token and Telegram API application
   credential where possible; terminate the Telegram session from an official
   Telegram client if the MTProto session may be exposed.
-- **Code regression:** deploy the previous immutable IVA image. The session
-  volume is preserved but remains inaccessible while the old Compose definition
-  has no sidecar.
+- **Code regression:** deploy the previous immutable IVA image. Release Compose
+  and deploy logic are extracted from the verified candidate image. A pre-feature
+  rollback image keeps only an inert sidecar placeholder, so the core bot can
+  recover without attempting to open the preserved session volume.
 - **Account-risk signal:** stop the sidecar immediately and use Telegram's
   official active-session controls. Do not automatically retry login or reads.
 - **Evidence:** retain only sanitized state transitions, image digest, timestamps,

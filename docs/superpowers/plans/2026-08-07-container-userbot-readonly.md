@@ -338,14 +338,18 @@ startup.
 
 - [ ] **Step 4: Add the hardened Compose service**
 
-The service uses the same image and digest, command
-`["/opt/iva-userbot-venv/bin/python", "/app/services/telegram-userbot/container_supervisor.py"]`,
+The service uses the same image and digest. Its compatibility command starts
+`/opt/iva-userbot-venv/bin/python /app/services/telegram-userbot/container_supervisor.py`
+when present and otherwise keeps an inert placeholder for rollback images that
+predate the sidecar,
 `TELEGRAM_USERBOT_CREDENTIALS_FILE=/app/data/telegram-userbot.env`,
 `TELEGRAM_SESSION_FILE=/app/userbot-state/telegram-userbot.session`,
 `TELEGRAM_MCP_HOST=0.0.0.0`, `TELEGRAM_MCP_PORT=8724`, fixed read-only mode,
 `./data:/app/data:ro`, and `telegram-userbot-state:/app/userbot-state`. Apply
 `no-new-privileges`, `cap_drop: [ALL]`, `pids_limit`, CPU/memory bounds, log
-rotation, restart policy, and only `iva-internal`. Add
+rotation, restart policy, and only `iva-internal`. The stable forced command
+extracts Compose and deploy logic from the exact revision-labelled candidate
+image before activation. Add
 `TELEGRAM_USERBOT_RUNTIME=container` and internal `TELEGRAM_MCP_URL` to IVA and
 poller environment.
 

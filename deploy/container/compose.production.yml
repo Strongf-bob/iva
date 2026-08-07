@@ -114,11 +114,17 @@ services:
       TELEGRAM_EXPOSED_TOOLS: "read-only"
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_ALLOWED_USER_IDS: ${TELEGRAM_ALLOWED_USER_IDS:-}
+    # Older rollback images predate the sidecar. Keep their placeholder alive so
+    # the core bot can recover; only compatible images start the session owner.
     command:
-      [
-        "/opt/iva-userbot-venv/bin/python",
-        "/app/services/telegram-userbot/container_supervisor.py",
-      ]
+      - /bin/sh
+      - -c
+      - >-
+        if [ -x /opt/iva-userbot-venv/bin/python ] &&
+        [ -f /app/services/telegram-userbot/container_supervisor.py ]; then
+        exec /opt/iva-userbot-venv/bin/python
+        /app/services/telegram-userbot/container_supervisor.py;
+        else exec sleep infinity; fi
     volumes:
       - ./data:/app/data:ro
       - telegram-userbot-state:/app/userbot-state

@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, readFile, rm } from "node:fs/promises";
+import { constants } from "node:fs";
+import { chmod, lstat, mkdir, open, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { readEnvValues, writeEnvAtomicSync } from "./env-file.ts";
+import { parseEnvText, writeEnvAtomicSync } from "./env-file.ts";
 
 export interface UserbotRuntimePaths {
   readonly directory: string;
@@ -33,7 +34,33 @@ export function userbotRuntimePaths(root: string): UserbotRuntimePaths {
 
 async function ensurePrivateDirectory(path: string): Promise<void> {
   await mkdir(path, { recursive: true, mode: 0o700 });
+  const metadata = await lstat(path);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new Error(
+      "userbot data directory must be a regular directory, not a symlink",
+    );
+  }
+  if (process.geteuid && metadata.uid !== process.geteuid()) {
+    throw new Error("userbot data directory must be owned by the runtime user");
+  }
   await chmod(path, 0o700);
+}
+
+async function readPrivateFile(path: string): Promise<string> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile())
+      throw new Error("userbot secret must be a regular file");
+    if (process.geteuid && metadata.uid !== process.geteuid()) {
+      throw new Error("userbot secret must be owned by the runtime user");
+    }
+    if (metadata.mode & 0o077)
+      throw new Error("userbot secret must be private");
+    return await handle.readFile("utf8");
+  } finally {
+    await handle.close();
+  }
 }
 
 function validateCredentials(apiId: string, apiHash: string): void {
@@ -44,7 +71,13 @@ function validateCredentials(apiId: string, apiHash: string): void {
 export async function readUserbotCredentials(
   root: string,
 ): Promise<UserbotCredentials> {
-  const env = await readEnvValues(userbotRuntimePaths(root).credentials);
+  let text = "";
+  try {
+    text = await readPrivateFile(userbotRuntimePaths(root).credentials);
+  } catch (error) {
+    if (!hasErrorCode(error, "ENOENT")) throw error;
+  }
+  const env = parseEnvText(text);
   const apiId = env.TELEGRAM_API_ID;
   const apiHash = env.TELEGRAM_API_HASH;
   return {
@@ -69,11 +102,10 @@ export async function writeUserbotCredentials(
 
 async function readExistingToken(path: string): Promise<string> {
   try {
-    const token = (await readFile(path, "utf8")).trim();
+    const token = (await readPrivateFile(path)).trim();
     if (!/^[A-Za-z0-9_-]{40,}$/u.test(token)) {
       throw new Error("existing userbot token is invalid");
     }
-    await chmod(path, 0o600);
     return token;
   } catch (error) {
     if (hasErrorCode(error, "ENOENT")) return "";
