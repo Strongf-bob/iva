@@ -72,6 +72,10 @@ state/reason values; bearer tokens and transport errors are not returned.
   only these narrow SOCKS settings to the sidecar; it still does not mount the full runtime
   `.env`. On this rootless production host the working values are `socks5`, `10.0.2.2`, and
   `7891`; other hosts must use an address their containers can reach.
+- QR delivery through the bot API can use the separate
+  `TELEGRAM_USERBOT_BOT_API_PROXY`; this production host uses the HTTP endpoint
+  `http://10.0.2.2:7890`. The sidecar ignores ambient proxy variables and receives only this
+  explicit endpoint.
 - `TELEGRAM_MCP_PORT` (default `8724`), `TELEGRAM_USERBOT_QR_CHAT_ID` (defaults to the first
   of `TELEGRAM_ALLOWED_USER_IDS`). The default needs no config. If you set a custom port,
   run `iva userbot setup` (restarts the proxy) **and** `iva restart` (iva reads the port from

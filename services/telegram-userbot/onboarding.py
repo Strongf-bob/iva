@@ -73,12 +73,13 @@ def _render_qr_png(url: str) -> bytes:
 async def _send_qr_to_bot(png: bytes, caption: str) -> None:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = _owner_chat_id()
+    proxy = os.getenv("TELEGRAM_USERBOT_BOT_API_PROXY") or None
     if not token or not chat_id:
         raise RuntimeError(
             "нужны TELEGRAM_BOT_TOKEN и chat владельца "
             "(TELEGRAM_USERBOT_QR_CHAT_ID или TELEGRAM_ALLOWED_USER_IDS) для доставки QR"
         )
-    async with httpx.AsyncClient(timeout=30) as http:
+    async with httpx.AsyncClient(timeout=30, proxy=proxy, trust_env=False) as http:
         resp = await http.post(
             f"https://api.telegram.org/bot{token}/sendPhoto",
             data={"chat_id": chat_id, "caption": caption},
