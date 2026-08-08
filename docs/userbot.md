@@ -8,7 +8,7 @@
 
 Iva can connect to your **personal Telegram account** (a userbot), not just the
 bot. This fork's production deployment exposes only an explicit server-side
-allowlist of read/search tools plus QR onboarding. It talks to a small proxy —
+allowlist of read/search tools plus a read-only login-status probe. It talks to a small proxy —
 `services/telegram-userbot/serve.py` — that owns one Telethon session and exposes
 Telegram over an internal Compose network. Iva connects to it natively
 (`agent/connections/telegram-userbot.ts`).
@@ -26,26 +26,29 @@ Telegram over an internal Compose network. Iva connects to it natively
 
 ## Connect — just chat with the bot
 
-You never touch a terminal. Tell the bot **«подключи мой телеграм»** and it does everything
-for you, in chat:
+You never touch a terminal. Open `/menu` → **Telegram-userbot** and complete the
+private flow:
 
 1. It warns you (at your own risk) and, the first time, walks you through creating an app at
-   <https://my.telegram.org> → **API development tools** — you paste the `api_id` / `api_hash`
-   back into the chat. In the container deployment, the bot writes them to a private runtime
+   <https://my.telegram.org> → **API development tools** — enter the `api_id` / `api_hash`
+   only in the menu's secret steps. In the container deployment, the bot writes them to a private runtime
    file under `data/` and flips an explicit enable marker; it never modifies the read-only
    `/app/.env` mount.
-2. It renders a QR and sends it as an image into your chat. Scan it in the Telegram app of the
-   account you're connecting: **Settings → Devices → Link Desktop Device**. Each attempt sends
-   exactly one short-lived QR. Scan only the newest image; if its status becomes `expired`, ask
-   the bot to connect again so it creates a fresh code.
-3. If you have 2FA, it asks for your password (change it afterward if you'd rather it not pass
-   through chat). Done — the session persists on the server, so this is one-time.
+2. Press **Log in by phone**, then send the account phone number in international format. The
+   bot deletes that message before processing it. If deletion fails, the flow stops.
+3. Enter the code Telegram sends using the masked inline keypad. Digits never appear in a chat
+   message. A code request has a local 30-second cooldown, the flow expires after five minutes,
+   and invalid code/password attempts are capped at three.
+4. If the account has 2FA, send the password only when the secret menu step asks for it. That
+   message is also deleted before processing. The resulting Telethon session persists on the
+   server, so successful onboarding is one-time.
 
 > [!WARNING]
-> Whatever you type in the chat is stored verbatim in that day's `daily/` log, `api_hash` and
-> 2FA password included, and it passes through the model like any other message. After
-> connecting, delete those lines from the daily file — and if you sent a 2FA password, change
-> it. There is no separate secure channel for this yet.
+> Phone, `api_hash`, and 2FA messages still pass through Telegram's Bot API transport and can
+> briefly exist in the poller's durable inbound queue before the deterministic menu handler
+> deletes them. Deletion is not cryptographic erasure. They are never forwarded to the model or
+> written to the daily log by the menu. Use only the private owner chat and rotate a password if
+> you suspect the bot transport or host was exposed.
 
 ## Manual commands (optional — the agent runs these for you)
 
@@ -74,16 +77,14 @@ state/reason values; bearer tokens and transport errors are not returned.
   only these narrow SOCKS settings to the sidecar; it still does not mount the full runtime
   `.env`. On this rootless production host the working values are `socks5`, `10.0.2.2`, and
   `7891`; other hosts must use an address their containers can reach.
-- QR delivery through the bot API can use the separate
-  `TELEGRAM_USERBOT_BOT_API_PROXY`; this production host uses the HTTP endpoint
-  `http://10.0.2.2:7890`. The sidecar ignores ambient proxy variables and receives only this
-  explicit endpoint.
-- `TELEGRAM_MCP_PORT` (default `8724`), `TELEGRAM_USERBOT_QR_CHAT_ID` (defaults to the first
-  of `TELEGRAM_ALLOWED_USER_IDS`). The default needs no config. If you set a custom port,
+- `TELEGRAM_MCP_PORT` defaults to `8724`. If you set a custom port,
   run `iva userbot setup` (restarts the proxy) **and** `iva restart` (iva reads the port from
   its env at start) so both agree.
-- The proxy bearer lives in `data/telegram-userbot.token` (0600), read at runtime by both the
-  proxy and iva — so the bot can provision the proxy mid-chat without restarting iva.
+- The MCP bearer lives in `data/telegram-userbot.token` (0600). Phone onboarding uses a
+  different bearer. In container production that credential lives in a named volume mounted
+  read-only into `telegram-poll` and read-write into the sidecar; it is not mounted into the
+  model/agent container. Phone onboarding is disabled in host-native systemd mode because it
+  cannot provide the same process isolation; an already-authorized session remains usable.
 - In production, the sidecar alone mounts the named volume containing the Telethon session.
   It has no published port, no `.env`, memory, vault, or Eve-state mount, and its root
   filesystem is read-only. Removing `data/telegram-userbot.enabled` is the kill switch.
@@ -92,9 +93,12 @@ state/reason values; bearer tokens and transport errors are not returned.
 
 - **One session owner.** Exactly one process may own a Telethon session; a second opener
   desyncs MTProto. The proxy is that owner; iva calls it over HTTP.
-- **Session-less boot.** With no session yet, the proxy comes up unauthorized (onboarding
-  mode) and serves only login tools until you scan the QR — then the same live client
-  becomes authorized in place, no restart.
+- **Separate onboarding authority.** Read-only MCP and phone-login routes use different
+  bearers. Only the deterministic poller/menu process receives the onboarding bearer in
+  container production, so shell tools in the model container cannot call phone/code/2FA routes.
+- **Session-less boot.** With no session yet, the proxy comes up unauthorized. Private,
+  bearer-protected HTTP routes authorize the same live client in place by phone, code, and
+  optional 2FA; the model-visible MCP registry exposes only read-only `login_status`.
 - **Enforced production read-only registry.** Upstream tools are pruned to the reviewed
   local allowlist before onboarding tools are added. CI enumerates the effective registry
   and rejects mutating tool families.

@@ -1,193 +1,259 @@
-"""QR-login onboarding tools for the telegram-userbot proxy.
+"""Secret-safe phone onboarding for the single-owner Telethon sidecar.
 
-Lets a non-technical iva user connect their Telegram account by scanning a QR
-code sent straight into their bot chat — no CLI, no session strings. The login
-token (`tg://login?token=…`) is account-takeover-grade, so it is rendered and
-delivered ON THE BOX and never returned into the model context.
-
-Tools (registered by `register_onboarding_tools`):
-  qr_login_start     — begin QR login; render + send the QR to the owner's bot chat
-  qr_login_status    — poll: starting | waiting | password_needed | authorized | expired | error
-  qr_login_password  — supply the 2FA password when status == password_needed
-  login_status       — is the userbot connected? (agent checks before other tools)
-
-The Telethon client persists the session automatically on success (file session),
-so no manual save and no restart: the same live client just becomes authorized.
+Phone login is driven by deterministic, bearer-protected HTTP routes in
+``serve.py``. Login material is never exposed as an MCP tool argument. The only
+model-visible onboarding tool is the read-only ``login_status`` probe.
 """
-import asyncio
-import io
-import logging
-import os
-import sys
-from datetime import datetime, timezone
 
-import httpx
-import qrcode
-from qrcode.image.pure import PyPNGImage
+import asyncio
+import re
+import time
+from dataclasses import dataclass
+from typing import Callable
+
 from telethon import errors
 
-_QR_CAPTION = (
-    "Отсканируй этот QR в приложении Telegram того аккаунта, который подключаешь:\n"
-    "Настройки → Устройства → Подключить устройство.\n"
-    "Код действует недолго. Сканируй только QR из самого нового сообщения; "
-    "если он истёк, запроси новый. Это подключение на твой страх и риск."
-)
-
-# Single-user login state machine. phase ∈
-#   idle | starting | waiting | password_needed | authorized | expired | error
-_state = {"phase": "idle", "detail": ""}
-_lock = asyncio.Lock()
-_task: "asyncio.Task | None" = None
+_FLOW_TTL_SECONDS = 300.0
+_CODE_REQUEST_COOLDOWN_SECONDS = 30.0
+_OPERATION_TIMEOUT_SECONDS = 15.0
+_MAX_ATTEMPTS = 3
+_PHONE = re.compile(r"^\+[0-9]{8,15}$")
+_CODE = re.compile(r"^[0-9]{5,8}$")
 
 
-def _record_safe_error(code: str) -> None:
-    global _state
-    _state = {"phase": "error", "detail": code}
-    print(f"telegram-userbot: qr login failed: {code}", file=sys.stderr)
+def _result(state: str, reason: str) -> dict[str, str]:
+    return {"state": state, "reason": reason}
 
 
-def _first_id(csv: "str | None") -> "str | None":
-    if not csv:
-        return None
-    for part in csv.replace(",", " ").split():
-        part = part.strip()
-        if part:
-            return part
-    return None
+@dataclass(repr=False)
+class _PhoneFlow:
+    phase: str = "idle"
+    reason: str = "idle"
+    phone: str | None = None
+    phone_code_hash: str | None = None
+    expires_at: float = 0.0
+    code_attempts: int = 0
+    password_attempts: int = 0
 
 
-def _owner_chat_id() -> "str | None":
-    return os.getenv("TELEGRAM_USERBOT_QR_CHAT_ID") or _first_id(
-        os.getenv("TELEGRAM_ALLOWED_USER_IDS")
-    )
+class PhoneLoginController:
+    """One bounded in-memory login flow for one live Telethon client."""
 
+    def __init__(
+        self,
+        client,
+        *,
+        now: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._client = client
+        self._now = now
+        self._lock = asyncio.Lock()
+        self._flow = _PhoneFlow()
+        self._last_code_request_at: float | None = None
 
-def _render_qr_png(url: str) -> bytes:
-    qr = qrcode.QRCode(box_size=10, border=2)
-    qr.add_data(url)
-    qr.make(fit=True)
-    buf = io.BytesIO()
-    qr.make_image(image_factory=PyPNGImage).save(buf)
-    return buf.getvalue()
+    def _set_public(self, state: str, reason: str, *, wipe: bool = False) -> None:
+        if wipe:
+            self._flow.phone = None
+            self._flow.phone_code_hash = None
+            self._flow.expires_at = 0.0
+            self._flow.code_attempts = 0
+            self._flow.password_attempts = 0
+        self._flow.phase = state
+        self._flow.reason = reason
 
-
-async def _send_qr_to_bot(png: bytes, caption: str) -> None:
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = _owner_chat_id()
-    proxy = os.getenv("TELEGRAM_USERBOT_BOT_API_PROXY") or None
-    if not token or not chat_id:
-        raise RuntimeError(
-            "нужны TELEGRAM_BOT_TOKEN и chat владельца "
-            "(TELEGRAM_USERBOT_QR_CHAT_ID или TELEGRAM_ALLOWED_USER_IDS) для доставки QR"
+    def _expired(self) -> bool:
+        return (
+            self._flow.phase in {"code_sent", "password_needed"}
+            and self._now() >= self._flow.expires_at
         )
-    # Telegram puts the bot token in the request path. httpx/httpcore log full
-    # request URLs at INFO, so their normal access log would disclose the token.
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    async with httpx.AsyncClient(timeout=30, proxy=proxy, trust_env=False) as http:
-        resp = await http.post(
-            f"https://api.telegram.org/bot{token}/sendPhoto",
-            data={"chat_id": chat_id, "caption": caption},
-            files={"photo": ("login-qr.png", png, "image/png")},
-        )
-        resp.raise_for_status()
+
+    def _expire_if_needed(self) -> None:
+        if self._expired():
+            self._set_public("expired", "code_expired", wipe=True)
+
+    def _public(self) -> dict[str, str]:
+        return _result(self._flow.phase, self._flow.reason)
+
+    def _safe_failure(self, reason: str) -> dict[str, str]:
+        self._set_public("error", reason, wipe=True)
+        return self._public()
+
+    def _invalid_code(self) -> dict[str, str]:
+        self._flow.code_attempts += 1
+        if self._flow.code_attempts >= _MAX_ATTEMPTS:
+            return self._safe_failure("attempt_limit")
+        self._flow.reason = "code_invalid"
+        return self._public()
+
+    def _invalid_password(self) -> dict[str, str]:
+        self._flow.password_attempts += 1
+        if self._flow.password_attempts >= _MAX_ATTEMPTS:
+            return self._safe_failure("attempt_limit")
+        self._flow.reason = "password_invalid"
+        return self._public()
+
+    async def start(self, phone: str) -> dict[str, str]:
+        async with self._lock:
+            try:
+                authorized = await asyncio.wait_for(
+                    self._client.is_user_authorized(),
+                    timeout=_OPERATION_TIMEOUT_SECONDS,
+                )
+            except Exception:  # noqa: BLE001 - fixed transport result only
+                return self._safe_failure("transport_failed")
+            if authorized:
+                self._set_public("authorized", "ok", wipe=True)
+                return self._public()
+            if not _PHONE.fullmatch(phone):
+                self._set_public("error", "phone_invalid", wipe=True)
+                return self._public()
+            now = self._now()
+            if (
+                self._last_code_request_at is not None
+                and now - self._last_code_request_at < _CODE_REQUEST_COOLDOWN_SECONDS
+            ):
+                self._set_public("error", "phone_flood_wait", wipe=True)
+                return self._public()
+            self._last_code_request_at = now
+            try:
+                sent = await asyncio.wait_for(
+                    self._client.send_code_request(phone),
+                    timeout=_OPERATION_TIMEOUT_SECONDS,
+                )
+            except (
+                errors.PhoneNumberInvalidError,
+                errors.PhoneNumberBannedError,
+                errors.PhoneNumberAppSignupForbiddenError,
+            ):
+                self._set_public("error", "phone_invalid", wipe=True)
+                return self._public()
+            except (
+                errors.FloodWaitError,
+                errors.PhoneNumberFloodError,
+                errors.SendCodeUnavailableError,
+            ):
+                return self._safe_failure("phone_flood_wait")
+            except Exception:  # noqa: BLE001 - raw transport details are secret-adjacent
+                return self._safe_failure("transport_failed")
+
+            phone_code_hash = getattr(sent, "phone_code_hash", None)
+            if not isinstance(phone_code_hash, str) or not phone_code_hash:
+                return self._safe_failure("transport_failed")
+            self._flow = _PhoneFlow(
+                phase="code_sent",
+                reason="code_sent",
+                phone=phone,
+                phone_code_hash=phone_code_hash,
+                expires_at=now + _FLOW_TTL_SECONDS,
+            )
+            return self._public()
+
+    async def submit_code(self, code: str) -> dict[str, str]:
+        async with self._lock:
+            self._expire_if_needed()
+            if self._flow.phase != "code_sent":
+                return _result("error", "flow_missing")
+            if not _CODE.fullmatch(code):
+                return self._invalid_code()
+
+            phone = self._flow.phone
+            phone_code_hash = self._flow.phone_code_hash
+            if phone is None or phone_code_hash is None:
+                return self._safe_failure("flow_missing")
+            try:
+                await asyncio.wait_for(
+                    self._client.sign_in(
+                        phone,
+                        code,
+                        phone_code_hash=phone_code_hash,
+                    ),
+                    timeout=_OPERATION_TIMEOUT_SECONDS,
+                )
+            except errors.SessionPasswordNeededError:
+                self._flow.phone = None
+                self._flow.phone_code_hash = None
+                self._flow.phase = "password_needed"
+                self._flow.reason = "password_needed"
+                self._flow.code_attempts = 0
+                return self._public()
+            except (errors.PhoneCodeInvalidError, errors.CodeInvalidError):
+                return self._invalid_code()
+            except (
+                errors.PhoneCodeExpiredError,
+                errors.PhoneCodeHashEmptyError,
+                errors.PhoneHashExpiredError,
+            ):
+                self._set_public("expired", "code_expired", wipe=True)
+                return self._public()
+            except Exception:  # noqa: BLE001 - never surface provider messages
+                return self._safe_failure("transport_failed")
+
+            self._set_public("authorized", "ok", wipe=True)
+            return self._public()
+
+    async def submit_password(self, password: str) -> dict[str, str]:
+        async with self._lock:
+            self._expire_if_needed()
+            if self._flow.phase != "password_needed":
+                return _result("error", "flow_missing")
+            if not 1 <= len(password) <= 256:
+                return self._invalid_password()
+            try:
+                await asyncio.wait_for(
+                    self._client.sign_in(password=password),
+                    timeout=_OPERATION_TIMEOUT_SECONDS,
+                )
+            except (
+                errors.PasswordHashInvalidError,
+                errors.PasswordEmptyError,
+            ):
+                return self._invalid_password()
+            except errors.FloodWaitError:
+                return self._safe_failure("phone_flood_wait")
+            except Exception:  # noqa: BLE001 - never surface provider messages
+                return self._safe_failure("transport_failed")
+
+            self._set_public("authorized", "ok", wipe=True)
+            return self._public()
+
+    async def cancel(self) -> dict[str, str]:
+        async with self._lock:
+            self._set_public("idle", "cancelled", wipe=True)
+            return self._public()
+
+    async def status(self) -> dict[str, str]:
+        async with self._lock:
+            try:
+                authorized = await asyncio.wait_for(
+                    self._client.is_user_authorized(),
+                    timeout=_OPERATION_TIMEOUT_SECONDS,
+                )
+            except Exception:  # noqa: BLE001 - fixed transport result only
+                return self._safe_failure("transport_failed")
+            if authorized:
+                self._set_public("authorized", "ok", wipe=True)
+            else:
+                self._expire_if_needed()
+            return self._public()
 
 
-def _seconds_until_expiry(qr) -> float:
-    expires = qr.expires
-    if expires.tzinfo is None:
-        expires = expires.replace(tzinfo=timezone.utc)
-    return max(1.0, (expires - datetime.now(timezone.utc)).total_seconds() - 1.0)
-
-
-async def _run_qr_login(client) -> None:
-    global _state
-    try:
-        qr = await client.qr_login()
-        await _send_qr_to_bot(_render_qr_png(qr.url), _QR_CAPTION)
-        _state = {"phase": "waiting", "detail": "QR отправлен в чат с ботом, жду скан"}
-        await qr.wait(timeout=_seconds_until_expiry(qr))
-        _state = {"phase": "authorized", "detail": "Аккаунт подключён"}
-    except (asyncio.TimeoutError, errors.AuthTokenExpiredError):
-        _state = {"phase": "expired", "detail": "qr_expired"}
-    except errors.SessionPasswordNeededError:
-        _state = {
-            "phase": "password_needed",
-            "detail": "Включена двухфакторная защита — пришли пароль",
-        }
-    except errors.AuthTokenAlreadyAcceptedError:
-        _record_safe_error("qr_already_used")
-    except (
-        errors.AuthTokenInvalidError,
-        errors.AuthTokenInvalid2Error,
-        errors.AuthTokenInvalidxError,
-        errors.AuthTokenExceptionError,
-    ):
-        _record_safe_error("qr_invalid")
-    except TypeError:
-        _record_safe_error("qr_unexpected_response")
-    except Exception:  # noqa: BLE001
-        _record_safe_error("qr_transport_failed")
-
-
-def register_onboarding_tools(mcp, client) -> None:
+def register_onboarding_tools(mcp, client, controller=None) -> PhoneLoginController:
+    """Register the one model-visible read-only login probe."""
     from mcp.types import ToolAnnotations
 
-    async def qr_login_start() -> str:
-        """Подключить Telegram-аккаунт владельца через QR. Рендерит QR-код и отправляет его
-        картинкой в чат владельца с ботом. Затем опрашивай qr_login_status."""
-        global _task
-        async with _lock:
-            if await client.is_user_authorized():
-                _state.update(phase="authorized", detail="уже подключён")
-                return "Telegram уже подключён — новый QR не нужен."
-            if _task and not _task.done():
-                return "Логин уже идёт — проверь свой чат с ботом, там QR-код."
-            _state.update(phase="starting", detail="")
-            _task = asyncio.create_task(_run_qr_login(client))
-        return (
-            "Отправляю QR-код в твой чат с ботом. Открой в приложении Telegram того "
-            "аккаунта: Настройки → Устройства → Подключить устройство — и отсканируй. "
-            "Потом я проверю статус."
-        )
-
-    async def qr_login_status() -> str:
-        """Проверить статус QR-логина: starting | waiting | password_needed | authorized | expired | error."""
-        if await client.is_user_authorized():
-            return "authorized: аккаунт подключён."
-        return f"{_state['phase']}: {_state['detail']}"
-
-    async def qr_login_password(password: str) -> str:
-        """Завершить логин двухфакторным паролем, когда статус == password_needed."""
-        async with _lock:
-            if _state.get("phase") != "password_needed":
-                return f"Пароль сейчас не требуется (статус: {_state.get('phase')})."
-            try:
-                await client.sign_in(password=password)
-                _state.update(phase="authorized", detail="Аккаунт подключён")
-                return "Готово — аккаунт подключён."
-            except Exception:  # noqa: BLE001
-                _record_safe_error("password_login_failed")
-                return "Не удалось войти: проверь пароль и начни подключение заново."
+    controller = controller or PhoneLoginController(client)
 
     async def login_status() -> str:
-        """Подключён ли userbot к Telegram? Зови перед использованием остальных тулов."""
-        if await client.is_user_authorized():
+        """Подключён ли личный Telegram? Не принимает логин, код или пароль."""
+        result = await controller.status()
+        if result["state"] == "authorized":
             return "connected"
-        return f"not_connected (phase={_state['phase']}: {_state['detail']})"
+        return f"not_connected (state={result['state']}, reason={result['reason']})"
 
-    read_only = ToolAnnotations(readOnlyHint=True)
-    onboarding_action = ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=False,
+    mcp.add_tool(
+        login_status,
+        name=login_status.__name__,
+        description=login_status.__doc__,
+        annotations=ToolAnnotations(readOnlyHint=True),
     )
-    for fn in (qr_login_status, login_status):
-        mcp.add_tool(fn, name=fn.__name__, description=fn.__doc__, annotations=read_only)
-    for fn in (qr_login_start, qr_login_password):
-        mcp.add_tool(
-            fn,
-            name=fn.__name__,
-            description=fn.__doc__,
-            annotations=onboarding_action,
-        )
+    return controller
