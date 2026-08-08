@@ -87,7 +87,7 @@ Full architecture and search internals: [docs/memory.md](docs/memory.md).
 
 ## A secretary inside Telegram
 
-<img src="assets/iva-userbot.webp" alt="Your secretary inside Telegram: the userbot reads group chats from your own account, collects summaries and replies as you, guarded by a server-enforced anti-ban guardrail" width="100%">
+<img src="assets/iva-userbot.webp" alt="Your secretary inside Telegram: the userbot reads group chats from your own account, collects summaries and surfaces messages that need you through a server-enforced read-only boundary" width="100%">
 
 The bot is half of Telegram. The other half is your personal account: connect the userbot (beta, opt-in) and Iva works from it like a secretary — reads the group chats you never keep up with, folds them into summaries, and catches the messages that actually need you.
 
