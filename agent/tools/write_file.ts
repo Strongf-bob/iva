@@ -3,6 +3,10 @@ import { z } from "zod";
 import { mkdir, writeFile } from "node:fs/promises";
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, resolve, sep } from "node:path";
+import {
+  multiUserMode,
+  resolvePersonalWritePath,
+} from "../lib/safe-user-path.ts";
 
 // Host-native запись файла. Переопределяет встроенный write_file eve: пишет реальный
 // файл на VPS через node:fs/promises, создавая родительские директории (mkdir -p).
@@ -50,7 +54,10 @@ export default defineTool({
     content: z.string().describe("Содержимое для записи (UTF-8)"),
   }),
   async execute({ path, content }) {
-    if (isExistingCard(path)) {
+    const target = multiUserMode()
+      ? resolvePersonalWritePath(path, resolve(VAULT()))
+      : path;
+    if (isExistingCard(target)) {
       return {
         ok: false,
         path,
@@ -59,8 +66,8 @@ export default defineTool({
           "Используй write_card: он сливает новое содержимое со старым.",
       };
     }
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, content, "utf8");
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, content, "utf8");
     return { ok: true, path, bytes: Buffer.byteLength(content, "utf8") };
   },
 });

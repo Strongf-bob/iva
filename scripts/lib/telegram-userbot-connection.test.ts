@@ -13,5 +13,9 @@ void test("Telegram userbot connection uses the configured MCP URL with localhos
     source,
     /process\.env\.TELEGRAM_MCP_URL\s*\?\?\s*`http:\/\/127\.0\.0\.1:\$\{port\}\/mcp`/u,
   );
-  assert.match(source, /defineMcpClientConnection\(\{\s*url,/u);
+  assert.match(
+    source,
+    /url:\s*ownerWorker\s*\?\s*url\s*:\s*"http:\/\/127\.0\.0\.1:1\/disabled-userbot"/u,
+  );
+  assert.match(source, /if \(!ownerWorker\) return "";/u);
 });

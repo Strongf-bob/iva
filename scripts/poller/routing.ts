@@ -47,11 +47,16 @@ import {
   undrainableLegacyLogged,
 } from "./queue.ts";
 import type { QueuePhase } from "./queue.ts";
+import type { WorkerRoutes } from "./tenant-routing.ts";
+import type { TelegramUserId } from "../lib/user-registry.ts";
 
 type MaybePromise<T> = T | Promise<T>;
 type ErrorLike = { code?: unknown; message?: unknown };
 type Status = Record<string, unknown>;
 type DeliveryResult = Awaited<ReturnType<typeof pacedDeliver>>;
+type TurnReservation =
+  | { allowed: true; token: string }
+  | { allowed: false; reason: "concurrent-turns" };
 type DeliverImpl = (
   update: TelegramQueueUpdate,
   options?: DeliverOptions,
@@ -67,6 +72,19 @@ const errorCode = (error: unknown) =>
   (error as ErrorLike | null | undefined)?.code;
 const pacedDelivery: DeliverImpl = pacedDeliver;
 
+function updateMatchesTenant(
+  update: TelegramQueueUpdate,
+  tenantId: TelegramUserId,
+): boolean {
+  const sender = update.message?.from ?? update.callback_query?.from;
+  const message = update.message ?? update.callback_query?.message;
+  return (
+    String(sender?.id ?? "") === tenantId &&
+    message?.chat?.type === "private" &&
+    String(message.chat.id) === tenantId
+  );
+}
+
 type DirectDeliveryOptions = {
   key?: string | null;
   deliverImpl?: DeliverImpl;
@@ -80,6 +98,8 @@ type DirectDeliveryOptions = {
   now?: () => number;
   trImpl?: (en: string, ru: string) => string;
   logImpl?: (...parts: unknown[]) => void;
+  routes?: WorkerRoutes;
+  onNoTurnImpl?: () => MaybePromise<unknown>;
 };
 
 async function deliverDirectUpdate(
@@ -94,13 +114,18 @@ async function deliverDirectUpdate(
     now = Date.now,
     trImpl = tr,
     logImpl = log,
+    routes,
+    onNoTurnImpl,
   }: DirectDeliveryOptions = {},
 ) {
   // The acceptance wrapper does not cover callback_query dispatch. Keeping this
   // call option-free also preserves the old webhook path for real callbacks and
   // the synthetic /stop callback.
   if (!update.message || key === null) {
-    const accepted = await deliverImpl(update);
+    const accepted = await deliverImpl(
+      update,
+      routes ? { route: routes.webhook } : undefined,
+    );
     return accepted ? "delivered" : "rejected";
   }
 
@@ -145,10 +170,19 @@ async function deliverDirectUpdate(
   };
 
   const accepted = await deliverImpl(update, {
+    ...(routes
+      ? {
+          route: routes.acceptance,
+          acceptedStatus: 204,
+          queueReceipt: true,
+        }
+      : {}),
     onAcceptanceFailure,
     timeoutMs: DIRECT_ACCEPTANCE_TIMEOUT_MS,
     retryAcceptanceTimeout: false,
   });
+  if ((!accepted || accepted === "handled") && onNoTurnImpl)
+    await onNoTurnImpl();
   // Defensive fallback for injected/custom deliverers and for a pacing deadline
   // that expires before fetch starts.
   if (!accepted && !acceptanceFailureReported) await onAcceptanceFailure();
@@ -156,7 +190,12 @@ async function deliverDirectUpdate(
 }
 
 export type RouteMessageResult =
-  "delivered" | "rejected" | "dropped" | "enqueue-failed" | "queued";
+  | "delivered"
+  | "rejected"
+  | "dropped"
+  | "enqueue-failed"
+  | "queued"
+  | "quota-exceeded";
 
 export async function routeMessageUpdate(
   update: TelegramQueueUpdate,
@@ -168,8 +207,14 @@ export async function routeMessageUpdate(
     queueCountImpl = queueCount,
     replyToBotImpl = isReplyToBot,
     shouldQueueImpl = shouldQueueBusyUpdate,
-    enqueueImpl = (key: string, candidate: TelegramQueueUpdate) =>
-      enqueueQueueFile(QUEUE_FILE, key, candidate),
+    enqueueImpl = (
+      key: string,
+      candidate: TelegramQueueUpdate,
+      candidateTenantId?: TelegramUserId,
+    ) =>
+      enqueueQueueFile(QUEUE_FILE, key, candidate, {
+        tenantId: candidateTenantId,
+      }),
     acknowledgeImpl = acknowledgeQueued,
     deliverImpl = pacedDelivery,
     statusImpl = getChatStatus,
@@ -181,6 +226,10 @@ export async function routeMessageUpdate(
     allowedUserIds = ALLOWED,
     botUsername = BOT_USERNAME,
     logImpl = log,
+    tenantId,
+    workerRoutes,
+    reserveTurnImpl,
+    releaseTurnImpl,
   }: {
     chatKeyImpl?: (update: TelegramQueueUpdate) => string | null;
     loadQueueImpl?: () => MaybePromise<TelegramQueueDocument>;
@@ -198,6 +247,7 @@ export async function routeMessageUpdate(
     enqueueImpl?: (
       key: string,
       candidate: TelegramQueueUpdate,
+      tenantId?: TelegramUserId,
     ) => MaybePromise<{ count: number }>;
     acknowledgeImpl?: (
       update: TelegramQueueUpdate,
@@ -216,8 +266,18 @@ export async function routeMessageUpdate(
     allowedUserIds?: ReadonlySet<string>;
     botUsername?: unknown;
     logImpl?: (...parts: unknown[]) => void;
+    tenantId?: TelegramUserId;
+    workerRoutes?: WorkerRoutes;
+    reserveTurnImpl?: () => MaybePromise<TurnReservation>;
+    releaseTurnImpl?: (token: string) => MaybePromise<unknown>;
   } = {},
 ): Promise<RouteMessageResult> {
+  if ((tenantId === undefined) !== (workerRoutes === undefined)) {
+    throw new Error(
+      "tenant identity and worker routes must be provided together",
+    );
+  }
+  if (tenantId && !updateMatchesTenant(update, tenantId)) return "dropped";
   const key = chatKeyImpl(update);
   if (update.message && key !== null && !replyToBotImpl(update.message)) {
     const queue = await loadQueueImpl();
@@ -228,7 +288,7 @@ export async function routeMessageUpdate(
         return "dropped";
       let queued;
       try {
-        queued = await enqueueImpl(key, update);
+        queued = await enqueueImpl(key, update, tenantId);
       } catch (error) {
         logImpl(
           `queue enqueue failed for update ${update.update_id}:`,
@@ -241,6 +301,11 @@ export async function routeMessageUpdate(
     }
   }
 
+  const reservation =
+    update.message && reserveTurnImpl
+      ? await reserveTurnImpl()
+      : ({ allowed: true, token: "" } as const);
+  if (!reservation.allowed) return "quota-exceeded";
   return deliverDirectUpdate(update, {
     key,
     deliverImpl,
@@ -251,6 +316,11 @@ export async function routeMessageUpdate(
     now,
     trImpl,
     logImpl,
+    routes: workerRoutes,
+    onNoTurnImpl:
+      releaseTurnImpl && reservation.token
+        ? () => releaseTurnImpl(reservation.token)
+        : undefined,
   });
 }
 
@@ -258,17 +328,7 @@ export async function drainReadyQueueHeads({
   loadImpl = loadQueue,
   runningImpl = isRunning,
   statusImpl = getChatStatus,
-  deliverImpl = (
-    update: TelegramQueueUpdate,
-    { timeoutMs }: DeliverOptions = {},
-  ) =>
-    pacedDelivery(update, {
-      route: ACCEPTANCE_ROUTE,
-      acceptedStatus: 204,
-      queueReceipt: true,
-      retry: false,
-      timeoutMs,
-    }),
+  deliverImpl = pacedDelivery,
   acknowledgeImpl = (key: string, updateId: number) =>
     acknowledgeQueueHead(QUEUE_FILE, key, updateId),
   legacyAllowedUserIds = ALLOWED,
@@ -279,6 +339,9 @@ export async function drainReadyQueueHeads({
   passBudgetMs = QUEUE_DRAIN_BUDGET_MS,
   deliveryTimeoutMs = QUEUE_DELIVERY_TIMEOUT_MS,
   gateWaitMs = RUN_STALE_MS,
+  resolveRoutesImpl,
+  reserveTurnImpl,
+  releaseTurnImpl,
 }: {
   loadImpl?: () => MaybePromise<TelegramQueueDocument>;
   runningImpl?: (key: string) => boolean;
@@ -293,6 +356,19 @@ export async function drainReadyQueueHeads({
   passBudgetMs?: number;
   deliveryTimeoutMs?: number;
   gateWaitMs?: number;
+  resolveRoutesImpl?: (
+    update: TelegramQueueUpdate,
+    tenantId: string | undefined,
+  ) => MaybePromise<WorkerRoutes | null>;
+  reserveTurnImpl?: (
+    update: TelegramQueueUpdate,
+    tenantId: string | undefined,
+  ) => MaybePromise<TurnReservation>;
+  releaseTurnImpl?: (
+    token: string,
+    update: TelegramQueueUpdate,
+    tenantId: string | undefined,
+  ) => MaybePromise<unknown>;
 } = {}) {
   const snapshot = await loadImpl();
   const keys = [...new Set([...queueKeys(snapshot), ...inFlight.keys()])];
@@ -341,22 +417,38 @@ export async function drainReadyQueueHeads({
     if (!update) {
       if (!undrainableLegacyLogged.has(key)) {
         log(
-          `queued legacy messages for ${key} cannot be replayed because their author is not verifiable`,
+          item.tenantId
+            ? `queued tenant update for ${key} cannot be replayed because its sender identity changed`
+            : `queued legacy messages for ${key} cannot be replayed because their author is not verifiable`,
         );
         undrainableLegacyLogged.add(key);
       }
       continue;
     }
+    const routes = resolveRoutesImpl
+      ? await resolveRoutesImpl(update, item.tenantId)
+      : undefined;
+    if (resolveRoutesImpl && !routes) continue;
     const timeoutMs = Math.max(
       1,
       Math.min(deliveryTimeoutMs, deadline - now()),
     );
+    const reservation = reserveTurnImpl
+      ? await reserveTurnImpl(update, item.tenantId)
+      : ({ allowed: true, token: "" } as const);
+    if (!reservation.allowed) continue;
     lastAttempted = key;
     const baselineGeneration = currentGeneration;
     inFlight.set(key, { state: "delivering", baselineGeneration });
     let accepted: DeliveryResult = false;
     try {
-      accepted = await deliverImpl(update, { timeoutMs });
+      accepted = await deliverImpl(update, {
+        route: routes?.acceptance ?? ACCEPTANCE_ROUTE,
+        acceptedStatus: 204,
+        queueReceipt: true,
+        retry: false,
+        timeoutMs,
+      });
     } catch (error) {
       log(
         `queued update ${item.updateId} delivery failed:`,
@@ -365,10 +457,14 @@ export async function drainReadyQueueHeads({
     }
     if (!accepted) {
       inFlight.delete(key);
+      if (releaseTurnImpl && reservation.token)
+        await releaseTurnImpl(reservation.token, update, item.tenantId);
       continue;
     }
     if (accepted === "handled") {
       inFlight.delete(key);
+      if (releaseTurnImpl && reservation.token)
+        await releaseTurnImpl(reservation.token, update, item.tenantId);
     } else {
       const acceptedStatus = statusImpl(key);
       const acceptedGeneration = statusGeneration(acceptedStatus);

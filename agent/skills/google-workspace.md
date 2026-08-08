@@ -4,10 +4,12 @@ description: Работа с Google-сервисами через CLI `gws` (Goo
 
 # Google Workspace (`gws`)
 
-У тебя есть CLI `gws` — единый интерфейс ко всем API Google Workspace. Запускай через `bash`.
+У тебя есть инструмент `google_workspace` — безопасный интерфейс к CLI `gws` без shell.
+Передавай ему массив `args` из примеров ниже без начального слова `gws`.
 Вывод — всегда структурированный JSON: парси его, а не пересказывай сырьё.
 
-Установлен глобально при установке Iva. Если команды нет — поставь: `npm i -g @googleworkspace/cli`.
+CLI установлен глобально при установке Iva. Если инструмент сообщает, что `gws` не найден,
+попроси владельца сервера восстановить установку; сам ничего через shell не устанавливай.
 
 ## Проверка авторизации (ВСЕГДА первым делом)
 
@@ -21,25 +23,24 @@ description: Работа с Google-сервисами через CLI `gws` (Goo
 
 Быстрые хелперы (префикс `+`) — для типичных задач:
 
-```bash
-gws gmail +triage                              # непрочитанные: отправитель / тема / дата
-gws gmail +send --to a@b.com --subject "Тема" --body "Текст"
-gws gmail +reply --message-id ID --body "Ответ"
-gws calendar +agenda                           # ближайшие события (в таймзоне Google-аккаунта)
-gws calendar +insert --json '{"summary":"Созвон","start":{"dateTime":"..."},"end":{"dateTime":"..."}}'
-gws drive +upload ./file.pdf --name "Отчёт"
-gws sheets +read --spreadsheet ID --range 'Sheet1!A1:C10'
-gws sheets +append --spreadsheet ID --values "Alice,95"
-gws docs +write --document ID --text "Абзац"
-gws workflow +weekly-digest                    # встречи недели + число непрочитанных
+```text
+gmail +triage                              # непрочитанные: отправитель / тема / дата
+gmail +send --to a@b.com --subject "Тема" --body "Текст"
+gmail +reply --message-id ID --body "Ответ"
+calendar +agenda                           # ближайшие события (в таймзоне Google-аккаунта)
+calendar +insert --json '{"summary":"Созвон","start":{"dateTime":"..."},"end":{"dateTime":"..."}}'
+drive +upload ./file.pdf --name "Отчёт"
+sheets +read --spreadsheet ID --range 'Sheet1!A1:C10'
+sheets +append --spreadsheet ID --values "Alice,95"
+docs +write --document ID --text "Абзац"
+workflow +weekly-digest                    # встречи недели + число непрочитанных
 ```
 
 Полный Discovery-доступ к любому методу API (когда хелпера нет):
 
 ```bash
-gws drive files list --params '{"pageSize":10}'
-gws calendar events list --params '{"calendarId":"primary","maxResults":10}'
-gws <сервис> --help          # покажет и хелперы (+…), и все методы Discovery
+drive files list --params '{"pageSize":10}'
+calendar events list --params '{"calendarId":"primary","maxResults":10}'
 ```
 
 Диапазоны Таблиц содержат `!` — оборачивай значение в ОДИНАРНЫЕ кавычки (иначе bash сломает).
@@ -50,13 +51,13 @@ Google Задачи (Tasks) — хелперов нет, только Discovery.
 URL-параметры идут в `--params`, тело задачи — в `--json`. `due` — RFC3339 в UTC.
 
 ```bash
-gws tasks tasklists list                                         # id списков + названия
-gws tasks tasks list --params '{"tasklist":"@default","showCompleted":false}'  # только открытые (по умолчанию придут и закрытые)
-gws tasks tasks list --params '{"tasklist":"@default","showCompleted":true,"showHidden":true}'  # + закрытые из приложений Google
-gws tasks tasks insert --params '{"tasklist":"@default"}' \
+tasks tasklists list                                         # id списков + названия
+tasks tasks list --params '{"tasklist":"@default","showCompleted":false}'  # только открытые (по умолчанию придут и закрытые)
+tasks tasks list --params '{"tasklist":"@default","showCompleted":true,"showHidden":true}'  # + закрытые из приложений Google
+tasks tasks insert --params '{"tasklist":"@default"}' \
   --json '{"title":"Позвонить в банк","notes":"по карте","due":"2026-08-01T00:00:00.000Z"}'
-gws tasks tasks patch --params '{"tasklist":"@default","task":"TASK_ID"}' --json '{"status":"completed"}'
-gws tasks tasks delete --params '{"tasklist":"@default","task":"TASK_ID"}'
+tasks tasks patch --params '{"tasklist":"@default","task":"TASK_ID"}' --json '{"status":"completed"}'
+tasks tasks delete --params '{"tasklist":"@default","task":"TASK_ID"}'
 ```
 
 ## Подключение (регистрация ключа) — проводи по шагам

@@ -19,6 +19,12 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import { randomBytes } from "node:crypto";
+import {
+  chargeUserIngress,
+  releaseUserTurn,
+  reserveUserTurn,
+} from "./user-quota.ts";
+import { parseTelegramUserId, readUserRegistry } from "./user-registry.ts";
 
 // A repeat within this window is almost certainly a double-fire (a Nitro schedule tick
 // racing a catch-up run, or a manual retrigger) rather than a genuine second cron slot —
@@ -239,6 +245,11 @@ export async function runScheduledJob(
   }: RunScheduledJobOptions = {} as RunScheduledJobOptions,
 ): Promise<RunScheduledJobResult> {
   let reserved = false;
+  let quotaTurn: {
+    controlDir: string;
+    userId: NonNullable<ReturnType<typeof parseTelegramUserId>>;
+    token: string;
+  } | null = null;
   let startedAt = now();
   try {
     if (statusPath) {
@@ -302,6 +313,33 @@ export async function runScheduledJob(
       if (!admitted) return { skipped: true, ok: true };
     } else {
       startedAt = now();
+    }
+
+    if (env.ASSISTANT_MULTI_USER === "1") {
+      const controlDir = env.IVA_USER_CONTROL_DIR;
+      const userId = parseTelegramUserId(env.ASSISTANT_USER_ID);
+      if (!controlDir || !userId)
+        throw new Error("personal schedule is missing its fixed user identity");
+      const registry = await readUserRegistry(controlDir);
+      const user = registry.users.find(
+        (candidate) => candidate.id === userId && candidate.status === "active",
+      );
+      if (!user) throw new Error("personal schedule user is not active");
+      const ingress = await chargeUserIngress(controlDir, userId, user.limits, {
+        ingressId: `schedule:${name}:${startedAt}`,
+        now: startedAt,
+      });
+      if (!ingress.allowed)
+        throw new Error(`personal schedule quota denied: ${ingress.reason}`);
+      const turn = await reserveUserTurn(
+        controlDir,
+        userId,
+        user.limits,
+        startedAt,
+      );
+      if (!turn.allowed)
+        throw new Error(`personal schedule quota denied: ${turn.reason}`);
+      quotaTurn = { controlDir, userId, token: turn.token };
     }
 
     log(`schedule-runner: ${name} start`);
@@ -460,6 +498,13 @@ export async function runScheduledJob(
     }
     return { skipped: false, ok: false, error };
   } finally {
+    if (quotaTurn) {
+      await releaseUserTurn(
+        quotaTurn.controlDir,
+        quotaTurn.userId,
+        quotaTurn.token,
+      ).catch(() => false);
+    }
     // Belt-and-suspenders: if something threw between reserving and the normal
     // finish-write above (which already clears inProgressSince on every ordinary path),
     // don't leave the reservation stuck for the rest of timeoutMs for no reason.

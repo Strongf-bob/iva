@@ -8,6 +8,8 @@ import type { createCliSystemd } from "./systemd.ts";
 
 type CliRuntime = ReturnType<typeof createCliRuntime>;
 type CliSystemd = ReturnType<typeof createCliSystemd>;
+type ServiceLifecycle = Pick<CliSystemd, "activateUnits" | "restartServices"> &
+  Partial<Pick<CliSystemd, "managedServices">>;
 
 type ServiceCommandDependencies = {
   readonly now?: () => Date;
@@ -19,7 +21,7 @@ type ServiceCommandDependencies = {
 /** Create the service commands without touching the filesystem, processes, or systemd. */
 export function createServiceCommands(
   runtime: CliRuntime,
-  systemdLifecycle: Pick<CliSystemd, "activateUnits" | "restartServices">,
+  systemdLifecycle: ServiceLifecycle,
   dependencies: ServiceCommandDependencies = {},
 ) {
   const {
@@ -36,6 +38,8 @@ export function createServiceCommands(
     requireSystemd,
   } = runtime;
   const { activateUnits, restartServices } = systemdLifecycle;
+  const managedServices =
+    systemdLifecycle.managedServices ?? (() => [...SERVICES]);
   const now = dependencies.now ?? (() => new Date());
   const quarantinePath = dependencies.quarantinePath ?? defaultQuarantinePath;
   const resetStateTargets =
@@ -51,7 +55,7 @@ export function createServiceCommands(
       "--no-pager",
       "-n",
       "5",
-      ...SERVICES,
+      ...managedServices(),
     ]);
     run("systemctl", [
       "--user",
@@ -82,7 +86,7 @@ export function createServiceCommands(
     // Fail closed: quarantining the store under a live eve corrupts state and resurrects
     // the very runs we're clearing — if stop failed, don't touch anything.
     try {
-      systemd.stop(SERVICES);
+      systemd.stop(managedServices());
     } catch (error) {
       bad(
         `${(error as { readonly message: string }).message} Workflow and Telegram control state left untouched`,
@@ -135,15 +139,20 @@ export function createServiceCommands(
 
   function cmdStop(): void {
     requireSystemd();
-    systemd.stop(SERVICES);
+    systemd.stop(managedServices());
     ok("Stopped");
   }
 
   function cmdLogs(args: readonly string[]): void {
     requireSystemd();
+    const requestedId = args.find((arg) => /^[1-9][0-9]{0,19}$/u.test(arg));
     const unit = args.includes("poll")
       ? "iva-telegram-poll.service"
-      : "iva.service";
+      : requestedId
+        ? `iva-worker-${requestedId}.service`
+        : (managedServices().find((candidate) =>
+            candidate.startsWith("iva-worker-"),
+          ) ?? "iva.service");
     run("journalctl", ["--user", "-u", unit, "-f", "-n", "50"]);
   }
 

@@ -227,8 +227,8 @@ test("directory sync failure requires a durable duplicate retry before offset ad
     "the duplicate retry must repeat the atomic write through a successful parent-dir fsync",
   );
   assert.equal(result.offset.offset, 102);
-  assert.equal(result.queue.queues["1:"].length, 1);
-  assert.equal(result.queue.queues["1:"][0].updateId, 101);
+  assert.equal(result.queue.queues["42:"].length, 1);
+  assert.equal(result.queue.queues["42:"][0].updateId, 101);
 });
 
 test("queued follow-ups auto-drain in FIFO order when the current turn becomes idle", (t: TestContext) => {
@@ -311,21 +311,11 @@ test("a restarted bridge recovers and drains the persisted FIFO without a third 
   assert.deepEqual(afterRestart.queue, { version: 1, queues: {} });
 });
 
-test("a persistently failing queue head does not block other chats or Telegram polling", (t: TestContext) => {
+test("legacy queue heads without a verifiable registered tenant stay closed", (t: TestContext) => {
   const dataDir = makeDataDir(t, "fair-drain");
   const result = runHarness("fair-drain", dataDir);
 
-  assert.deepEqual(
-    result.deliveries.map((update) => {
-      assert.ok(update.message);
-      return [update.message.chat.id, update.update_id];
-    }),
-    [
-      [1, 101],
-      [2, 102],
-    ],
-    "one failed acceptance attempt must yield to the next chat key",
-  );
+  assert.deepEqual(result.deliveries, []);
   assert.deepEqual(
     Object.fromEntries(
       Object.entries(result.queue.queues).map(([key, items]) => [
@@ -333,8 +323,8 @@ test("a persistently failing queue head does not block other chats or Telegram p
         items.map((item) => item.updateId),
       ]),
     ),
-    { "1:": [101] },
-    "the poison head stays durable while an accepted head is acknowledged",
+    { "1:": [101], "2:": [102] },
+    "unverifiable legacy heads remain durable and are never cross-routed",
   );
   assert.deepEqual(
     result.requestedOffsets,
@@ -357,7 +347,7 @@ test("unaddressed group noise is excluded from a busy conversation FIFO", (t: Te
   );
 });
 
-test("busy FIFO routes private, group and forum-topic updates without absorbing group noise", (t: TestContext) => {
+test("busy FIFO keeps only the registered user's private chat", (t: TestContext) => {
   const dataDir = makeDataDir(t, "routing");
   const result = runHarness("routing", dataDir);
   const queues = result.queue.queues;
@@ -374,20 +364,12 @@ test("busy FIFO routes private, group and forum-topic updates without absorbing 
       ]),
     ),
     {
-      "1:": [[1, 101, "private follow-up"]],
-      "-100:": [[1, 103, "@my_bot group follow-up"]],
-      "-100:7": [[1, 104, "/task topic follow-up"]],
+      "42:": [[1, 101, "private follow-up"]],
     },
   );
-  const topicQueue = queues["-100:7"];
-  assert.ok(topicQueue);
-  const topicItem = topicQueue[0];
-  assert.ok(topicItem);
-  assert.ok(topicItem.update?.message);
-  assert.equal(topicItem.update.message.message_thread_id, 7);
   assert.equal(result.offset.offset, 105);
-  assert.equal(result.reactions.length, 3);
-  assert.equal(result.queueStatuses.length, 3);
+  assert.equal(result.reactions.length, 1);
+  assert.equal(result.queueStatuses.length, 1);
 });
 
 test("an idle direct message uses one accepted POST and keeps offset semantics", (t: TestContext) => {
@@ -414,10 +396,10 @@ test("a direct acceptance 503 resets immediately, notifies once, then retries", 
   ]);
   assert.equal(result.statusBeforeRetry.status, "idle");
   assert.equal(result.statusBeforeRetry.ingressId, undefined);
-  assert.deepEqual(result.deletedMessages, [{ chat_id: "1", message_id: 77 }]);
+  assert.deepEqual(result.deletedMessages, [{ chat_id: "42", message_id: 77 }]);
   assert.deepEqual(
     result.failureNotices.map(({ chat_id, text }) => [chat_id, text]),
-    [["1", "Couldn't process the message - repeat it or use /new"]],
+    [["42", "Couldn't process the message - repeat it or use /new"]],
   );
   assert.deepEqual(result.offset, { offset: 102, delivered: 101 });
 });
@@ -433,10 +415,10 @@ test("a direct acceptance timeout rejects once and returns to Telegram polling",
     ["/eve/v1/telegram/accepted"],
     "a timed-out POST must never be repeated because it may still start later",
   );
-  assert.deepEqual(result.deletedMessages, [{ chat_id: "1", message_id: 78 }]);
+  assert.deepEqual(result.deletedMessages, [{ chat_id: "42", message_id: 78 }]);
   assert.deepEqual(
     result.failureNotices.map(({ chat_id, text }) => [chat_id, text]),
-    [["1", "Couldn't process the message - repeat it or use /new"]],
+    [["42", "Couldn't process the message - repeat it or use /new"]],
   );
   assert.equal(result.finalStatus.status, "idle");
   assert.equal(result.finalStatus.ingressId, undefined);

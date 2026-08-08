@@ -1,5 +1,7 @@
 import { defineHook } from "eve/hooks";
 import { appendUsage, subagentTurnId } from "../../scripts/lib/usage.ts";
+import { recordUserTokens } from "../../scripts/lib/user-quota.ts";
+import { parseTelegramUserId } from "../../scripts/lib/user-registry.ts";
 
 // Учёт фактического расхода токенов. ОДИН хук ловит весь расход одного eve-агента без
 // двойного счёта: основной чат (channel.kind="telegram") и фоновые джобы через eve/client —
@@ -36,12 +38,12 @@ interface StepData {
   };
 }
 
-function record(
+async function record(
   data: StepData,
   sessionId: string,
   source: string,
   subagent?: string,
-): void {
+): Promise<void> {
   const u = data.usage;
   if (!u) return;
   const inT = u.inputTokens ?? 0;
@@ -64,12 +66,21 @@ function record(
     cacheWrite,
     total: inT + outT,
   });
+  const controlDir = process.env.IVA_USER_CONTROL_DIR;
+  const userId = parseTelegramUserId(process.env.ASSISTANT_USER_ID);
+  if (controlDir && userId) {
+    try {
+      await recordUserTokens(controlDir, userId, inT + outT);
+    } catch (error) {
+      console.error("[usage] quota token accounting failed:", error);
+    }
+  }
 }
 
 export default defineHook({
   events: {
-    "step.completed": (event, ctx) => {
-      record(event.data, ctx.session.id, ctx.channel.kind ?? "unknown");
+    "step.completed": async (event, ctx) => {
+      await record(event.data, ctx.session.id, ctx.channel.kind ?? "unknown");
     },
     // Шаги инлайн-субагента (planner) — иначе его токены потерялись бы.
     //
@@ -79,10 +90,10 @@ export default defineHook({
     // /new — с его же текущим turn_0, позже — с давним одноимённым). Пишем ход РОДИТЕЛЯ
     // с суффиксом: ключ уникален по построению, а привязка к ходу сохраняется, поэтому
     // расход субагента продолжает попадать в «итого за ход» (scripts/lib/usage.ts).
-    "subagent.event": (event, ctx) => {
+    "subagent.event": async (event, ctx) => {
       const inner = event.data.event;
       if (inner.type === "step.completed") {
-        record(
+        await record(
           {
             ...inner.data,
             turnId: subagentTurnId(

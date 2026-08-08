@@ -15,6 +15,10 @@ function assertIgnored(path: string, entry: string): void {
 }
 
 void test("private runtime state is excluded from Git and the image context", () => {
+  assertIgnored(".gitignore", ".env");
+  assertIgnored(".gitignore", ".env.*");
+  assertIgnored(".gitignore", "data");
+  assertIgnored(".gitignore", "/vault/");
   assertIgnored(".gitignore", "/memory/");
   assertIgnored(".gitignore", "/iva-runtime/");
 

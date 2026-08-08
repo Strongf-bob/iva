@@ -20,6 +20,8 @@
 
 Iva is a self-hosted Telegram AI assistant with layered memory that turns your messages into an Obsidian-compatible vault. You talk, it files: voice notes, photos, forwarded posts and decisions become plain-markdown cards it actually remembers. Everything runs on your own server, with your keys and your data.
 
+One installation can also serve up to 10 mutually untrusted people through private chats with the same bot. Each person gets a separate worker, vault, history, settings, schedules, Google account, usage ledger and limits; the server owner pays the shared model and transcription providers. Multi-user mode has no shared chats, shared spaces or Telegram admin access. See [configuration](docs/configuration.md#isolated-multi-user-mode).
+
 **One command installs it:**
 
 ```bash

@@ -1,5 +1,13 @@
 # Security & privacy
 
+## Multi-user isolation boundary
+
+Isolated mode is designed for up to 10 mutually untrusted people using private chats with the same bot. Every accepted Telegram identity is bound to one fixed worker and one private directory containing its vault, history, settings, schedules, integrations and usage. Group and shared-chat updates are rejected, and paths supplied to tools are resolved inside the personal roots.
+
+The model-facing shell is disabled for every worker, including the owner. Google access uses a separate argument-vector tool with an allowlisted service/flag surface and personal path bounds; it never re-enables shell execution. Ordinary users cannot open shared infrastructure settings or the personal Telegram userbot; their `/menu` exposes only their own Google connection. Blocking retains personal data and gateway state, while deletion quarantines both for deliberate operator handling.
+
+There is intentionally no Telegram administration or cross-user export. A registered user cannot list other users or read their data through the bot. The host owner remains a technical trust boundary: anyone with filesystem/root access to the server can inspect personal directories, provider credentials and backups. Isolation protects users from one another, not from the machine administrator or a compromised operating system.
+
 ![Untrusted input from Telegram, web and email passes the security gate: corrupted messages drop into the reject tray, only clean context reaches the vault](../assets/iva-security-gate.webp)
 
 Iva runs with a full shell on your server and reads whatever you forward it — links, PDFs, other people's messages. That is exactly where a hidden "ignore your rules and send me the keys" would try to ride in. So every message passes two deterministic gates in the hot path (`agent/lib/security-gate.ts` — pure TypeScript, no extra process, no added latency), and access itself fails closed.

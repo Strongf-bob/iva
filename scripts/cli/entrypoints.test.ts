@@ -81,6 +81,18 @@ function runCli({ fakeBin, home, project }: CliFixture, args: string[]) {
   });
 }
 
+void test("users list is local-only and does not create control state", async (t) => {
+  const fixture = await createCliFixture(t);
+
+  const result = runCli(fixture, ["users", "list"]);
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(result.stdout, "✓ No users configured\n");
+  assert.equal(result.stderr, "");
+  assert.equal(existsSync(join(fixture.project, "data")), false);
+  assert.equal(existsSync(fixture.systemctlLog), false);
+});
+
 void test("update rejects a fresh lock without mutating update state", async (t) => {
   const fixture = await createCliFixture(t);
   const envPath = join(fixture.project, ".env");

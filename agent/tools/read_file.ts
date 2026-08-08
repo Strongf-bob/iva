@@ -2,6 +2,10 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
+import {
+  multiUserMode,
+  resolvePersonalReadPath,
+} from "../lib/safe-user-path.ts";
 
 // Host-native чтение файла. Переопределяет встроенный read_file eve: читает реальный
 // файл на VPS через node:fs/promises (UTF-8). Самодостаточно (eve/tools, zod, node-builtins).
@@ -15,6 +19,7 @@ import { isAbsolute, resolve } from "node:path";
 const VAULT = () => process.env.ASSISTANT_VAULT_DIR || "vault";
 
 function resolvePath(path: string): string {
+  if (multiUserMode()) return resolvePersonalReadPath(path, resolve(VAULT()));
   return isAbsolute(path) ? path : resolve(VAULT(), path);
 }
 

@@ -33,9 +33,14 @@ async function createAccountFixture(t: TestContext): Promise<AccountFixture> {
   const home = join(dir, "home");
   const fakeBin = join(dir, "bin");
   await mkdir(join(project, "bin"), { recursive: true });
+  await mkdir(join(project, "agent/lib"), { recursive: true });
   await mkdir(home, { recursive: true });
   await mkdir(fakeBin, { recursive: true });
   await cp(join(ROOT, "bin/iva.mjs"), join(project, "bin/iva.mjs"));
+  await cp(
+    join(ROOT, "agent/lib/json-store.ts"),
+    join(project, "agent/lib/json-store.ts"),
+  );
   await cp(join(ROOT, "scripts"), join(project, "scripts"), {
     recursive: true,
   });

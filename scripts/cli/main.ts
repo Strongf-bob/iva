@@ -7,6 +7,10 @@ import { createCliSystemd } from "./systemd.ts";
 import { createTreeRenderer } from "./tree.ts";
 import { createUpdateCommand } from "./update.ts";
 import { createUserbotCommands } from "./userbot.ts";
+import {
+  createUsersCommandDependencies,
+  createUsersCommands,
+} from "./users.ts";
 
 export type CliCommand = (args: readonly string[]) => unknown;
 
@@ -58,7 +62,10 @@ export function createCliMain(root: string) {
     showTree: tree.showTree,
     restartUserbotIfActive: userbot.restartUserbotIfActive,
   });
-  const { C, SERVICES, TIMERS, bad, ok } = runtime;
+  const users = createUsersCommands(
+    createUsersCommandDependencies(runtime, systemdLifecycle),
+  );
+  const { C, TIMERS, bad, ok } = runtime;
 
   function cmdHelp(): void {
     console.log(`
@@ -75,6 +82,7 @@ ${C.b}Commands:${C.x}
   ${C.c}iva start${C.x} / ${C.c}stop${C.x}    start / stop
   ${C.c}iva usage${C.x} [win]      token usage (last|today|week|month|by-model|by-source|tail)
   ${C.c}iva userbot${C.x} [creds|setup|status|diagnose --json|off]  personal-account userbot proxy
+  ${C.c}iva users${C.x} [list|add|block|unblock|limits|delete|migrate-owner]  manage isolated users (local only)
   ${C.c}iva logs${C.x} [poll]     agent logs (or the Telegram bridge) -f
   ${C.c}iva uninstall${C.x}       remove units and the command (--purge — delete code+vault)
   ${C.c}iva version${C.x}         version and git commit
@@ -86,6 +94,7 @@ ${C.b}Commands:${C.x}
   const commands: Readonly<Record<string, CliCommand>> = {
     update: cmdUpdate,
     userbot: userbot.cmdUserbot,
+    users: users.cmdUsers,
     config: cmdConfig,
     login: account.cmdLogin,
     doctor: cmdDoctor,
@@ -107,7 +116,7 @@ ${C.b}Commands:${C.x}
     "_activate-units": () => {
       systemdLifecycle.activateUnits();
       ok(
-        `systemd units enabled and active: ${SERVICES.length + TIMERS.length}`,
+        `systemd units enabled and active: ${systemdLifecycle.managedServices().length + TIMERS.length}`,
       );
     },
   };

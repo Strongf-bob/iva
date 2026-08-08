@@ -72,6 +72,8 @@ import {
   publishTelegramTurnStarted,
 } from "../../scripts/lib/telegram-turn-start.ts";
 import { pathToFileURL } from "node:url";
+import { releaseUserTurn } from "../../scripts/lib/user-quota.ts";
+import { parseTelegramUserId } from "../../scripts/lib/user-registry.ts";
 
 // Токен (TELEGRAM_BOT_TOKEN) и секрет вебхука (TELEGRAM_WEBHOOK_SECRET_TOKEN)
 // читаются из окружения автоматически.
@@ -755,6 +757,16 @@ async function finishStatus(
   const tg = channel.telegram;
   const key = chatKeyOf(tg.chatId, tg.messageThreadId);
   const st = getChatStatus(key);
+  if (st?.sessionId !== sessionId) return false;
+  const quotaControlDir = process.env.IVA_USER_CONTROL_DIR;
+  const quotaUserId = parseTelegramUserId(process.env.ASSISTANT_USER_ID);
+  if (quotaControlDir && quotaUserId) {
+    try {
+      await releaseUserTurn(quotaControlDir, quotaUserId);
+    } catch (error) {
+      console.error("[telegram] не удалось освободить квоту хода:", error);
+    }
+  }
   // Compare and update happen under one per-chat lock. A reset can remove
   // sessionId after this read; a late terminal event then becomes a no-op.
   if (
@@ -951,9 +963,24 @@ const telegram = telegramChannel({
     },
     // Страховка: если терминальное turn-событие потерялось (краш), парковка сессии
     // всё равно снимает busy-флаг — мост не должен буферизовать вечно.
-    "session.waiting"(_data, channel, ctx) {
+    async "session.waiting"(_data, channel, ctx) {
       const tg = channel.telegram;
       const key = chatKeyOf(tg.chatId, tg.messageThreadId);
+      const st = getChatStatus(key);
+      if (st?.status === "running" && st.sessionId === ctx.session.id) {
+        const quotaControlDir = process.env.IVA_USER_CONTROL_DIR;
+        const quotaUserId = parseTelegramUserId(process.env.ASSISTANT_USER_ID);
+        if (quotaControlDir && quotaUserId) {
+          try {
+            await releaseUserTurn(quotaControlDir, quotaUserId);
+          } catch (error) {
+            console.error(
+              "[telegram] не удалось освободить квоту ожидающей сессии:",
+              error,
+            );
+          }
+        }
+      }
       setChatStatusIf(
         key,
         { status: "running", sessionId: ctx.session.id },

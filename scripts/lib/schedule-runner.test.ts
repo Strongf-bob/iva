@@ -15,12 +15,57 @@ import {
   runScheduledJob,
   type RunScheduledJobResult,
 } from "./schedule-runner.ts";
+import {
+  addUser,
+  parseTelegramUserId,
+  updateUserLimits,
+} from "./user-registry.ts";
+import { readUserQuota } from "./user-quota.ts";
 
 function typecheckRequiredOptions(): void {
   // @ts-expect-error The pre-conversion declaration required an options object.
   void runScheduledJob();
 }
 void typecheckRequiredOptions;
+
+void test("personal schedules share request, token and concurrency admission with chat", async () => {
+  const root = await scaffold();
+  await writeFile(join(root, "ok.ts"), "process.exit(0);\n");
+  const controlDir = join(root, "data/control");
+  const id = parseTelegramUserId("101")!;
+  await addUser(controlDir, { id, role: "user" });
+  await updateUserLimits(controlDir, id, { requestsPerHour: 1 });
+  const env = {
+    ...process.env,
+    ASSISTANT_MULTI_USER: "1",
+    IVA_USER_CONTROL_DIR: controlDir,
+    ASSISTANT_USER_ID: id,
+  };
+
+  const first = await runScheduledJob({
+    name: "memory-daily",
+    argv: ["ok.ts"],
+    root,
+    nodeBin: process.execPath,
+    env,
+    log: () => {},
+  });
+  const second = await runScheduledJob({
+    name: "memory-weekly",
+    argv: ["ok.ts"],
+    root,
+    nodeBin: process.execPath,
+    env,
+    log: () => {},
+  });
+
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, false);
+  assert.match(String((second.error as Error)?.message), /requests-hour/u);
+  const quota = await readUserQuota(controlDir, id);
+  assert.equal(quota.requestsHour, 1);
+  assert.equal(quota.activeTurns.length, 0);
+});
 
 interface SeenSpawn {
   readonly cmd: string;

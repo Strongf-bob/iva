@@ -72,6 +72,13 @@ const isPrivate = (st: MenuState) => Number(st.chatId) > 0;
 const isContainerRuntime = () =>
   process.env.TELEGRAM_USERBOT_RUNTIME === "container";
 
+export function userbotAllowed(
+  multiUser = process.env.ASSISTANT_MULTI_USER === "1",
+  role = process.env.ASSISTANT_ROLE,
+): boolean {
+  return !multiUser || role === "owner";
+}
+
 function run(cmd: string, args: string[], timeout = 1500) {
   return new Promise<{ failed: boolean; code: number; stdout: string }>(
     (resolve) => {
@@ -297,10 +304,20 @@ export default {
   parent: PARENT,
 
   render(st: MenuState, ctx: MenuContext) {
+    if (!userbotAllowed()) {
+      return Promise.resolve({
+        text: ctx.tr(
+          "Telegram userbot is available only to the server owner.",
+          "Telegram-userbot доступен только владельцу сервера.",
+        ),
+        rows: [ctx.backRow(PARENT)],
+      });
+    }
     return buildScreen(st, ctx);
   },
 
   async on(verb: string, args: string[], st: MenuState, ctx: MenuContext) {
+    if (!userbotAllowed()) return ctx.show(st, PARENT);
     if (verb !== "do") return ctx.show(st, SID);
     const step = args[0];
 
@@ -398,6 +415,10 @@ export default {
       st: MenuState,
       ctx: MenuContext,
     ) {
+      if (!userbotAllowed()) {
+        st.awaitText = null;
+        return ctx.show(st, PARENT);
+      }
       const value = String(text).trim();
       const step = st.awaitText?.data?.step;
       if (step === "api_id") {

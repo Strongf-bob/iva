@@ -47,6 +47,6 @@ Yes — that is the point. You talk, it files: daily transcripts, nightly rollup
 
 ## When NOT to use Iva
 
-- **You need a team or multi-user chat UI.** Iva is single-user by design: the allowlist gates a few trusted IDs and the vault belongs to one person. LibreChat fits teams better.
+- **You need team workspaces or shared chats.** Iva can isolate up to 10 people behind one bot, but each person has a private worker and vault; there are no shared spaces, group-chat collaboration or Telegram administration. LibreChat fits collaborative teams better.
 - **You want local model weights.** Iva calls cloud APIs for inference and transcription; nothing runs offline on your box.
 - **You want a hosted, no-ops product.** Iva expects you to own a VPS and occasionally run `iva doctor`. A ChatGPT subscription is simpler if you never want to touch a server.

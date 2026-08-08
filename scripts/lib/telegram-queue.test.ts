@@ -80,6 +80,12 @@ type RouteMessageOptions = {
     count: number,
   ) => Promise<void>;
   deliverImpl: (update: TelegramQueueUpdate) => Promise<boolean>;
+  reserveTurnImpl?: () => Promise<
+    | { allowed: true; token: string }
+    | { allowed: false; reason: "concurrent-turns" }
+  >;
+  releaseTurnImpl?: (token: string) => Promise<void>;
+  sendFailureImpl?: (key: string, text: string) => Promise<void>;
 };
 
 type PollModule = {
@@ -570,6 +576,30 @@ void test("an accepted head must observe its turn running and then idle before t
   assert.deepEqual(delivered, [101, 102]);
 });
 
+void test("direct tenant routing reserves a turn and releases rejected delivery", async () => {
+  const released: string[] = [];
+  const result = await routeMessageUpdate(privateUpdate(103, "fresh"), {
+    chatKeyImpl: () => "1:",
+    loadQueueImpl: async () => ({ version: 1, queues: {} }),
+    runningImpl: () => false,
+    inFlight: new Map(),
+    queueCountImpl: queueCount,
+    replyToBotImpl: () => false,
+    shouldQueueImpl: () => true,
+    enqueueImpl: async () => ({ count: 1 }),
+    acknowledgeImpl: async () => {},
+    reserveTurnImpl: async () => ({ allowed: true, token: "lease-1" }),
+    releaseTurnImpl: async (token) => {
+      released.push(token);
+    },
+    deliverImpl: async () => false,
+    sendFailureImpl: async () => {},
+  });
+
+  assert.equal(result, "rejected");
+  assert.deepEqual(released, ["lease-1"]);
+});
+
 void test("drain removes an orphaned running gate after the last queued turn becomes idle", async () => {
   const key = "1:";
   let document = enqueueItem(
@@ -993,6 +1023,22 @@ void test("queued media and quoted metadata replay from the durable update witho
     materializeQueueItem("1:", queueHead(document, "1:")!),
     update,
   );
+});
+
+void test("queued tenant identity is durable and cross-user replay fails closed", async (t) => {
+  const file = await queueFile(t);
+  const update = privateUpdate(201, "personal");
+  update.message.chat.id = 42;
+  update.message.from.id = 42;
+  await enqueueQueueFile(file, "42:", update, { tenantId: "42" });
+  const { document } = await loadQueueFile(file, { strict: true });
+  const item = queueHead(document, "42:")!;
+
+  assert.equal(item.tenantId, "42");
+  assert.deepEqual(materializeQueueItem("42:", item), update);
+
+  item.update!.message!.from!.id = 99;
+  assert.equal(materializeQueueItem("42:", item), null);
 });
 
 void test("busy routing is fail-closed and keeps addressed private, group and topic updates", () => {
