@@ -205,7 +205,7 @@ test("container menu stores credentials outside .env and toggles the sidecar mar
 
 type PhoneCall = { operation: string; value?: string };
 
-async function phoneMenuFixture() {
+async function phoneMenuFixture({ withOnboarding = true } = {}) {
   const root = await mkdtemp(join(tmpdir(), "iva-userbot-phone-menu-"));
   const envPath = join(root, ".env");
   await writeFile(
@@ -215,6 +215,8 @@ async function phoneMenuFixture() {
   );
   const rendered: Rendered[] = [];
   const calls: PhoneCall[] = [];
+  const scheduled: Array<() => void> = [];
+  let now = 1_000;
   const results = {
     start: { state: "code_sent", reason: "code_sent" },
     code: { state: "password_needed", reason: "password_needed" },
@@ -245,7 +247,14 @@ async function phoneMenuFixture() {
     chatId: 1,
     userId: "2",
     screen: "ub",
-    data: { ub: null as { apiId?: string; codeDigits?: string } | null },
+    data: {
+      ub: null as {
+        apiId?: string;
+        codeDigits?: string;
+        loginExpiresAt?: number;
+        loginExpiryScheduledFor?: number;
+      } | null,
+    },
     awaitText: null as {
       kind: string;
       secret: boolean;
@@ -261,7 +270,9 @@ async function phoneMenuFixture() {
           state: "unauthorized",
           reason: "telegram_login_required",
         }),
-      userbotOnboarding: onboarding,
+      ...(withOnboarding ? { userbotOnboarding: onboarding } : {}),
+      now: () => now,
+      schedule: (callback: () => void) => scheduled.push(callback),
       log: (...parts: unknown[]) => {
         rendered.push({ text: parts.map(String).join(" "), rows: [] });
       },
@@ -277,7 +288,17 @@ async function phoneMenuFixture() {
     backRow: () => [{ text: "Back", callback_data: "iva_menu:r:o" }],
     show: async () => {},
   };
-  return { state, ctx, calls, rendered, results };
+  return {
+    state,
+    ctx,
+    calls,
+    rendered,
+    results,
+    scheduled,
+    setNow: (value: number) => {
+      now = value;
+    },
+  };
 }
 
 test("unauthorized userbot screen offers phone login instead of QR", async () => {
@@ -289,6 +310,29 @@ test("unauthorized userbot screen offers phone login instead of QR", async () =>
   assert.match(serialized, /Log in by phone/u);
   assert.match(serialized, /iva_menu:ub:do:login/u);
   assert.doesNotMatch(serialized, /QR/u);
+});
+
+test("host-native userbot screen fails closed even if a token-file env leaks", async () => {
+  const previousTokenFile = process.env.TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE;
+  const previousRuntime = process.env.TELEGRAM_USERBOT_RUNTIME;
+  process.env.TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE = "/synthetic/token";
+  delete process.env.TELEGRAM_USERBOT_RUNTIME;
+  try {
+    const { state, ctx } = await phoneMenuFixture({ withOnboarding: false });
+
+    const view = await userbot.render(state, ctx);
+    const serialized = JSON.stringify(view);
+
+    assert.match(serialized, /Phone login is disabled in host-native mode/u);
+    assert.doesNotMatch(serialized, /iva_menu:ub:do:login/u);
+  } finally {
+    if (previousTokenFile === undefined)
+      delete process.env.TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE;
+    else process.env.TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE = previousTokenFile;
+    if (previousRuntime === undefined)
+      delete process.env.TELEGRAM_USERBOT_RUNTIME;
+    else process.env.TELEGRAM_USERBOT_RUNTIME = previousRuntime;
+  }
 });
 
 test("phone login accepts a deleted private number and renders a masked keypad", async () => {
@@ -336,6 +380,61 @@ test("keypad masks digits and transitions to a secret 2FA prompt", async () => {
   });
 });
 
+test("phone login wipes abandoned code digits at the absolute five-minute deadline", async () => {
+  const { state, ctx, scheduled, setNow } = await phoneMenuFixture();
+
+  await userbot.on("do", ["login"], state, ctx);
+  await userbot.texts.ubphone("+79997654321", {}, state, ctx);
+  for (const digit of ["1", "2", "3", "4", "5"]) {
+    await userbot.on("do", ["digit", digit], state, ctx);
+  }
+  const deadline = state.data.ub?.loginExpiresAt;
+  assert.equal(deadline, 301_000);
+  assert.equal(scheduled.length, 1);
+
+  setNow(deadline);
+  scheduled[0]?.();
+
+  assert.equal(state.data.ub, null);
+  assert.equal(state.awaitText, null);
+});
+
+test("2FA expiry keeps consuming late secrets even after prompt replacement fails", async () => {
+  const { state, ctx, scheduled, calls } = await phoneMenuFixture();
+
+  await userbot.on("do", ["login"], state, ctx);
+  await userbot.texts.ubphone("+79997654321", {}, state, ctx);
+  for (const digit of ["1", "2", "3", "4", "5"]) {
+    await userbot.on("do", ["digit", digit], state, ctx);
+  }
+  await userbot.on("do", ["submit_code"], state, ctx);
+  assert.equal(state.awaitText?.kind, "ubpassword");
+
+  const originalScreen = ctx.flows.screen;
+  let finishReplacement: (() => void) | undefined;
+  ctx.flows.screen = () =>
+    new Promise<void>((resolve) => {
+      finishReplacement = resolve;
+    });
+  scheduled[0]?.();
+
+  assert.equal(state.data.ub, null);
+  assert.equal(state.awaitText?.kind, "ubpassword");
+  finishReplacement?.();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(state.awaitText?.kind, "ubpassword");
+
+  ctx.flows.screen = originalScreen;
+  await userbot.texts.ubpassword("late-secret-canary", {}, state, ctx);
+  assert.equal(state.awaitText?.kind, "ubpassword");
+  assert.equal(
+    calls.some((call) => call.operation === "password"),
+    false,
+  );
+  assert.doesNotMatch(JSON.stringify(ctx), /late-secret-canary/u);
+});
+
 test("2FA and cancel never render the submitted secret", async () => {
   const { state, ctx, calls, rendered } = await phoneMenuFixture();
   const canary = "synthetic-2fa-canary";
@@ -344,6 +443,7 @@ test("2FA and cancel never render the submitted secret", async () => {
     secret: true,
     data: { step: "password" },
   };
+  state.data.ub = {};
 
   await userbot.texts.ubpassword(canary, {}, state, ctx);
   assert.deepEqual(calls.at(-1), { operation: "password", value: canary });

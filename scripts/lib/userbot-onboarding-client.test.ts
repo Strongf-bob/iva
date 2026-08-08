@@ -19,7 +19,7 @@ type CapturedRequest = {
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "iva-userbot-onboarding-client-"));
   await mkdir(join(root, "data"));
-  const tokenPath = join(root, "data", "telegram-userbot.token");
+  const tokenPath = join(root, "data", "telegram-userbot.onboarding-token");
   await writeFile(tokenPath, "first-token\n", { mode: 0o600 });
   const requests: CapturedRequest[] = [];
   const fetchImpl: typeof fetch = (input, init) => {
@@ -43,9 +43,9 @@ async function fixture() {
 }
 
 void test("client derives private routes and reads a fresh bearer for every request", async () => {
-  const { root, tokenPath, requests, fetchImpl } = await fixture();
+  const { tokenPath, requests, fetchImpl } = await fixture();
   const client = createUserbotOnboardingClient({
-    root,
+    tokenFile: tokenPath,
     mcpUrl: "http://telegram-userbot:8724/mcp",
     fetchImpl,
   });
@@ -74,9 +74,9 @@ void test("client derives private routes and reads a fresh bearer for every requ
 });
 
 void test("client exposes all five operations with fixed methods and paths", async () => {
-  const { root, requests, fetchImpl } = await fixture();
+  const { tokenPath, requests, fetchImpl } = await fixture();
   const client = createUserbotOnboardingClient({
-    root,
+    tokenFile: tokenPath,
     port: "9000",
     fetchImpl,
   });
@@ -119,9 +119,9 @@ void test("client rejects protocols and response shapes with secret-free fixed e
     return true;
   });
 
-  const { root } = await fixture();
+  const { tokenPath } = await fixture();
   const malformed = createUserbotOnboardingClient({
-    root,
+    tokenFile: tokenPath,
     fetchImpl: () =>
       Promise.resolve(
         Response.json({ state: "authorized", reason: canary, raw: canary }),
@@ -136,9 +136,9 @@ void test("client rejects protocols and response shapes with secret-free fixed e
 });
 
 void test("client maps auth, missing token, and timeout without leaking causes", async () => {
-  const { root } = await fixture();
+  const { root, tokenPath } = await fixture();
   const denied = createUserbotOnboardingClient({
-    root,
+    tokenFile: tokenPath,
     fetchImpl: () =>
       Promise.resolve(new Response("secret denial body", { status: 401 })),
   });
@@ -150,7 +150,7 @@ void test("client maps auth, missing token, and timeout without leaking causes",
   });
 
   const missing = createUserbotOnboardingClient({
-    root: join(root, "missing"),
+    tokenFile: join(root, "missing", "onboarding-token"),
   });
   await assert.rejects(missing.status(), (error: unknown) => {
     assert.ok(error instanceof UserbotOnboardingError);
@@ -159,7 +159,7 @@ void test("client maps auth, missing token, and timeout without leaking causes",
   });
 
   const timedOut = createUserbotOnboardingClient({
-    root,
+    tokenFile: tokenPath,
     timeoutMs: 5,
     fetchImpl: (_input, init) =>
       new Promise((_resolve, reject) => {

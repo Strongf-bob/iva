@@ -349,7 +349,7 @@ export function createMenu({
       const del = await tg("deleteMessage", {
         chat_id: chatId,
         message_id: msg.message_id,
-      });
+      }).catch(() => ({ ok: false }));
       if (!telegramCallOk(del)) {
         await deps.reply(
           chatId,

@@ -14,6 +14,8 @@ from typing import Callable
 from telethon import errors
 
 _FLOW_TTL_SECONDS = 300.0
+_CODE_REQUEST_COOLDOWN_SECONDS = 30.0
+_OPERATION_TIMEOUT_SECONDS = 15.0
 _MAX_ATTEMPTS = 3
 _PHONE = re.compile(r"^\+[0-9]{8,15}$")
 _CODE = re.compile(r"^[0-9]{5,8}$")
@@ -47,6 +49,7 @@ class PhoneLoginController:
         self._now = now
         self._lock = asyncio.Lock()
         self._flow = _PhoneFlow()
+        self._last_code_request_at: float | None = None
 
     def _set_public(self, state: str, reason: str, *, wipe: bool = False) -> None:
         if wipe:
@@ -91,14 +94,32 @@ class PhoneLoginController:
 
     async def start(self, phone: str) -> dict[str, str]:
         async with self._lock:
-            if await self._client.is_user_authorized():
+            try:
+                authorized = await asyncio.wait_for(
+                    self._client.is_user_authorized(),
+                    timeout=_OPERATION_TIMEOUT_SECONDS,
+                )
+            except Exception:  # noqa: BLE001 - fixed transport result only
+                return self._safe_failure("transport_failed")
+            if authorized:
                 self._set_public("authorized", "ok", wipe=True)
                 return self._public()
             if not _PHONE.fullmatch(phone):
                 self._set_public("error", "phone_invalid", wipe=True)
                 return self._public()
+            now = self._now()
+            if (
+                self._last_code_request_at is not None
+                and now - self._last_code_request_at < _CODE_REQUEST_COOLDOWN_SECONDS
+            ):
+                self._set_public("error", "phone_flood_wait", wipe=True)
+                return self._public()
+            self._last_code_request_at = now
             try:
-                sent = await self._client.send_code_request(phone)
+                sent = await asyncio.wait_for(
+                    self._client.send_code_request(phone),
+                    timeout=_OPERATION_TIMEOUT_SECONDS,
+                )
             except (
                 errors.PhoneNumberInvalidError,
                 errors.PhoneNumberBannedError,
@@ -123,7 +144,7 @@ class PhoneLoginController:
                 reason="code_sent",
                 phone=phone,
                 phone_code_hash=phone_code_hash,
-                expires_at=self._now() + _FLOW_TTL_SECONDS,
+                expires_at=now + _FLOW_TTL_SECONDS,
             )
             return self._public()
 
@@ -140,17 +161,19 @@ class PhoneLoginController:
             if phone is None or phone_code_hash is None:
                 return self._safe_failure("flow_missing")
             try:
-                await self._client.sign_in(
-                    phone,
-                    code,
-                    phone_code_hash=phone_code_hash,
+                await asyncio.wait_for(
+                    self._client.sign_in(
+                        phone,
+                        code,
+                        phone_code_hash=phone_code_hash,
+                    ),
+                    timeout=_OPERATION_TIMEOUT_SECONDS,
                 )
             except errors.SessionPasswordNeededError:
                 self._flow.phone = None
                 self._flow.phone_code_hash = None
                 self._flow.phase = "password_needed"
                 self._flow.reason = "password_needed"
-                self._flow.expires_at = self._now() + _FLOW_TTL_SECONDS
                 self._flow.code_attempts = 0
                 return self._public()
             except (errors.PhoneCodeInvalidError, errors.CodeInvalidError):
@@ -176,7 +199,10 @@ class PhoneLoginController:
             if not 1 <= len(password) <= 256:
                 return self._invalid_password()
             try:
-                await self._client.sign_in(password=password)
+                await asyncio.wait_for(
+                    self._client.sign_in(password=password),
+                    timeout=_OPERATION_TIMEOUT_SECONDS,
+                )
             except (
                 errors.PasswordHashInvalidError,
                 errors.PasswordEmptyError,
@@ -197,7 +223,14 @@ class PhoneLoginController:
 
     async def status(self) -> dict[str, str]:
         async with self._lock:
-            if await self._client.is_user_authorized():
+            try:
+                authorized = await asyncio.wait_for(
+                    self._client.is_user_authorized(),
+                    timeout=_OPERATION_TIMEOUT_SECONDS,
+                )
+            except Exception:  # noqa: BLE001 - fixed transport result only
+                return self._safe_failure("transport_failed")
+            if authorized:
                 self._set_public("authorized", "ok", wipe=True)
             else:
                 self._expire_if_needed()

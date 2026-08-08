@@ -11,7 +11,7 @@ Why this exists (hard-won lesson, do not "simplify" away):
 Design:
 - Session-less boot. If no saved session exists yet, we seed an EMPTY StringSession
   so upstream's `_discover_accounts()` builds an unauthorized-but-connectable client
-  instead of `sys.exit(1)`. The QR-login tools (Phase 1, onboarding.py) authorize
+  instead of `sys.exit(1)`. The private phone-login routes authorize
   that SAME live client in place, then persist the real session — no restart, no
   hot-swap of a different client.
 - Bearer auth + bind 127.0.0.1 (single box; defense-in-depth on top of localhost).
@@ -26,7 +26,10 @@ Env:
   TELEGRAM_SESSION_FILE  path to the SQLite session file
                          (default $ASSISTANT_DATA_DIR/telegram-userbot.session, else ./telegram-userbot.session)
 """
+import hmac
+import json
 import os
+import secrets
 import stat
 import sys
 from pathlib import Path
@@ -38,12 +41,19 @@ from starlette.responses import JSONResponse
 class BearerAuthMiddleware(BaseHTTPMiddleware):
     """Fail closed before health, MCP, or onboarding request dispatch."""
 
-    def __init__(self, app, *, token: str):
+    def __init__(self, app, *, token: str, onboarding_token: str):
         super().__init__(app)
-        self._expected = f"Bearer {token}"
+        self._mcp_expected = f"Bearer {token}"
+        self._onboarding_expected = f"Bearer {onboarding_token}"
 
     async def dispatch(self, request, call_next):
-        if request.headers.get("authorization") != self._expected:
+        expected = (
+            self._onboarding_expected
+            if request.url.path.startswith("/onboarding/phone/")
+            else self._mcp_expected
+        )
+        supplied = request.headers.get("authorization", "")
+        if not hmac.compare_digest(supplied, expected):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         return await call_next(request)
 
@@ -53,9 +63,12 @@ def add_phone_onboarding_routes(app, controller) -> None:
 
     async def field(request, name: str):
         try:
-            if int(request.headers.get("content-length", "0")) > 1024:
-                raise ValueError
-            payload = await request.json()
+            body = bytearray()
+            async for chunk in request.stream():
+                body.extend(chunk)
+                if len(body) > 1024:
+                    raise ValueError
+            payload = json.loads(body)
             value = payload.get(name) if isinstance(payload, dict) else None
             if not isinstance(value, str):
                 raise ValueError
@@ -199,12 +212,65 @@ def _token_file() -> Path:
     return Path(__file__).resolve().parents[2] / "data" / "telegram-userbot.token"
 
 
+def _onboarding_token_file() -> Path:
+    explicit = os.getenv("TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE")
+    if explicit:
+        return Path(explicit)
+    _fail("onboarding token file must be explicitly configured")
+
+
 def _resolve_token() -> str:
     env = os.getenv("TELEGRAM_MCP_TOKEN")
     if env:
         return env.strip()
     f = _token_file()
     return f.read_text().strip() if f.exists() else ""
+
+
+def _resolve_onboarding_token() -> str:
+    """Load/create the menu-only bearer outside the model container in production."""
+    configured = os.getenv("TELEGRAM_USERBOT_ONBOARDING_TOKEN")
+    if configured:
+        token = configured.strip()
+        if len(token) < 32:
+            _fail("onboarding token is invalid")
+        return token
+
+    path = _onboarding_token_file()
+    path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    parent = path.parent.lstat()
+    if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.geteuid():
+        _fail("onboarding token directory must be an owned regular directory")
+    path.parent.chmod(0o700)
+
+    if not path.exists() and not path.is_symlink():
+        token = secrets.token_hex(32)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(path, flags, 0o600)
+        except FileExistsError:
+            pass
+        else:
+            try:
+                os.write(fd, f"{token}\n".encode())
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+
+    try:
+        metadata = path.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.geteuid()
+            or metadata.st_mode & 0o077
+        ):
+            _fail("onboarding token file must be private and owned")
+        token = path.read_text().strip()
+    except OSError:
+        _fail("onboarding token file is unavailable")
+    if len(token) < 32:
+        _fail("onboarding token is invalid")
+    return token
 
 
 def _load_credentials_file() -> None:
@@ -226,7 +292,7 @@ def _seed_session_env() -> Path:
     We use a FILE session (not a string): an unauthorized session can't be
     serialized to a non-empty StringSession, but a missing SQLite file is a valid
     empty unauthorized session, and Telethon persists the auth to it automatically
-    on QR login — no manual save. Single owner ⇒ no "database is locked".
+    on phone login — no manual save. Single owner ⇒ no "database is locked".
     """
     path = _session_file()
     path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -261,6 +327,13 @@ def main() -> None:
     token = _resolve_token()
     if not token:
         _fail("no proxy token — run `iva userbot setup` (writes data/telegram-userbot.token)")
+    onboarding_enabled = bool(
+        os.getenv("TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE")
+        or os.getenv("TELEGRAM_USERBOT_ONBOARDING_TOKEN")
+    )
+    onboarding_token = (
+        _resolve_onboarding_token() if onboarding_enabled else secrets.token_hex(32)
+    )
     _load_credentials_file()
     if not os.getenv("TELEGRAM_API_ID") or not os.getenv("TELEGRAM_API_HASH"):
         _fail("TELEGRAM_API_ID and TELEGRAM_API_HASH are required (create an app at my.telegram.org)")
@@ -334,11 +407,16 @@ def main() -> None:
 
         app = mcp.streamable_http_app()
         app.add_route("/healthz", health, methods=["GET"])
-        add_phone_onboarding_routes(app, onboarding)
+        if onboarding_enabled:
+            add_phone_onboarding_routes(app, onboarding)
         # add_middleware stacks outermost-last: BearerAuth runs first (reject before
         # we bother reconnecting), then EnsureConnected.
         app.add_middleware(EnsureConnectedMiddleware)
-        app.add_middleware(BearerAuthMiddleware, token=token)
+        app.add_middleware(
+            BearerAuthMiddleware,
+            token=token,
+            onboarding_token=onboarding_token,
+        )
 
         print(f"telegram-userbot: listening on http://{host}:{port}/mcp", file=sys.stderr)
         config = uvicorn.Config(app, host=host, port=port, log_level="warning", lifespan="on")

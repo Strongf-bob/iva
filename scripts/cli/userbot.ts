@@ -149,7 +149,7 @@ export function createUserbotCommands(
     );
     const check = cap(
       VENV_PY,
-      ["-c", "import telethon, telegram_mcp, qrcode, mcp"],
+      ["-c", "import telethon, telegram_mcp, mcp"],
       options,
     );
     if (check.code !== 0)
@@ -225,7 +225,7 @@ export function createUserbotCommands(
       systemd.activate([SVC_USERBOT]);
       systemd.restart([SVC_USERBOT]);
       ok(
-        "Userbot-прокси включён. Подключи аккаунт по QR через бота: напиши боту «подключи мой телеграм».",
+        "Userbot-прокси включён. В host-native режиме используется только уже авторизованная Telegram-сессия; безопасный вход по телефону доступен в container production.",
       );
       ok("Статус: iva userbot status · выключить: iva userbot off");
       return;

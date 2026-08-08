@@ -75,11 +75,16 @@ const { createMenu } = (await import(indexModulePath)) as {
 // параллельный агент). createMenu({screens}) даёт эту инъекцию.
 
 // Мок Bot API: копит вызовы, sendMessage выдаёт растущий message_id (как tg-flow.test).
-function makeTg({ deleteOk = true }: { deleteOk?: boolean } = {}) {
+function makeTg({
+  deleteOk = true,
+  deleteThrows = false,
+}: { deleteOk?: boolean; deleteThrows?: boolean } = {}) {
   const calls: Call[] = [];
   let auto = 100;
   const tg = (method: string, params: Params) => {
     calls.push({ method, params });
+    if (method === "deleteMessage" && deleteThrows)
+      return Promise.reject(new Error("synthetic delete transport failure"));
     if (method === "sendMessage")
       return Promise.resolve({ ok: true, result: { message_id: auto++ } });
     if (method === "deleteMessage" && !deleteOk)
@@ -131,8 +136,13 @@ function fakeScreens() {
 function setup({
   allowed = new Set(["20"]),
   deleteOk = true,
-}: { allowed?: Set<string>; deleteOk?: boolean } = {}) {
-  const { tg, calls } = makeTg({ deleteOk });
+  deleteThrows = false,
+}: {
+  allowed?: Set<string>;
+  deleteOk?: boolean;
+  deleteThrows?: boolean;
+} = {}) {
+  const { tg, calls } = makeTg({ deleteOk, deleteThrows });
   const flows = createFlows({ tg }) as unknown as FlowStore;
   const { screens, log } = fakeScreens();
   const modelCalls: Array<{
@@ -414,6 +424,31 @@ test("onText secret: при ошибке удаления не передаёт 
     JSON.stringify(replies),
     /SECRET-CANARY-DO-NOT-DISPATCH/u,
   );
+});
+
+test("onText secret: при исключении удаления предупреждает и не диспатчит секрет", async () => {
+  const { menu, log, replies } = setup({ deleteThrows: true });
+  const st = await menu.open(10, "20");
+  st.screen = "srch";
+  st.awaitText = { kind: "demo", secret: true, data: {} };
+
+  await menu.onText(
+    {
+      chat: { id: 10 },
+      from: { id: 20 },
+      message_id: 902,
+      text: "THROWN-DELETE-SECRET-CANARY",
+    },
+    st,
+  );
+
+  assert.equal(log.texts.length, 0);
+  assert.ok(st.awaitText);
+  assert.match(
+    replies.at(-1)?.text ?? "",
+    /delete it manually|удали его вручную/u,
+  );
+  assert.doesNotMatch(JSON.stringify(replies), /THROWN-DELETE-SECRET-CANARY/u);
 });
 
 test("onText не-secret: сообщение НЕ удаляется, обработчик зван", async () => {

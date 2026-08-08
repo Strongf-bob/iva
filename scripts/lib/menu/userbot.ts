@@ -30,11 +30,17 @@ type OnboardingClient = {
   cancel: () => Promise<OnboardingResult>;
   status: () => Promise<OnboardingResult>;
 };
+type UserbotFlowData = {
+  apiId?: string;
+  codeDigits?: string;
+  loginExpiresAt?: number;
+  loginExpiryScheduledFor?: number;
+};
 type MenuState = {
   chatId: number | string;
   userId: string;
   screen: string;
-  data: { ub?: { apiId?: string; codeDigits?: string } | null };
+  data: { ub?: UserbotFlowData | null };
   awaitText?: { kind: string; secret: boolean; data: { step?: string } } | null;
 };
 type View = { text: string; rows: Array<Array<unknown>> };
@@ -49,6 +55,8 @@ type MenuContext = {
       mcpUrl?: string;
     }) => Promise<Health>;
     userbotOnboarding?: OnboardingClient;
+    now?: () => number;
+    schedule?: (callback: () => void, delayMs: number) => unknown;
     runUserbotSetup?: () => Promise<void>;
     log?: (...parts: unknown[]) => void;
   };
@@ -77,16 +85,20 @@ const errorMessage = (error: unknown) => (error as ErrorLike).message;
 const SID = "ub";
 const PARENT = "r";
 const SVC = "iva-telegram-userbot.service";
+const LOGIN_TTL_MS = 5 * 60 * 1000;
 
 const isPrivate = (st: MenuState) => Number(st.chatId) > 0;
 const isContainerRuntime = () =>
   process.env.TELEGRAM_USERBOT_RUNTIME === "container";
-
-function onboardingFor(st: MenuState, ctx: MenuContext): OnboardingClient {
-  return (
+const phoneLoginAvailable = (ctx: MenuContext) =>
+  Boolean(
     ctx.deps.userbotOnboarding ||
-    createUserbotOnboardingClient({ root: ctx.deps.root })
+    (isContainerRuntime() &&
+      process.env.TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE),
   );
+
+function onboardingFor(ctx: MenuContext): OnboardingClient {
+  return ctx.deps.userbotOnboarding || createUserbotOnboardingClient();
 }
 
 function run(cmd: string, args: string[], timeout = 1500) {
@@ -271,10 +283,15 @@ async function buildScreen(st: MenuState, ctx: MenuContext): Promise<View> {
 
   const accountHint =
     status.state === "unauthorized"
-      ? T(
-          "Proxy is on, but the Telegram account is not connected. Log in by phone; the code is entered with private keypad buttons.",
-          "Прокси включён, но аккаунт Telegram не подключён. Войди по номеру; код вводится приватными кнопками.",
-        )
+      ? phoneLoginAvailable(ctx)
+        ? T(
+            "Proxy is on, but the Telegram account is not connected. Log in by phone; the code is entered with private keypad buttons.",
+            "Прокси включён, но аккаунт Telegram не подключён. Войди по номеру; код вводится приватными кнопками.",
+          )
+        : T(
+            "Phone login is disabled in host-native mode because it cannot isolate onboarding authority from model shell tools. Use container production.",
+            "Вход по номеру отключён в host-native режиме: там нельзя изолировать права онбординга от shell-инструментов модели. Используй container production.",
+          )
       : T(
           "Proxy and Telegram account are ready.",
           "Прокси и аккаунт Telegram готовы.",
@@ -283,7 +300,7 @@ async function buildScreen(st: MenuState, ctx: MenuContext): Promise<View> {
   return {
     text,
     rows: [
-      ...(status.state === "unauthorized"
+      ...(status.state === "unauthorized" && phoneLoginAvailable(ctx)
         ? [
             [
               ctx.btn(
@@ -316,7 +333,11 @@ function promptPhone(st: MenuState, ctx: MenuContext) {
 }
 
 function promptPassword(st: MenuState, ctx: MenuContext) {
-  st.data.ub = {};
+  const flow = st.data.ub;
+  st.data.ub = {
+    loginExpiresAt: flow?.loginExpiresAt,
+    loginExpiryScheduledFor: flow?.loginExpiryScheduledFor,
+  };
   st.awaitText = {
     kind: "ubpassword",
     secret: true,
@@ -333,8 +354,14 @@ function promptPassword(st: MenuState, ctx: MenuContext) {
 }
 
 function codeKeypad(st: MenuState, ctx: MenuContext, note = "") {
+  const now = ctx.deps.now?.() ?? Date.now();
+  if (st.data.ub?.loginExpiresAt && now >= st.data.ub.loginExpiresAt) {
+    st.data.ub = null;
+    st.awaitText = null;
+    return renderExpired(st, ctx);
+  }
   const digits = st.data.ub?.codeDigits ?? "";
-  st.data.ub = { codeDigits: digits };
+  st.data.ub = { ...st.data.ub, codeDigits: digits };
   st.awaitText = null;
   const button = (digit: string) =>
     ctx.btn(digit, `iva_menu:${SID}:do:digit:${digit}`);
@@ -391,12 +418,47 @@ function reasonText(result: OnboardingResult, ctx: MenuContext): string {
   );
 }
 
+function renderExpired(st: MenuState, ctx: MenuContext) {
+  return ctx.flows.screen(
+    st,
+    reasonText({ state: "expired", reason: "code_expired" }, ctx),
+    [
+      [ctx.btn(ctx.tr("Try again", "Повторить"), `iva_menu:${SID}:do:login`)],
+      ctx.backRow(PARENT),
+    ],
+  );
+}
+
 async function renderOnboardingResult(
   result: OnboardingResult,
   st: MenuState,
   ctx: MenuContext,
 ) {
   if (result.state === "code_sent") {
+    const now = ctx.deps.now?.() ?? Date.now();
+    const deadline = st.data.ub?.loginExpiresAt ?? now + LOGIN_TTL_MS;
+    const needsTimer = st.data.ub?.loginExpiryScheduledFor !== deadline;
+    st.data.ub = {
+      ...st.data.ub,
+      loginExpiresAt: deadline,
+      loginExpiryScheduledFor: deadline,
+    };
+    if (needsTimer) {
+      const schedule = ctx.deps.schedule ?? setTimeout;
+      schedule(
+        () => {
+          if (st.data.ub?.loginExpiresAt === deadline) {
+            st.data.ub = null;
+            // Never clear an active secret capture from a background timer. Telegram
+            // can report both edit and fallback-send failure without throwing, leaving
+            // the old 2FA prompt visible. A late password must therefore stay in this
+            // deterministic delete-first handler until the user retries or navigates.
+            void renderExpired(st, ctx).catch(() => {});
+          }
+        },
+        Math.max(0, deadline - now),
+      );
+    }
     return codeKeypad(
       st,
       ctx,
@@ -473,6 +535,7 @@ export default {
     }
 
     if (step === "login") {
+      if (!phoneLoginAvailable(ctx)) return ctx.show(st, SID);
       if (!isPrivate(st)) {
         st.awaitText = null;
         return ctx.flows.screen(
@@ -492,13 +555,17 @@ export default {
       const current = st.data.ub?.codeDigits;
       if (typeof current !== "string" || !/^[0-9]$/u.test(digit || ""))
         return ctx.show(st, SID);
-      if (current.length < 8) st.data.ub = { codeDigits: current + digit };
+      if (current.length < 8)
+        st.data.ub = { ...st.data.ub, codeDigits: current + digit };
       return codeKeypad(st, ctx);
     }
 
     if (step === "erase") {
       if (typeof st.data.ub?.codeDigits === "string")
-        st.data.ub = { codeDigits: st.data.ub.codeDigits.slice(0, -1) };
+        st.data.ub = {
+          ...st.data.ub,
+          codeDigits: st.data.ub.codeDigits.slice(0, -1),
+        };
       return codeKeypad(st, ctx);
     }
 
@@ -511,10 +578,13 @@ export default {
           ctx.tr("Enter 5-8 digits.", "Введи 5-8 цифр."),
         );
       }
-      st.data.ub = {};
+      st.data.ub = {
+        loginExpiresAt: st.data.ub?.loginExpiresAt,
+        loginExpiryScheduledFor: st.data.ub?.loginExpiryScheduledFor,
+      };
       try {
         return await renderOnboardingResult(
-          await onboardingFor(st, ctx).code(code),
+          await onboardingFor(ctx).code(code),
           st,
           ctx,
         );
@@ -529,7 +599,7 @@ export default {
 
     if (step === "cancel_login") {
       try {
-        await onboardingFor(st, ctx).cancel();
+        await onboardingFor(ctx).cancel();
       } catch {
         // Local state still clears; the server flow expires after five minutes.
       }
@@ -622,7 +692,7 @@ export default {
       st.awaitText = null;
       try {
         return await renderOnboardingResult(
-          await onboardingFor(st, ctx).start(phone),
+          await onboardingFor(ctx).start(phone),
           st,
           ctx,
         );
@@ -641,12 +711,20 @@ export default {
       st: MenuState,
       ctx: MenuContext,
     ) {
+      if (st.data.ub === null) {
+        st.awaitText = {
+          kind: "ubpassword",
+          secret: true,
+          data: { step: "expired" },
+        };
+        return renderExpired(st, ctx);
+      }
       const password = String(text);
       if (!password || password.length > 256) return promptPassword(st, ctx);
       st.awaitText = null;
       try {
         return await renderOnboardingResult(
-          await onboardingFor(st, ctx).password(password),
+          await onboardingFor(ctx).password(password),
           st,
           ctx,
         );

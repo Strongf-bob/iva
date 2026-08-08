@@ -80,8 +80,12 @@ bearer-authenticated internal routes alongside `/mcp` and `/healthz`:
 - `POST /onboarding/phone/cancel`;
 - `GET /onboarding/phone/status`.
 
-The routes use the same bearer middleware and internal-only network exposure as MCP.
-They are not registered as MCP tools and therefore are not available to the model.
+The routes use the same middleware and internal-only network exposure as MCP, but a
+separate onboarding bearer. In container production its named volume is mounted only
+into the deterministic poller and sidecar, not the model/agent container. The routes
+are not registered as MCP tools. Phone onboarding is disabled in host-native mode,
+which cannot provide the same process-level credential isolation; an existing
+authorized session remains usable there.
 
 The sidecar holds one in-memory onboarding record containing phase, normalized phone,
 `phone_code_hash`, expiry, and attempt counters. It uses:
@@ -140,7 +144,7 @@ returned or logged.
   2FA attempts are allowed per flow.
 - A new code request is rate-limited locally; Telegram `FloodWaitError` is mapped to a
   fixed retry-later state without sleeping inside the poll loop.
-- All sidecar requests have bounded timeouts and fail closed.
+- Client and server Telethon operations have bounded timeouts and fail closed.
 - The existing `telegram-userbot.enabled` marker remains the operational kill switch;
   turning the feature off stops access to the session and onboarding endpoints.
 - Code rollback reuses the existing private session volume; no data migration is
@@ -150,14 +154,14 @@ returned or logged.
 
 The applicable AI-SAFE/SHAD requirements for this change are:
 
-| Surface | Design control | Required verification |
-|---|---|---|
-| `YAISAFE.INPUT.1`, SHAD-IO-01/04 | Onboarding is a deterministic menu flow and bypasses the model | Ordinary chat input cannot invoke a secret handler without active owner-bound menu state |
-| `YAISAFE.EXEC.1/4`, SHAD-TOOL-01/06 | Routes are not MCP tools; Telegram owner allowlist plus sidecar bearer auth | Foreign user/callback and missing/wrong bearer are denied |
-| `YAISAFE.DATA.2`, SHAD-ID-03/04 | Delete-before-process, keypad code entry, fixed errors, no raw-value logs | Canary phone/code/password absent from Eve input, daily transcript, stdout/stderr, errors, and rendered UI |
-| `YAISAFE.INPUT.2`, `YAISAFE.INFRA.2`, SHAD-EXEC-03 | Single flow, TTL, attempt caps, cooldown, request timeouts | Repeated starts/codes reach a bounded fixed denial without spawning work |
-| `YAISAFE.INFRA.1`, SHAD-EXEC-04/05 | Locked dependencies, immutable image, CI and verified deploy | Existing dependency-lock and release-contract checks remain green |
-| SHAD-OPS-02/03/04 | Enable marker kill switch, fail-closed client, existing rollback | Disabled/missing-token/unreachable sidecar cannot accept login material |
+| Surface                                            | Design control                                                                          | Required verification                                                                                      |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `YAISAFE.INPUT.1`, SHAD-IO-01/04                   | Onboarding is a deterministic menu flow and bypasses the model                          | Ordinary chat input cannot invoke a secret handler without active owner-bound menu state                   |
+| `YAISAFE.EXEC.1/4`, SHAD-TOOL-01/06                | Routes are not MCP tools; Telegram owner allowlist plus a poller-only onboarding bearer | Foreign user/callback, MCP bearer, and missing/wrong onboarding bearer are denied                          |
+| `YAISAFE.DATA.2`, SHAD-ID-03/04                    | Delete-before-process, keypad code entry, fixed errors, no raw-value logs               | Canary phone/code/password absent from Eve input, daily transcript, stdout/stderr, errors, and rendered UI |
+| `YAISAFE.INPUT.2`, `YAISAFE.INFRA.2`, SHAD-EXEC-03 | Single flow, TTL, attempt caps, cooldown, request timeouts                              | Repeated starts/codes reach a bounded fixed denial without spawning work                                   |
+| `YAISAFE.INFRA.1`, SHAD-EXEC-04/05                 | Locked dependencies, immutable image, CI and verified deploy                            | Existing dependency-lock and release-contract checks remain green                                          |
+| SHAD-OPS-02/03/04                                  | Enable marker kill switch, fail-closed client, existing rollback                        | Disabled/missing-token/unreachable sidecar cannot accept login material                                    |
 
 No active red-team or fuzzing against production is part of this feature. Native unit
 and integration tests are the minimal sufficient evaluation method because the risks

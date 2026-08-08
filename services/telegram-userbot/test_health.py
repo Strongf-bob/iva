@@ -10,6 +10,8 @@ from starlette.applications import Starlette
 from serve import (
     BearerAuthMiddleware,
     _health_payload,
+    _onboarding_token_file,
+    _resolve_onboarding_token,
     _seed_session_env,
     add_phone_onboarding_routes,
 )
@@ -93,15 +95,64 @@ class HealthPayloadTest(unittest.TestCase):
             else:
                 os.environ["TELEGRAM_SESSION_FILE"] = previous
 
+    def test_onboarding_token_is_private_stable_and_separate(self):
+        previous_file = os.environ.get("TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE")
+        previous_token = os.environ.pop("TELEGRAM_USERBOT_ONBOARDING_TOKEN", None)
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                root.chmod(0o700)
+                path = root / "onboarding-token"
+                os.environ["TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE"] = str(path)
+
+                first = _resolve_onboarding_token()
+                second = _resolve_onboarding_token()
+
+                self.assertEqual(first, second)
+                self.assertEqual(len(first), 64)
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        finally:
+            if previous_file is None:
+                os.environ.pop("TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE", None)
+            else:
+                os.environ["TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE"] = previous_file
+            if previous_token is not None:
+                os.environ["TELEGRAM_USERBOT_ONBOARDING_TOKEN"] = previous_token
+
+    def test_onboarding_token_has_no_project_data_fallback(self):
+        previous = os.environ.pop("TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE", None)
+        try:
+            with self.assertRaises(SystemExit):
+                _onboarding_token_file()
+        finally:
+            if previous is not None:
+                os.environ["TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE"] = previous
+
+    def test_configured_onboarding_token_rejects_short_values(self):
+        previous = os.environ.get("TELEGRAM_USERBOT_ONBOARDING_TOKEN")
+        os.environ["TELEGRAM_USERBOT_ONBOARDING_TOKEN"] = "too-short"
+        try:
+            with self.assertRaises(SystemExit):
+                _resolve_onboarding_token()
+        finally:
+            if previous is None:
+                os.environ.pop("TELEGRAM_USERBOT_ONBOARDING_TOKEN", None)
+            else:
+                os.environ["TELEGRAM_USERBOT_ONBOARDING_TOKEN"] = previous
+
 
 class PhoneOnboardingRouteTest(unittest.TestCase):
     def setUp(self):
         self.controller = FakeOnboardingController()
         app = Starlette()
         add_phone_onboarding_routes(app, self.controller)
-        app.add_middleware(BearerAuthMiddleware, token="synthetic-bearer")
+        app.add_middleware(
+            BearerAuthMiddleware,
+            token="synthetic-mcp-bearer",
+            onboarding_token="synthetic-onboarding-bearer",
+        )
         self.app = app
-        self.headers = {"authorization": "Bearer synthetic-bearer"}
+        self.headers = {"authorization": "Bearer synthetic-onboarding-bearer"}
 
     def request(self, method, path, **kwargs):
         async def send():
@@ -121,6 +172,15 @@ class PhoneOnboardingRouteTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json(), {"error": "unauthorized"})
+        self.assertEqual(self.controller.calls, [])
+
+        shared_mcp_bearer = self.request(
+            "POST",
+            "/onboarding/phone/start",
+            headers={"authorization": "Bearer synthetic-mcp-bearer"},
+            json={"phone": "+79991234567"},
+        )
+        self.assertEqual(shared_mcp_bearer.status_code, 401)
         self.assertEqual(self.controller.calls, [])
 
     def test_routes_dispatch_only_the_expected_string_field(self):
@@ -165,6 +225,23 @@ class PhoneOnboardingRouteTest(unittest.TestCase):
         self.assertEqual(malformed.json(), {"state": "error", "reason": "invalid_request"})
         self.assertEqual(wrong_type.status_code, 400)
         self.assertEqual(wrong_type.json(), {"state": "error", "reason": "invalid_request"})
+        self.assertEqual(self.controller.calls, [])
+
+    def test_chunked_oversized_body_fails_closed(self):
+        async def chunks():
+            yield b'{"phone":"+'
+            yield b"1" * 1100
+            yield b'"}'
+
+        response = self.request(
+            "POST",
+            "/onboarding/phone/start",
+            headers={**self.headers, "content-type": "application/json"},
+            content=chunks(),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json(), {"state": "error", "reason": "invalid_request"})
         self.assertEqual(self.controller.calls, [])
 
 

@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 
 export type UserbotOnboardingState =
   "idle" | "code_sent" | "password_needed" | "authorized" | "expired" | "error";
@@ -26,10 +25,10 @@ export interface UserbotOnboardingResult {
 }
 
 type FetchImpl = typeof fetch;
-type ReadToken = (root: string) => Promise<string>;
+type ReadToken = (tokenFile: string) => Promise<string>;
 
 interface ClientOptions {
-  readonly root?: string;
+  readonly tokenFile?: string;
   readonly mcpUrl?: string;
   readonly port?: string | number;
   readonly timeoutMs?: number;
@@ -72,11 +71,10 @@ export class UserbotOnboardingError extends Error {
   }
 }
 
-async function defaultReadToken(root: string): Promise<string> {
+async function defaultReadToken(tokenFile: string): Promise<string> {
+  if (!tokenFile) return "";
   try {
-    return (
-      await readFile(join(root, "data", "telegram-userbot.token"), "utf8")
-    ).trim();
+    return (await readFile(tokenFile, "utf8")).trim();
   } catch {
     return "";
   }
@@ -121,7 +119,7 @@ function parseResult(value: unknown): UserbotOnboardingResult {
 }
 
 export function createUserbotOnboardingClient({
-  root = process.cwd(),
+  tokenFile = process.env.TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE ?? "",
   mcpUrl = process.env.TELEGRAM_MCP_URL,
   port = process.env.TELEGRAM_MCP_PORT ?? "8724",
   timeoutMs = 3000,
@@ -134,7 +132,7 @@ export function createUserbotOnboardingClient({
   ): Promise<UserbotOnboardingResult> {
     const url = baseUrl(mcpUrl, port);
     url.pathname = `/onboarding/phone/${path}`;
-    const token = String(await readToken(root)).trim();
+    const token = String(await readToken(tokenFile)).trim();
     if (!token) throw new UserbotOnboardingError("proxy_token_missing");
 
     const controller = new AbortController();

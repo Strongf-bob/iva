@@ -61,7 +61,7 @@ The bridge long-polls Telegram, so no public HTTPS, domain or webhook is needed.
 - **Web search** — four pluggable providers: Tavily, Exa, Parallel or Brave.
 - **Google Workspace** — Gmail, Calendar, Drive, Sheets, Docs and Tasks from chat via the `gws` CLI; installed for you, with a guided key setup right in the conversation.
 - **Skills & MCP** — drop one file to add a procedure or connect an MCP server; keys stay in `.env`.
-- **Personal Telegram — userbot (beta)** — read and search your _own_ account, not just the bot; connect by chat (QR, no terminal). This fork's production deployment enforces a server-side read-only tool allowlist. Rough and buggy — opt-in, **at your own risk**. [Details](docs/userbot.md).
+- **Personal Telegram — userbot (beta)** — read and search your _own_ account, not just the bot; connect by phone and Telegram code in a private menu, no terminal. This fork's production deployment enforces a server-side read-only tool allowlist. Rough and buggy — opt-in, **at your own risk**. [Details](docs/userbot.md).
 - **Safe to forward** — forwarded text, captions and voice transcripts pass an injection screen before the model reads them. A flagged message or transcript reaches the model tagged as data rather than as an instruction; for media captions the screen runs but the tag does not travel with it yet.
 - **Token accounting** — every model step is logged; `/usage` reports it for free.
 
@@ -77,7 +77,7 @@ The bridge long-polls Telegram, so no public HTTPS, domain or webhook is needed.
 | 🌿 Branches | summaries folded upward: day → week → month → year                                                  | `summaries/daily/`, `weekly/`, `monthly/`, `yearly/` |
 | 🪵 Trunk    | `CORE.md` (≤1200 chars, in every prompt) + typed cards: contacts, projects, decisions, ideas, notes | `CORE.md`, `cards/`                                  |
 
-- Every message lands verbatim in a daily markdown log — nothing is paraphrased on arrival.
+- Every ordinary message lands verbatim in a daily markdown log. Secret menu inputs such as userbot credentials, phone, and 2FA are deleted before processing and excluded.
 - A nightly rollup at 04:00 distills day → week → month → year into schema-validated cards; facts that change get rewritten, not piled up.
 - One core file, `CORE.md` (≤1,200 chars), rides in every prompt — Iva knows you before it searches anything.
 
@@ -85,13 +85,13 @@ Full architecture and search internals: [docs/memory.md](docs/memory.md).
 
 ## A secretary inside Telegram
 
-<img src="assets/iva-userbot.webp" alt="Your secretary inside Telegram: the userbot reads group chats from your own account, collects summaries and replies as you, guarded by a server-enforced anti-ban guardrail" width="100%">
+<img src="assets/iva-userbot.webp" alt="Your secretary inside Telegram: the userbot reads group chats from your own account and collects summaries through a server-enforced read-only registry" width="100%">
 
 The bot is half of Telegram. The other half is your personal account: connect the userbot (beta, opt-in) and Iva works from it like a secretary — reads the group chats you never keep up with, folds them into summaries, and catches the messages that actually need you.
 
 - **All of Telegram** — groups, channels, unreads, search and the full history of your personal account.
-- **Onboarding in chat** — tell the bot to connect your Telegram, scan a QR. No terminal.
-- **Production read-only boundary** — the MCP server registers only an explicit allowlist of read/search tools plus QR onboarding. Sending, editing, deleting, joining, inviting, reacting, and exporting invite links are absent regardless of what the model asks for.
+- **Private onboarding in chat** — open `/menu`, enter your phone in a delete-before-processing step, and submit the Telegram code with a masked keypad. No terminal and no login secret is sent to the model.
+- **Production read-only boundary** — the MCP server registers only an explicit allowlist of read/search tools plus a read-only login status probe. Sending, editing, deleting, joining, inviting, reacting, and exporting invite links are absent regardless of what the model asks for.
 - **Isolated session** — production runs the proxy as an internal-only sidecar with a private session volume, no published port, a read-only root filesystem, and an explicit on/off marker.
 
 > [!WARNING]
@@ -150,7 +150,7 @@ Four model providers. Pick one and fill its block in `.env`:
 | OpenRouter       | API key, pay-as-you-go, 300+ models    |
 | OpenAI (ChatGPT) | your Plus/Pro subscription, no API key |
 
-Default model is deepseek-v4-pro, 131k context. On Go it runs about $9/mo all-in ($5 model + $4–5 VPS), no markup; voice rides Deepgram's free starter credit. Model lists, limits and the search matrix: [docs/providers.md](docs/providers.md).
+Default model is deepseek-v4-flash, 131k context. On Go it runs about $9/mo all-in ($5 model + $4–5 VPS), no markup; voice rides Deepgram's free starter credit. Model lists, limits and the search matrix: [docs/providers.md](docs/providers.md).
 
 ## Documentation
 

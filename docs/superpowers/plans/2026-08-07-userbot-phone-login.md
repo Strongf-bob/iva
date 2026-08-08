@@ -4,7 +4,7 @@
 
 **Goal:** Replace QR onboarding with a private-chat phone, keypad-code, and optional 2FA flow that never sends login material to the model or vault transcript.
 
-**Architecture:** The deterministic Telegram menu calls a narrow internal HTTP onboarding API protected by the existing sidecar bearer token. The sidecar remains the sole Telethon session owner and keeps phone-login state only in memory; only the read-only `login_status` tool remains model-visible.
+**Architecture:** The deterministic Telegram menu calls a narrow internal HTTP onboarding API protected by a separate poller-only bearer in container production. The sidecar remains the sole Telethon session owner and keeps phone-login state only in memory; only the read-only `login_status` tool remains model-visible.
 
 **Tech Stack:** TypeScript/Node 24 menu engine and native `fetch`; Python 3.12, Telethon 1.44, Starlette/FastMCP sidecar; Node test runner and `unittest`.
 
@@ -24,7 +24,7 @@
 ## File map
 
 - `services/telegram-userbot/onboarding.py`: focused Telethon phone-login state machine and the sole `login_status` MCP tool.
-- `services/telegram-userbot/serve.py`: bearer-protected internal onboarding routes using the existing client.
+- `services/telegram-userbot/serve.py`: separately authenticated internal onboarding routes using the existing client.
 - `services/telegram-userbot/test_onboarding.py`: state-machine, secret-safety, expiry, attempt-limit, and error-mapping tests.
 - `services/telegram-userbot/test_health.py`: route/auth integration assertions where the ASGI boundary is exercised.
 - `scripts/lib/userbot-onboarding-client.ts`: internal HTTP client, URL derivation, token loading, timeout, and fixed response validation.
@@ -40,10 +40,12 @@
 ### Task 1: Phone-login state machine
 
 **Files:**
+
 - Modify: `services/telegram-userbot/onboarding.py`
 - Modify: `services/telegram-userbot/test_onboarding.py`
 
 **Interfaces:**
+
 - Consumes: Telethon client methods `send_code_request(phone)` and `sign_in(phone, code, phone_code_hash=sent.phone_code_hash)` / `sign_in(password=password)`.
 - Produces: `PhoneLoginController.start(phone)`, `.submit_code(code)`, `.submit_password(password)`, `.cancel()`, `.status()`, each returning `{"state": str, "reason": str}`; `register_onboarding_tools(mcp, client)` registers only `login_status`.
 
@@ -95,16 +97,18 @@ git commit -m "feat(userbot): add phone login state machine" -m "Replace QR toke
 ### Task 2: Bearer-protected onboarding HTTP boundary
 
 **Files:**
+
 - Modify: `services/telegram-userbot/serve.py`
 - Modify: `services/telegram-userbot/test_health.py`
 
 **Interfaces:**
+
 - Consumes: `PhoneLoginController` from Task 1.
 - Produces: `create_onboarding_routes(app, controller)` registering the five exact `/onboarding/phone/*` routes.
 
 - [ ] **Step 1: Write failing ASGI route tests**
 
-Exercise the Starlette app with a synthetic controller. Assert wrong/missing bearer returns 401 before the controller runs, malformed JSON returns fixed 400, and valid requests return only `state` and `reason`.
+Exercise the Starlette app with a synthetic controller. Assert the MCP bearer and wrong/missing onboarding bearer return 401 before the controller runs, malformed JSON returns fixed 400, and valid requests return only `state` and `reason`.
 
 ```python
 response = client.post("/onboarding/phone/start", json={"phone": "+79991234567"})
@@ -120,7 +124,7 @@ Expected: failure because onboarding routes are absent.
 
 - [ ] **Step 3: Register the controller and routes**
 
-Instantiate one controller beside the one live Telethon client. Add handlers for start/code/password/cancel/status to the FastMCP Starlette app before middleware registration. Parse only a JSON object and pass one bounded string field to the controller. Keep the existing bearer and reconnect middleware outermost.
+Instantiate one controller beside the one live Telethon client. Add handlers for start/code/password/cancel/status to the FastMCP Starlette app before middleware registration. Parse only a JSON object and pass one bounded string field to the controller. Select a separate onboarding bearer in the outer auth middleware and keep reconnect inside it.
 
 - [ ] **Step 4: Run route, controller, and compile checks**
 
@@ -144,10 +148,12 @@ git commit -m "feat(userbot): expose private phone onboarding API" -m "Add beare
 ### Task 3: Secret-safe Node onboarding client
 
 **Files:**
+
 - Create: `scripts/lib/userbot-onboarding-client.ts`
 - Create: `scripts/lib/userbot-onboarding-client.test.ts`
 
 **Interfaces:**
+
 - Consumes: root path, `TELEGRAM_MCP_URL`/port, and `data/telegram-userbot.token`.
 - Produces: `createUserbotOnboardingClient(options?)` with `start(phone)`, `code(code)`, `password(password)`, `cancel()`, and `status()` returning `UserbotOnboardingResult`.
 
@@ -161,7 +167,10 @@ assert.deepEqual(await client.start("+79991234567"), {
   reason: "code_sent",
 });
 assert.equal(request.headers.authorization, "Bearer synthetic-token");
-assert.equal(request.url, "http://telegram-userbot:8724/onboarding/phone/start");
+assert.equal(
+  request.url,
+  "http://telegram-userbot:8724/onboarding/phone/start",
+);
 ```
 
 - [ ] **Step 2: Run the client test and confirm RED**
@@ -196,12 +205,14 @@ git commit -m "feat(userbot): add internal onboarding client" -m "Call the priva
 ### Task 4: Deterministic phone, keypad-code, and 2FA menu
 
 **Files:**
+
 - Modify: `scripts/lib/menu/userbot.ts`
 - Modify: `scripts/lib/menu/userbot.test.ts`
 - Modify: `scripts/lib/menu/index.ts`
 - Modify: `scripts/lib/menu/menu-index.test.ts`
 
 **Interfaces:**
+
 - Consumes: the Task 3 onboarding client through injectable menu dependencies.
 - Produces: menu actions `login`, `digit:<n>`, `erase`, `submit_code`, `cancel_login`; secret text handlers `ubphone` and `ubpassword`.
 
@@ -255,6 +266,7 @@ git commit -m "feat(userbot): add private phone login menu" -m "Drive phone logi
 ### Task 5: Remove QR exposure and update contracts and documentation
 
 **Files:**
+
 - Modify: `services/telegram-userbot/test_readonly_registry.py`
 - Modify: `services/telegram-userbot/requirements.in`
 - Modify: `services/telegram-userbot/requirements.lock`
@@ -266,22 +278,23 @@ git commit -m "feat(userbot): add private phone login menu" -m "Drive phone logi
 - Create: `docs/security/2026-08-07-userbot-phone-login-audit.md`
 
 **Interfaces:**
+
 - Consumes: final behavior from Tasks 1-4.
 - Produces: exact registry/config/dependency/release documentation contracts.
 
-- [ ] **Step 1: Change the registry test to require only `login_status` onboarding exposure**
+- [x] **Step 1: Change the registry test to require only `login_status` onboarding exposure**
 
 Assert `qr_login_start`, `qr_login_status`, and `qr_login_password` are absent and `login_status` remains read-only.
 
-- [ ] **Step 2: Remove QR-only runtime inputs and dependencies**
+- [x] **Step 2: Remove QR-only runtime inputs and dependencies**
 
 Remove `TELEGRAM_USERBOT_BOT_API_PROXY`, sidecar `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_ALLOWED_USER_IDS` from the sidecar environment; remove `pypng`, explicit QR-delivery `httpx` rationale, and regenerate the hash lock with the CI-pinned `uv pip compile` command from `.github/workflows/ci.yml`.
 
-- [ ] **Step 3: Update user-facing docs and focused security evidence**
+- [x] **Step 3: Update user-facing docs and focused security evidence**
 
 Document `/menu` phone login, keypad code entry, optional 2FA, deletion behavior, QR removal, and the residual Telegram transport risk. In the focused audit, assign status to every applicable design-checkpoint SHAD family and all 18 AI-SAFE threats, with non-applicable rationale and fresh test/file evidence.
 
-- [ ] **Step 4: Run the full relevant verification suite**
+- [x] **Step 4: Run the full relevant verification suite**
 
 Run:
 
@@ -301,7 +314,7 @@ git diff --check
 
 Expected: all Linux/CI checks pass. If the two known macOS `repair-shell.test.ts` cases still fail solely because BSD `chmod` rejects `--`, record them as the unchanged environment-specific baseline and rely on green Linux CI for that file.
 
-- [ ] **Step 5: Commit the contracts and docs**
+- [x] **Step 5: Commit the contracts and docs**
 
 ```bash
 git add services/telegram-userbot deploy/container README.md docs/userbot.md docs/security.md docs/security/2026-08-07-userbot-phone-login-audit.md
@@ -311,21 +324,23 @@ git commit -m "docs(userbot): replace QR onboarding contracts" -m "Remove QR-onl
 ### Task 6: Review, publish, deploy, and verify the live login
 
 **Files:**
+
 - Review all committed feature files; modify only verified findings.
 
 **Interfaces:**
+
 - Consumes: verified feature branch.
 - Produces: reviewed PR, exact-SHA deployment, and live `ready` evidence.
 
-- [ ] **Step 1: Run `verification-before-completion` with fresh commands**
+- [x] **Step 1: Run `verification-before-completion` with fresh commands**
 
 Repeat the focused Python/Node tests, typecheck, lint, formatting, build, secret scan, and `git diff --check`; record exact results and current SHA.
 
-- [ ] **Step 2: Run `requesting-code-review` and resolve only evidence-backed findings**
+- [x] **Step 2: Run `requesting-code-review` and resolve only evidence-backed findings**
 
 Review state-machine correctness, secret lifetime, delete-first behavior, route authentication, read-only registry, compose isolation, and documentation accuracy. Re-run affected tests after any correction.
 
-- [ ] **Step 3: Audit the root README before default-branch publication**
+- [x] **Step 3: Audit the root README before default-branch publication**
 
 Use `beautify-github-readme` in audit mode. Update README only if phone-vs-QR behavior is still inaccurate, then run its README audit script.
 

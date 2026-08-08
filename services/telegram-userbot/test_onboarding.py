@@ -3,6 +3,7 @@ import contextlib
 import io
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 import onboarding
 from telethon import errors
@@ -97,6 +98,27 @@ class PhoneLoginControllerTest(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_2fa_keeps_the_original_absolute_flow_deadline(self):
+        async def scenario():
+            clock = [100.0]
+            client = FakeClient([errors.SessionPasswordNeededError(request=None)])
+            controller = onboarding.PhoneLoginController(client, now=lambda: clock[0])
+
+            await controller.start(PHONE)
+            clock[0] = 399.0
+            self.assertEqual(
+                await controller.submit_code(CODE),
+                {"state": "password_needed", "reason": "password_needed"},
+            )
+            clock[0] = 400.0
+            self.assertEqual(
+                await controller.submit_password(PASSWORD),
+                {"state": "error", "reason": "flow_missing"},
+            )
+            self.assertEqual(len(client.sign_in_calls), 1)
+
+        asyncio.run(scenario())
+
     def test_invalid_code_is_bounded_to_three_attempts(self):
         async def scenario():
             invalid = [errors.PhoneCodeInvalidError(request=None) for _ in range(3)]
@@ -167,10 +189,63 @@ class PhoneLoginControllerTest(unittest.TestCase):
             )
             self.assertNotIn(PHONE, repr(controller))
 
+            clock[0] = 531.0
             await controller.start(PHONE)
+            clock[0] = 562.0
             await controller.start("+447700900123")
             self.assertEqual(first.send_code_calls[-1], "+447700900123")
             self.assertNotIn(PHONE, repr(controller))
+
+        asyncio.run(scenario())
+
+    def test_repeated_code_requests_are_locally_rate_limited(self):
+        async def scenario():
+            clock = [100.0]
+            client = FakeClient()
+            controller = onboarding.PhoneLoginController(client, now=lambda: clock[0])
+
+            self.assertEqual(
+                await controller.start(PHONE),
+                {"state": "code_sent", "reason": "code_sent"},
+            )
+            clock[0] = 101.0
+            self.assertEqual(
+                await controller.start("+447700900123"),
+                {"state": "error", "reason": "phone_flood_wait"},
+            )
+            self.assertEqual(client.send_code_calls, [PHONE])
+
+            clock[0] = 131.0
+            self.assertEqual(
+                await controller.start("+447700900123"),
+                {"state": "code_sent", "reason": "code_sent"},
+            )
+            self.assertEqual(client.send_code_calls, [PHONE, "+447700900123"])
+
+        asyncio.run(scenario())
+
+    def test_hung_telethon_operation_times_out_and_releases_the_lock(self):
+        class HangingClient(FakeClient):
+            async def send_code_request(self, phone):
+                self.send_code_calls.append(phone)
+                await asyncio.Event().wait()
+
+        async def scenario():
+            clock = [100.0]
+            client = HangingClient()
+            controller = onboarding.PhoneLoginController(client, now=lambda: clock[0])
+
+            with mock.patch.object(onboarding, "_OPERATION_TIMEOUT_SECONDS", 0.01):
+                self.assertEqual(
+                    await asyncio.wait_for(controller.start(PHONE), timeout=0.2),
+                    {"state": "error", "reason": "transport_failed"},
+                )
+                clock[0] = 131.0
+                client.send_code_request = FakeClient.send_code_request.__get__(client)
+                self.assertEqual(
+                    await asyncio.wait_for(controller.start(PHONE), timeout=0.2),
+                    {"state": "code_sent", "reason": "code_sent"},
+                )
 
         asyncio.run(scenario())
 

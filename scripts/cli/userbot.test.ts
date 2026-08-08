@@ -210,7 +210,7 @@ void test("ensureUserbotVenv creates, syncs, and import-checks in legacy order",
     "cap:sh:-c command -v uv:undefined",
     `run:uv:venv --python 3.12 .venv:${USERBOT_DIR}`,
     `run:uv:pip sync --python ${VENV_PY} --require-hashes --strict ${REQUIREMENTS}:${USERBOT_DIR}`,
-    `cap:${VENV_PY}:-c import telethon, telegram_mcp, qrcode, mcp:${USERBOT_DIR}`,
+    `cap:${VENV_PY}:-c import telethon, telegram_mcp, mcp:${USERBOT_DIR}`,
   ]);
   assert.deepEqual(files.events, [
     `exists:${VENV_PY}`,
