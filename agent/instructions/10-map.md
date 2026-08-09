@@ -53,6 +53,8 @@
   (`morning-digest`, `web-research`, `agent-browser`, `google-workspace`, `security-defense`,
   `telegram-userbot`, `telegram-person-profile`, `telegram-group-profile`,
   `telegram-channel-profile`, `rich-post`, `documents`).
+  Relationship workflows load `relationship-meeting-dossier` for cited preparation and
+  `relationship-reply-draft` for Telegram suggestions or Gmail Drafts.
 
 ### Запись в ядро (CORE) — пользователь управляет тобой через разговор
 
