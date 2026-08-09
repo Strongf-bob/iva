@@ -1,4 +1,4 @@
-import { ProactiveStore } from "./store.ts";
+import type { ProactiveStore } from "./store.ts";
 
 const PREFIX = "iva_commitment:";
 const CALLBACK_PATTERN = /^iva_commitment:([cd]):([A-Za-z0-9_-]{43})$/u;
@@ -29,7 +29,7 @@ export async function handleProactiveCommitmentCallback({
   callback,
   tenant,
   answer,
-  openStore = (dataDir) => ProactiveStore.open(dataDir),
+  openStore,
   now = Date.now,
 }: ProactiveCallbackInput): Promise<boolean> {
   if (!callback.data.startsWith(PREFIX)) return false;
@@ -51,7 +51,9 @@ export async function handleProactiveCommitmentCallback({
   }
   let store: ProactiveStore | null = null;
   try {
-    store = openStore(tenant.dataDir);
+    store = openStore
+      ? openStore(tenant.dataDir)
+      : (await import("./store.ts")).ProactiveStore.open(tenant.dataDir);
     const decision = match[1] === "c" ? "confirmed" : "dismissed";
     const result = store.decideCommitment({
       token: match[2],
