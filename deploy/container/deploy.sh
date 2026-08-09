@@ -18,6 +18,7 @@ COMPOSE_FILE="${IVA_RELEASE_COMPOSE_FILE:-$ACTIVE_COMPOSE_FILE}"
 ENV_FILE="$RUNTIME_ROOT/.env"
 CURRENT_IMAGE_FILE="$DEPLOY_DIR/current-image"
 PREVIOUS_IMAGE_FILE="$DEPLOY_DIR/previous-image"
+LEGACY_OWNER_ROUTE_FILE="$RUNTIME_ROOT/data/control/legacy-owner-route.json"
 REGISTRY_IMAGE="ghcr.io/strongf-bob/iva"
 HEALTH_ATTEMPTS="${IVA_DEPLOY_HEALTH_ATTEMPTS:-36}"
 HEALTH_DELAY="${IVA_DEPLOY_HEALTH_DELAY:-5}"
@@ -85,6 +86,11 @@ compose() {
 image_supports_userbot() {
   docker run --rm --entrypoint /bin/sh "$1" -c \
     'test -x /opt/iva-userbot-venv/bin/python && test -f /app/services/telegram-userbot/container_supervisor.py'
+}
+
+image_supports_routing_health() {
+  docker run --rm --entrypoint /bin/sh "$1" -c \
+    'test -f /app/scripts/production/routing-health.ts'
 }
 
 telegram_token() {
@@ -196,14 +202,44 @@ if [ -f "$CURRENT_IMAGE_FILE" ]; then
 fi
 
 image_supports_userbot "$candidate_image" || fail "candidate image lacks the userbot runtime"
+image_supports_routing_health "$candidate_image" || fail "candidate image lacks owner routing health support"
+
+owner_route_backup="$DEPLOY_DIR/legacy-owner-route.rollback.$$"
+owner_route_existed=0
+if [ -f "$LEGACY_OWNER_ROUTE_FILE" ]; then
+  cp -p "$LEGACY_OWNER_ROUTE_FILE" "$owner_route_backup" ||
+    fail "owner routing state backup failed"
+  owner_route_existed=1
+fi
+cleanup_owner_route_backup() {
+  rm -f "$owner_route_backup"
+}
+trap cleanup_owner_route_backup EXIT
+
+restore_owner_route() {
+  if [ "$owner_route_existed" = "1" ]; then
+    temporary_route="$LEGACY_OWNER_ROUTE_FILE.rollback.$$"
+    cp -p "$owner_route_backup" "$temporary_route" || return 1
+    mv "$temporary_route" "$LEGACY_OWNER_ROUTE_FILE" || return 1
+  else
+    rm -f "$LEGACY_OWNER_ROUTE_FILE" || return 1
+  fi
+}
 
 if ! start_image "$candidate_image" 0; then
   printf 'deploy: candidate failed health checks; rolling back\n' >&2
+  compose "$candidate_image" 0 stop telegram-poll >/dev/null 2>&1 || true
+  restore_owner_route || fail "owner routing state restoration failed; polling remains stopped"
   if [ -n "$previous_image" ] && [ "$previous_image" != "$candidate_image" ]; then
     docker pull "$previous_image" >/dev/null 2>&1 || true
     rollback_allow_inert=0
     if ! image_supports_userbot "$previous_image"; then
       rollback_allow_inert=1
+    fi
+    if ! image_supports_routing_health "$previous_image"; then
+      compose "$previous_image" "$rollback_allow_inert" up -d --remove-orphans \
+        iva telegram-userbot >/dev/null 2>&1 || true
+      fail "previous image lacks owner routing support; polling remains stopped"
     fi
     if start_image "$previous_image" "$rollback_allow_inert"; then
       printf 'deploy: previous image restored\n' >&2

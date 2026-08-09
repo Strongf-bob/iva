@@ -24,4 +24,12 @@ void test("startup routing diagnostics never interpolate owner identity", () => 
     /owner routing: created legacy route|owner routing: ready/u,
   );
   assert.doesNotMatch(mainSource, /owner routing:.*\$\{/u);
+  assert.match(
+    mainSource,
+    /console\.error\("telegram-poll fatal: startup or polling failed"\)/u,
+  );
+  assert.doesNotMatch(
+    mainSource,
+    /console\.error\("telegram-poll fatal:", error\)/u,
+  );
 });

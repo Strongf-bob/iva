@@ -472,8 +472,8 @@ export function runEntrypoint(
   executedPath: string | undefined = process.argv[1],
 ): void {
   if (fileURLToPath(moduleUrl) !== executedPath) return;
-  void main().catch((error: unknown) => {
-    console.error("telegram-poll fatal:", error);
+  void main().catch(() => {
+    console.error("telegram-poll fatal: startup or polling failed");
     process.exit(1);
   });
 }
