@@ -40,7 +40,7 @@ void test("private runtime state is excluded from Git and the image context", ()
 
 void test("the production image uses Node 24 and a non-root runtime user", () => {
   const containerfile = read("Containerfile");
-  assert.match(containerfile, /^FROM node:24-bookworm-slim AS runtime$/mu);
+  assert.match(containerfile, /^FROM node:24-trixie-slim AS runtime$/mu);
   assert.match(
     containerfile,
     /^LABEL org\.opencontainers\.image\.source="https:\/\/github\.com\/Strongf-bob\/iva"$/mu,
