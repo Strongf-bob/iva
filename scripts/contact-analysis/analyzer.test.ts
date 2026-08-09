@@ -102,9 +102,47 @@ test("evidence must come from the current page and match provenance", () => {
       ),
     /subject telegram:user:999 was not allowed/u,
   );
+
+  const withQuestion = {
+    ...batchWithMessage(9),
+    questions: [
+      {
+        schemaVersion: 1 as const,
+        subjectId: "telegram:user:44",
+        question: "What is this person's role?",
+        reason: "The message does not state it explicitly.",
+        contextChatId: -1001,
+        evidence: [
+          {
+            chatId: -1001,
+            messageId: 9,
+            timestamp: messages[0]!.timestamp,
+          },
+        ],
+      },
+    ],
+  };
+  assert.deepEqual(
+    validateEvidence(withQuestion, messages, subjects),
+    withQuestion,
+  );
+  assert.throws(
+    () =>
+      validateEvidence(
+        {
+          ...withQuestion,
+          questions: [
+            { ...withQuestion.questions[0]!, subjectId: "telegram:user:999" },
+          ],
+        },
+        messages,
+        subjects,
+      ),
+    /question subject telegram:user:999 was not allowed/u,
+  );
 });
 
-test("analyzePage invokes one skill per chronological chunk", async () => {
+test("analyzePage invokes the selected skill exactly once for the chat window", async () => {
   const messages = [message(1), message(2)];
   const calls: Array<{ skillText: string; ids: number[]; summary: string }> =
     [];
@@ -142,55 +180,39 @@ test("analyzePage invokes one skill per chronological chunk", async () => {
   );
 
   assert.deepEqual(calls, [
-    { skillText: "PERSON SKILL", ids: [1], summary: "before" },
-    { skillText: "PERSON SKILL", ids: [2], summary: "through 1" },
+    { skillText: "PERSON SKILL", ids: [1, 2], summary: "before" },
   ]);
   assert.equal(result.rollingSummary, "through 2");
 });
 
-test("a multi-chunk page keeps more than one model-call worth of observations", async () => {
-  const messages = [message(1), message(2)];
-  const result = await analyzePage(
-    {
-      ownerUserId: 7,
-      dialog: {
-        id: 44,
-        kind: "private",
-        title: "Alex",
-        username: "alex",
+test("malformed structured output does not trigger a second model call", async () => {
+  let calls = 0;
+  await assert.rejects(
+    analyzePage(
+      {
+        ownerUserId: 7,
+        dialog: {
+          id: 44,
+          kind: "private",
+          title: "Alex",
+          username: "alex",
+        },
+        rollingSummary: "",
+        messages: [message(1)],
+        allowedSubjects: new Set(["telegram:user:44"]),
       },
-      rollingSummary: "",
-      messages,
-      allowedSubjects: new Set(["telegram:user:44"]),
-      maxChars: JSON.stringify(messages[0]).length,
-    },
-    {
-      readSkillText: async () => "PERSON SKILL",
-      analyzeStructuredImpl: async (input) => ({
-        schemaVersion: 1,
-        chatId: 44,
-        rollingSummary: `through ${input.messages[0].id}`,
-        observations: Array.from({ length: 20 }, (_, index) => ({
-          schemaVersion: 1,
-          subjectId: "telegram:user:44",
-          kind: "fact" as const,
-          predicate: "preference" as const,
-          value: `preference ${input.messages[0].id}-${index}`,
-          confidence: "EXTRACTED" as const,
-          contextChatId: 44,
-          evidence: [
-            {
-              chatId: 44,
-              messageId: input.messages[0].id,
-              timestamp: input.messages[0].timestamp,
-            },
-          ],
-        })),
-      }),
-    },
+      {
+        readSkillText: async () => "PERSON SKILL",
+        analyzeStructuredImpl: async () => {
+          calls++;
+          const error = new Error("invalid structured output");
+          error.name = "AI_NoObjectGeneratedError";
+          throw error;
+        },
+      },
+    ),
   );
-
-  assert.equal(result.observations.length, 40);
+  assert.equal(calls, 1);
 });
 
 for (const skill of [

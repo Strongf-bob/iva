@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   AnalysisBatchSchema,
+  ClarificationQuestionSchema,
   ObservationPredicateSchema,
   ObservationSchema,
   TelegramDialogSchema,
@@ -141,6 +142,31 @@ test("external owner claims identify the speaker", () => {
   );
 });
 
+test("clarification questions are bounded and evidence-bound", () => {
+  const question = {
+    schemaVersion: 1,
+    subjectId: "telegram:user:44",
+    question: "What role does this person have in the Iva project?",
+    reason: "The messages mention work but do not state a role.",
+    contextChatId: -1001,
+    evidence,
+  };
+
+  assert.equal(ClarificationQuestionSchema.safeParse(question).success, true);
+  assert.equal(
+    ClarificationQuestionSchema.safeParse({ ...question, evidence: [] })
+      .success,
+    false,
+  );
+  assert.equal(
+    ClarificationQuestionSchema.safeParse({
+      ...question,
+      question: "x".repeat(501),
+    }).success,
+    false,
+  );
+});
+
 test("analysis batches cap observations and rolling summaries", () => {
   const observation = {
     schemaVersion: 1,
@@ -159,6 +185,7 @@ test("analysis batches cap observations and rolling summaries", () => {
       chatId: -1001,
       rollingSummary: "Prior context",
       observations: [observation],
+      questions: [],
     }).success,
     true,
   );
@@ -168,6 +195,7 @@ test("analysis batches cap observations and rolling summaries", () => {
       chatId: -1001,
       rollingSummary: "x".repeat(4001),
       observations: [],
+      questions: [],
     }).success,
     false,
   );
@@ -177,6 +205,24 @@ test("analysis batches cap observations and rolling summaries", () => {
       chatId: -1001,
       rollingSummary: "",
       observations: Array.from({ length: 33 }, () => observation),
+      questions: [],
+    }).success,
+    false,
+  );
+  assert.equal(
+    AnalysisBatchSchema.safeParse({
+      schemaVersion: 1,
+      chatId: -1001,
+      rollingSummary: "",
+      observations: [],
+      questions: Array.from({ length: 17 }, () => ({
+        schemaVersion: 1,
+        subjectId: "telegram:user:44",
+        question: "What is this person's role?",
+        reason: "The available messages are ambiguous.",
+        contextChatId: -1001,
+        evidence,
+      })),
     }).success,
     false,
   );
