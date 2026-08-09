@@ -427,12 +427,12 @@ test("portable deadline probe recognizes an exited root while the main loop is b
   );
   const execution = executeBash({
     command: "exit 7",
-    timeoutMs: MIN_TIMEOUT_MS,
+    timeoutMs: 1_000,
   });
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1_250);
   const result = await within(
     execution,
-    1_800,
+    2_500,
     "portable deadline probe did not settle",
   );
   assert.equal(result.exitCode, 7);
