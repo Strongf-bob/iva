@@ -102,10 +102,13 @@ test("root exposes the top-level screen contract", () => {
   assert.equal(root.on("ignored", [], {}, makeCtx("en")), undefined);
 });
 
-test("ordinary user root exposes only personal Google setup", () => {
+test("ordinary user root exposes personal Google setup and reminders", () => {
   const view = root.render({ role: "user" }, makeCtx("en"));
   assert.deepEqual(compact(view.rows), [
-    [["🔗 Google", "iva_menu:gws:o"]],
+    [
+      ["🔗 Google", "iva_menu:gws:o"],
+      ["⏰ Timers", "iva_menu:cron:o"],
+    ],
     [["✖ Close", "iva_menu:r:x"]],
   ]);
 });
@@ -121,7 +124,7 @@ test("personalized owner menu never opens legacy-path personal settings", () => 
   assert.equal(callbacks.includes("iva_menu:lang:o"), false);
   assert.equal(callbacks.includes("iva_menu:chr:o"), false);
   assert.equal(callbacks.includes("iva_menu:core:o"), false);
-  assert.equal(callbacks.includes("iva_menu:cron:o"), false);
+  assert.equal(callbacks.includes("iva_menu:cron:o"), true);
   assert.equal(callbacks.includes("iva_menu:gws:o"), true);
   assert.equal(callbacks.includes("iva_menu:ub:o"), true);
 });

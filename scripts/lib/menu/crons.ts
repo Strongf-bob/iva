@@ -11,6 +11,8 @@ import { readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { readSettings } from "#lib/settings.ts";
+import { listReminders } from "../reminder-store.ts";
+import { isContainerRuntime } from "../container-maintenance.ts";
 
 const PER_PAGE = 8;
 const CACHE_TTL_MS = 60_000;
@@ -18,9 +20,9 @@ type Button = { text: string; callback_data: string };
 type Timer = { unit: string; next: string };
 type Translate = (english: string, russian: string) => string;
 type RollupEntry = { lastSuccessAt?: unknown };
-type MenuState = { page: number };
+type MenuState = { page: number; personalRoot?: string };
 type MenuContext = {
-  deps: { dataDir: string };
+  deps: { dataDir: string; runtime?: "container" | "host" };
   tr: Translate;
   btn: (text: string, callbackData: string) => Button;
   backRow: (screen: string) => Button[];
@@ -68,12 +70,12 @@ function formatLastSuccess(entry: RollupEntry | undefined, T: Translate) {
     .replace(/\.\d{3}Z$/, "Z");
 }
 
-function digestEnabled() {
+function digestEnabled(dataDir: string) {
   // readSettings() resolves data/settings.json from ASSISTANT_DATA_DIR/cwd itself (see
   // agent/lib/settings.ts) — same file agent/schedules/digest.ts reads at fire time,
   // so this always reflects the toggle digest.ts itself would see on its next tick.
   try {
-    const settings = readSettings() as {
+    const settings = readSettings(dataDir) as {
       digestSchedule?: { enabled?: boolean };
     };
     return settings.digestSchedule?.enabled === true;
@@ -84,7 +86,7 @@ function digestEnabled() {
 
 function schedulesBlock(dataDir: string, T: Translate) {
   const status = loadRollupStatus(dataDir);
-  const digestOn = digestEnabled();
+  const digestOn = digestEnabled(dataDir);
   const lines = EVE_SCHEDULES.map((s) => {
     // digest fires off by default (agent/schedules/digest.ts) — "never" would be
     // indistinguishable from "enabled but hasn't run yet"; say so explicitly instead.
@@ -162,6 +164,38 @@ export default {
   parent: "r",
   async render(st: MenuState, ctx: MenuContext) {
     const T = ctx.tr;
+    if (isContainerRuntime(ctx.deps.runtime ?? process.env.IVA_RUNTIME)) {
+      const personalData = st.personalRoot
+        ? join(st.personalRoot, "runtime", "data")
+        : null;
+      let reminderDataAvailable = personalData !== null;
+      const reminders = personalData
+        ? await listReminders(personalData).catch(() => {
+            reminderDataAvailable = false;
+            return [];
+          })
+        : [];
+      const lines = reminders.slice(0, PER_PAGE).map((job) => {
+        const next =
+          job.nextRunAt === null
+            ? T("not scheduled", "не запланировано")
+            : new Date(job.nextRunAt).toISOString().replace(/\.000Z$/u, "Z");
+        return `• ${job.message} → ${next}`;
+      });
+      const body = !reminderDataAvailable
+        ? T(
+            "Reminder data unavailable. Run Maintenance diagnostics.",
+            "Данные напоминаний недоступны. Запусти диагностику в Обслуживании.",
+          )
+        : lines.length
+          ? lines.join("\n")
+          : T("No active reminders.", "Активных напоминаний нет.");
+      const dataDir = personalData ?? ctx.deps.dataDir;
+      return {
+        text: `${T("⏰ Personal reminders", "⏰ Личные напоминания")}\n\n${body}\n\n${T(`Tasks in queue: ${openTaskCount(dataDir)}`, `Задач в очереди: ${openTaskCount(dataDir)}`)}\n\n${schedulesBlock(dataDir, T)}`,
+        rows: [ctx.backRow("r")],
+      };
+    }
     const timers = await loadTimers();
     const taskCount = openTaskCount(ctx.deps.dataDir);
     const taskLine = T(

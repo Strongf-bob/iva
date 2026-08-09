@@ -1,6 +1,6 @@
 # Deploy
 
-Iva runs on one VPS as a Telegram gateway, one Eve worker per active isolated user, two systemd watchdog timers, and six in-process Eve schedules per worker. A legacy single-user installation keeps `iva.service` until the owner migration is run. `install.sh` sets the base installation up ([install](./install.md)); this page is what's actually running and how to operate it.
+Iva runs on one VPS either as the production Compose stack or as a host-native systemd installation. Both modes use a Telegram gateway and isolated per-user state. A legacy single-user host installation keeps `iva.service` until the owner migration is run. `install.sh` sets the base installation up ([install](./install.md)); this page is what's actually running and how to operate it.
 
 ## Transport: long polling
 
@@ -28,6 +28,52 @@ curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
 ```
 
 Note: `getUpdates` — which the setup wizard uses to discover your user ID — stops working while a webhook is registered.
+
+## Production containers
+
+`deploy/container/compose.production.yml` runs four bounded services from the same
+production image: `iva`, `telegram-poll`, `reminder-scheduler`, and the read-only
+`telegram-userbot` sidecar. The scheduler is the durable runtime for user-created
+one-off and recurring reminders; it shares `./data` with the gateway and sends only
+through the bot to each registry user's private chat. See its stable data, tool, CLI,
+retry, and recovery contracts in [scheduler.md](scheduler.md).
+
+Set `IVA_IMAGE` and `IVA_ENV_FILE`, then render and start the stack:
+
+```bash
+IVA_IMAGE=ghcr.io/owner/iva:version \
+  docker compose -f deploy/container/compose.production.yml config
+IVA_IMAGE=ghcr.io/owner/iva:version \
+  docker compose -f deploy/container/compose.production.yml up -d
+docker compose -f deploy/container/compose.production.yml ps
+```
+
+The image pins Google Workspace CLI instead of resolving a floating release. Verify the
+installed binary and scheduler heartbeat inside the deployed image:
+
+```bash
+docker compose -f deploy/container/compose.production.yml exec iva gws --version
+docker compose -f deploy/container/compose.production.yml exec reminder-scheduler npm run scheduler:health
+```
+
+In container mode `/menu` stores Google OAuth files beneath the selected user's private
+`HOME`, so users never share `~/.config/gws`. Maintenance runs doctor, vault cleanup,
+and memory work as attached per-user processes. It does not call systemd or control the
+Docker daemon. The Update screen therefore shows host-side lifecycle guidance:
+
+```bash
+docker compose -f deploy/container/compose.production.yml pull
+docker compose -f deploy/container/compose.production.yml up -d
+docker compose -f deploy/container/compose.production.yml ps
+```
+
+Keep exactly one `reminder-scheduler` replica for a data mount. Container health is the
+authoritative scheduler status; `data/control/reminder-scheduler-status.json` is the
+persisted diagnostic evidence shown by `/menu`. The forced release script requires the
+candidate image to contain the scheduler and checks a healthy zero-restart scheduler
+container before activation. If it must roll back to an older pre-scheduler image, it
+removes the unsupported scheduler service and verifies the legacy three-service runtime
+instead of claiming that the new foundation is active.
 
 ## systemd units
 

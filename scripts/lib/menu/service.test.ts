@@ -112,6 +112,49 @@ const newState = (over: Partial<TestState> = {}): TestState => ({
   ...over,
 });
 
+test("container Maintenance uses per-user attached processes and truthful update guidance", async () => {
+  resetForTests();
+  let updateChecks = 0;
+  const h = makeCtx({
+    lang: "en",
+    deps: {
+      runtime: "container",
+      root: "/app",
+      dataDir: "/app/data",
+      envPath: "/app/.env",
+      handleUpdateCheck: () => {
+        updateChecks += 1;
+      },
+    },
+  });
+  const st = newState({
+    userId: "101",
+    personalRoot: "/app/data/users/101",
+  });
+  h.st = st;
+
+  for (const cmd of ["doc", "cln", "mem"] as const) {
+    const spec = await commandSpec(cmd, h.ctx, st);
+    assert.equal(spec.kind, "proc");
+    assert.equal(spec.env?.HOME, "/app/data/users/101");
+  }
+  const cleanup = await commandSpec("cln", h.ctx, st);
+  assert.equal(cleanup.kind, "proc");
+  if (cleanup.kind !== "proc")
+    throw new Error("expected container process spec");
+  assert.equal(cleanup.cwd, "/app/data/users/101/vault");
+
+  await service.on("c", ["doc"], st, h.ctx);
+  assert.ok(st._last);
+  assert.doesNotMatch(st._last.text, /units|timers/u);
+  assert.match(st._last.text, /scheduler health/u);
+
+  await service.on("up", [], st, h.ctx);
+  assert.equal(updateChecks, 0);
+  assert.ok(st._last);
+  assert.match(st._last.text, /docker compose pull/u);
+});
+
 const waitFor = async (fn: () => boolean, ms = 3000): Promise<void> => {
   const until = Date.now() + ms;
   while (Date.now() < until) {

@@ -27,7 +27,10 @@ export default {
     const rows =
       state.role === "user"
         ? [
-            [b(T("🔗 Google", "🔗 Google"), "iva_menu:gws:o")],
+            [
+              b(T("🔗 Google", "🔗 Google"), "iva_menu:gws:o"),
+              b(T("⏰ Timers", "⏰ Кроны"), "iva_menu:cron:o"),
+            ],
             [b(T("✖ Close", "✖ Закрыть"), "iva_menu:r:x")],
           ]
         : state.personalRoot
@@ -42,8 +45,9 @@ export default {
               ],
               [
                 b(T("🔗 Google", "🔗 Google"), "iva_menu:gws:o"),
-                b(T("🧩 Skills", "🧩 Скиллы"), "iva_menu:sk:o"),
+                b(T("⏰ Timers", "⏰ Кроны"), "iva_menu:cron:o"),
               ],
+              [b(T("🧩 Skills", "🧩 Скиллы"), "iva_menu:sk:o")],
               [
                 b(T("📊 Status", "📊 Статус"), "iva_menu:st:o"),
                 b(T("🛠 Maintenance", "🛠 Обслуживание"), "iva_menu:svc:o"),
