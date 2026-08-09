@@ -118,6 +118,45 @@ test("structured analysis aborts a model call at its bounded deadline", async ()
   );
 });
 
+test("structured analysis enforces the deadline when the provider ignores abort", async () => {
+  await assert.rejects(
+    analyzeStructured(
+      {
+        skillText: "PRIVATE CHAT SKILL",
+        ownerUserId: 7,
+        dialog: {
+          id: 44,
+          kind: "private",
+          title: "Alex",
+          username: null,
+        },
+        rollingSummary: "",
+        messages: [],
+      },
+      {
+        model,
+        timeoutMs: 5,
+        streamObjectImpl: (() => ({
+          object: new Promise((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  schemaVersion: 1,
+                  chatId: 44,
+                  rollingSummary: "late result",
+                  observations: [],
+                }),
+              40,
+            ),
+          ),
+        })) as never,
+      },
+    ),
+    (error: unknown) =>
+      error instanceof DOMException && error.name === "TimeoutError",
+  );
+});
+
 test("structured analysis validates provider output again", async () => {
   await assert.rejects(
     analyzeStructured(

@@ -71,15 +71,56 @@ export async function analyzeStructured(
     messages,
   });
 
-  const result = run({
-    model,
-    schema: AnalysisBatchSchema,
-    system: input.skillText,
-    prompt,
-    abortSignal: AbortSignal.timeout(timeoutMs),
-    maxOutputTokens: MAX_OUTPUT_TOKENS,
-    maxRetries: 0,
-  });
-
-  return AnalysisBatchSchema.parse(await result.object);
+  const controller = new AbortController();
+  const deadline = setTimeout(
+    () =>
+      controller.abort(
+        new DOMException(
+          "Contact analysis model call exceeded its deadline",
+          "TimeoutError",
+        ),
+      ),
+    timeoutMs,
+  );
+  try {
+    const result = run({
+      model,
+      schema: AnalysisBatchSchema,
+      system: input.skillText,
+      prompt,
+      abortSignal: controller.signal,
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      maxRetries: 0,
+    });
+    const object = await new Promise<unknown>((resolve, reject) => {
+      const onAbort = () =>
+        reject(
+          controller.signal.reason instanceof Error
+            ? controller.signal.reason
+            : new Error("Contact analysis model call aborted"),
+        );
+      if (controller.signal.aborted) {
+        onAbort();
+        return;
+      }
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+      Promise.resolve(result.object).then(
+        (value) => {
+          controller.signal.removeEventListener("abort", onAbort);
+          resolve(value);
+        },
+        (error: unknown) => {
+          controller.signal.removeEventListener("abort", onAbort);
+          reject(
+            error instanceof Error
+              ? error
+              : new Error("Contact analysis model call failed"),
+          );
+        },
+      );
+    });
+    return AnalysisBatchSchema.parse(object);
+  } finally {
+    clearTimeout(deadline);
+  }
 }
