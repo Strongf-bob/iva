@@ -4,7 +4,7 @@ export interface MessageCharacterBudgetInput {
   envelopeChars: number;
 }
 
-const OUTPUT_RESERVE_TOKENS = 16_384;
+export const CONTACT_ANALYSIS_MAX_OUTPUT_TOKENS = 32_768;
 const SAFETY_RESERVE_TOKENS = 4_096;
 const CONSERVATIVE_CHARS_PER_TOKEN = 3;
 const BUDGET_ROUNDING_CHARS = 10_000;
@@ -26,7 +26,9 @@ export function messageCharacterBudget({
   safeNonnegativeInteger(skillChars, "skillChars");
   safeNonnegativeInteger(envelopeChars, "envelopeChars");
   const available =
-    (contextTokens - OUTPUT_RESERVE_TOKENS - SAFETY_RESERVE_TOKENS) *
+    (contextTokens -
+      CONTACT_ANALYSIS_MAX_OUTPUT_TOKENS -
+      SAFETY_RESERVE_TOKENS) *
       CONSERVATIVE_CHARS_PER_TOKEN -
     skillChars -
     envelopeChars;

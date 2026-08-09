@@ -2,6 +2,7 @@ import { generateObject, type LanguageModel } from "ai";
 import { z } from "zod";
 
 import { createTextModel } from "../../agent/provider.ts";
+import { CONTACT_ANALYSIS_MAX_OUTPUT_TOKENS } from "./context-budget.ts";
 import {
   AnalysisBatchSchema,
   TelegramDialogSchema,
@@ -45,7 +46,6 @@ export interface AnalyzeStructuredDependencies {
 
 const runGenerateObject: GenerateObjectImpl = (input) => generateObject(input);
 const DEFAULT_MODEL_TIMEOUT_MS = 5 * 60_000;
-const MAX_OUTPUT_TOKENS = 16_384;
 const ANALYSIS_BATCH_JSON_SCHEMA = z.toJSONSchema(AnalysisBatchSchema);
 const ANALYSIS_BATCH_RESPONSE_RULES = [
   "Every observation must contain exactly one of value or objectId, never both and never neither.",
@@ -115,7 +115,7 @@ export async function analyzeStructured(
             system: input.skillText,
             prompt,
             abortSignal: controller.signal,
-            maxOutputTokens: MAX_OUTPUT_TOKENS,
+            maxOutputTokens: CONTACT_ANALYSIS_MAX_OUTPUT_TOKENS,
             maxRetries: 0,
           }),
         ).then(
