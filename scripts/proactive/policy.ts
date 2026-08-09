@@ -1,7 +1,4 @@
-import type {
-  AlertSeverity,
-  ReportPeriod,
-} from "./contracts.ts";
+import type { AlertSeverity, ReportPeriod } from "./contracts.ts";
 
 export const PROACTIVE_TIME_ZONE = "Europe/Moscow";
 const MINUTE_MS = 60_000;
@@ -75,18 +72,14 @@ function isoDate(date: Pick<ZonedDate, "year" | "month" | "day">): string {
   return `${String(date.year).padStart(4, "0")}-${String(date.month).padStart(2, "0")}-${String(date.day).padStart(2, "0")}`;
 }
 
-function mondayOffset(
-  date: Pick<ZonedDate, "year" | "month" | "day">,
-): number {
+function mondayOffset(date: Pick<ZonedDate, "year" | "month" | "day">): number {
   return (
     (new Date(Date.UTC(date.year, date.month - 1, date.day)).getUTCDay() + 6) %
     7
   );
 }
 
-function isoWeekKey(
-  date: Pick<ZonedDate, "year" | "month" | "day">,
-): string {
+function isoWeekKey(date: Pick<ZonedDate, "year" | "month" | "day">): string {
   const noon = new Date(Date.UTC(date.year, date.month - 1, date.day, 12));
   const day = noon.getUTCDay() || 7;
   noon.setUTCDate(noon.getUTCDate() + 4 - day);

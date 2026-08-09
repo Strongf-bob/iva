@@ -37,9 +37,7 @@ void test("daily and weekly periods use Moscow wall time independently of host t
 });
 
 void test("preparation, freeze, exact due and missed-run windows have explicit boundaries", () => {
-  const { daily, weekly } = reviewPeriodsAt(
-    ms("2026-08-10T01:59:59.999Z"),
-  );
+  const { daily, weekly } = reviewPeriodsAt(ms("2026-08-10T01:59:59.999Z"));
 
   assert.equal(isPreparationDue(daily, daily.prepareAt - 1), false);
   assert.equal(isPreparationDue(daily, daily.prepareAt), true);
@@ -56,7 +54,10 @@ void test("preparation, freeze, exact due and missed-run windows have explicit b
 void test("weekly period remains the same through Sunday and is expired after Thursday", () => {
   const sunday = reviewPeriodsAt(ms("2026-08-16T09:00:00.000Z")).weekly;
   assert.equal(sunday.periodKey, "2026-W33");
-  assert.equal(deliveryWindow(sunday, ms("2026-08-16T09:00:00.000Z")), "expired");
+  assert.equal(
+    deliveryWindow(sunday, ms("2026-08-16T09:00:00.000Z")),
+    "expired",
+  );
 });
 
 void test("retry backoff doubles and caps at thirty minutes", () => {
@@ -73,10 +74,10 @@ void test("high alerts defer in quiet hours and obey six-hour cooldown", () => {
     until: ms("2026-08-10T05:00:00.000Z"),
   });
   const delivered = ms("2026-08-10T06:00:00.000Z");
-  assert.deepEqual(
-    alertAdmission("high", delivered + 60 * 60_000, delivered),
-    { action: "cooldown", until: delivered + 6 * 60 * 60_000 },
-  );
+  assert.deepEqual(alertAdmission("high", delivered + 60 * 60_000, delivered), {
+    action: "cooldown",
+    until: delivered + 6 * 60 * 60_000,
+  });
   assert.deepEqual(
     alertAdmission("high", delivered + 6 * 60 * 60_000, delivered),
     { action: "send" },
