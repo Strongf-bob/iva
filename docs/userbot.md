@@ -114,6 +114,11 @@ node --env-file-if-exists=.env scripts/contact-analysis.ts status --json
 `status` reads local checkpoints only; it does not call Telegram or a model. Runtime state lives under
 `data/contact-analysis/` and never stores message bodies.
 
+Relationship intelligence does not widen this boundary. It consumes only already validated
+GET-export observations and adds no personal-account Telegram operation. CRM rendering, dossiers,
+reply suggestions, commitment confirmation, and bot-delivered owner reports do not expose send,
+reaction, delete, join, invite, or mark-read capabilities through the userbot.
+
 ## How it works
 
 - **One session owner.** Exactly one process may own a Telethon session; a second opener
