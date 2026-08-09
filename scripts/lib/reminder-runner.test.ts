@@ -161,6 +161,7 @@ void test("inactive users are skipped and expired leases recover", async () => {
     job.occurrenceAt = dueAt;
     job.lastAttemptAt = dueAt;
     job.leaseUntil = dueAt + 1;
+    job.updatedAt = new Date(dueAt).toISOString();
   });
   const recoveryAt = dueAt + 1;
   let deliveries = 0;

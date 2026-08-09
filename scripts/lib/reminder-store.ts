@@ -63,6 +63,36 @@ function parseStore(value: unknown): ReminderStore {
     idempotencyKeys.add(job.idempotencyKey);
 
     const inactive = job.state === "completed" || job.state === "cancelled";
+    const createdAt = Date.parse(job.createdAt);
+    const updatedAt = Date.parse(job.updatedAt);
+    const scheduleAt =
+      job.schedule.kind === "once" ? Date.parse(job.schedule.at) : null;
+    const historyValid =
+      updatedAt >= createdAt &&
+      (job.lastAttemptAt === null ||
+        (job.lastAttemptAt >= createdAt && job.lastAttemptAt <= updatedAt)) &&
+      (job.lastDeliveredAt === null ||
+        (job.lastAttemptAt !== null &&
+          job.lastDeliveredAt >= job.lastAttemptAt &&
+          job.lastDeliveredAt <= updatedAt)) &&
+      (inactive ||
+        (job.nextRunAt !== null &&
+          job.nextRunAt > createdAt &&
+          (job.lastDeliveredAt === null ||
+            job.nextRunAt > job.lastDeliveredAt))) &&
+      (scheduleAt === null || scheduleAt > createdAt) &&
+      (job.state !== "completed" ||
+        (scheduleAt !== null &&
+          job.lastDeliveredAt !== null &&
+          job.lastDeliveredAt >= scheduleAt)) &&
+      (job.schedule.kind !== "once" ||
+        inactive ||
+        job.lastDeliveredAt === null);
+    if (!historyValid) {
+      throw new Error(
+        `invalid reminder store: state invariants: history invariants failed for reminder ${job.id}`,
+      );
+    }
     if (job.state === "active" && job.retryAt !== null) {
       const retryValid =
         job.failureCount > 0 &&
