@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readdir } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { isAbsolute, join, resolve } from "node:path";
 
@@ -68,13 +68,14 @@ async function defaultRunContactAnalysis(
 }
 
 async function withAdvisoryPipelineLock<T>(
-  root: string,
+  lockRoot: string,
   operation: () => Promise<T>,
 ): Promise<T> {
   if (process.env.IVA_CONTACT_ANALYSIS_LOCK_HELD === "1") {
     return operation();
   }
-  const lockPath = join(root, ".contact-analysis.lock");
+  await mkdir(lockRoot, { recursive: true, mode: 0o700 });
+  const lockPath = join(lockRoot, ".contact-analysis.lock");
   const child = spawn(
     "flock",
     ["-n", lockPath, "sh", "-c", 'printf "ready\\n"; cat >/dev/null'],
@@ -160,10 +161,12 @@ export async function runContactAnalysisCommand(
       env.ASSISTANT_MULTI_USER === "1" && env.ASSISTANT_ROLE === "owner"
         ? join(env.ASSISTANT_APP_DIR ?? root, "data", "telegram-userbot.token")
         : undefined;
-    const report = await withLockImpl(root, () =>
+    const dataDir = env.ASSISTANT_DATA_DIR ?? "data";
+    const resolvedDataDir = isAbsolute(dataDir) ? dataDir : join(root, dataDir);
+    const report = await withLockImpl(resolvedDataDir, () =>
       runContactAnalysisImpl({
         root,
-        dataDir: env.ASSISTANT_DATA_DIR ?? "data",
+        dataDir,
         vault: env.ASSISTANT_VAULT_DIR,
         ...(tokenPath ? { tokenPath } : {}),
       }),
