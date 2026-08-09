@@ -159,7 +159,6 @@ void test("production image includes flock for bounded memory maintenance", asyn
     new URL("../../Containerfile", import.meta.url),
     "utf8",
   );
-  const runtime =
-    containerfile.split("FROM deps AS runtime")[1] ?? "";
+  const runtime = containerfile.split("FROM deps AS runtime")[1] ?? "";
   assert.match(runtime, /\n {4}util-linux \\\n/u);
 });
