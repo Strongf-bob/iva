@@ -33,6 +33,7 @@ RUN uv venv --python python3 /opt/iva-userbot-venv \
 FROM node:24-bookworm-slim AS runtime
 
 WORKDIR /app
+ARG GWS_VERSION=0.22.5
 ENV NODE_ENV=production
 ENV PORT=8723
 LABEL org.opencontainers.image.source="https://github.com/Strongf-bob/iva"
@@ -50,6 +51,8 @@ RUN apt-get update \
     python3 \
     python3-pip \
   && python3 -m pip install --break-system-packages --no-cache-dir uv \
+  && npm install --global "@googleworkspace/cli@${GWS_VERSION}" \
+  && test "$(gws --version | sed -n '1p')" = "gws ${GWS_VERSION}" \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app /app

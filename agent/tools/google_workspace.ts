@@ -1,11 +1,14 @@
 import { execFile } from "node:child_process";
-import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-import { childEnv, gwsBin } from "../../scripts/lib/menu/gws-auth.ts";
+import {
+  childEnv,
+  gwsBin,
+  resolveGoogleHome,
+} from "../../scripts/lib/menu/gws-auth.ts";
 import { resolvePersonalReadPath } from "../lib/safe-user-path.ts";
 
 const SERVICES = [
@@ -34,7 +37,10 @@ const SAFE_FLAGS = new Set([
 ]);
 const MAX_OUTPUT = 24_000;
 const personalHome = () =>
-  process.env.ASSISTANT_PERSONAL_ROOT || process.env.HOME || homedir();
+  resolveGoogleHome({
+    personalRoot: process.env.ASSISTANT_PERSONAL_ROOT,
+    fallbackHome: process.env.HOME,
+  });
 
 export function validateGoogleWorkspaceArgs(args: readonly string[]): string[] {
   if (
