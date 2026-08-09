@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { findGlobMatches, resolveGlobRoot } from "./glob.ts";
+import { findGlobMatches, resolveGlobRoot } from "../agent/tools/glob.ts";
 
 test("$VAULT resolves and searches the configured vault in both modes", async () => {
   const root = mkdtempSync(join(tmpdir(), "iva-glob-root-"));
