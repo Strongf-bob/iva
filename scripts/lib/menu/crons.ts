@@ -168,8 +168,12 @@ export default {
       const personalData = st.personalRoot
         ? join(st.personalRoot, "runtime", "data")
         : null;
+      let reminderDataAvailable = personalData !== null;
       const reminders = personalData
-        ? await listReminders(personalData).catch(() => [])
+        ? await listReminders(personalData).catch(() => {
+            reminderDataAvailable = false;
+            return [];
+          })
         : [];
       const lines = reminders.slice(0, PER_PAGE).map((job) => {
         const next =
@@ -178,9 +182,14 @@ export default {
             : new Date(job.nextRunAt).toISOString().replace(/\.000Z$/u, "Z");
         return `• ${job.message} → ${next}`;
       });
-      const body = lines.length
-        ? lines.join("\n")
-        : T("No active reminders.", "Активных напоминаний нет.");
+      const body = !reminderDataAvailable
+        ? T(
+            "Reminder data unavailable. Run Maintenance diagnostics.",
+            "Данные напоминаний недоступны. Запусти диагностику в Обслуживании.",
+          )
+        : lines.length
+          ? lines.join("\n")
+          : T("No active reminders.", "Активных напоминаний нет.");
       const dataDir = personalData ?? ctx.deps.dataDir;
       return {
         text: `${T("⏰ Personal reminders", "⏰ Личные напоминания")}\n\n${body}\n\n${T(`Tasks in queue: ${openTaskCount(dataDir)}`, `Задач в очереди: ${openTaskCount(dataDir)}`)}\n\n${schedulesBlock(dataDir, T)}`,

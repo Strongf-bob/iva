@@ -63,10 +63,64 @@ function parseStore(value: unknown): ReminderStore {
     idempotencyKeys.add(job.idempotencyKey);
 
     const inactive = job.state === "completed" || job.state === "cancelled";
+    if (job.state === "active" && job.retryAt !== null) {
+      const retryValid =
+        job.failureCount > 0 &&
+        job.lastAttemptAt !== null &&
+        job.lastAttemptAt >= (job.nextRunAt ?? Infinity) &&
+        job.retryAt > job.lastAttemptAt &&
+        job.occurrenceAt === job.nextRunAt &&
+        job.lastError !== null;
+      if (!retryValid) {
+        throw new Error(
+          `invalid reminder store: state invariants: retry invariants failed for reminder ${job.id}`,
+        );
+      }
+    }
+    if (
+      job.state === "active" &&
+      job.retryAt === null &&
+      (job.failureCount !== 0 || job.lastError !== null)
+    ) {
+      throw new Error(
+        `invalid reminder store: state invariants: retry invariants failed for reminder ${job.id}`,
+      );
+    }
+    if (job.state === "delivering") {
+      const lastAttemptAt = job.lastAttemptAt;
+      const leaseValid =
+        job.nextRunAt !== null &&
+        lastAttemptAt !== null &&
+        lastAttemptAt >= job.nextRunAt &&
+        job.leaseUntil !== null &&
+        job.leaseUntil > lastAttemptAt;
+      if (!leaseValid) {
+        throw new Error(
+          `invalid reminder store: state invariants: lease invariants failed for reminder ${job.id}`,
+        );
+      }
+      // leaseValid proves this before the retry correlation below.
+      if (lastAttemptAt === null) {
+        throw new Error("unreachable reminder lease validation state");
+      }
+      const retryValid =
+        job.retryAt === null
+          ? job.failureCount === 0 && job.lastError === null
+          : job.failureCount > 0 &&
+            job.retryAt <= lastAttemptAt &&
+            job.lastError !== null;
+      if (!retryValid) {
+        throw new Error(
+          `invalid reminder store: state invariants: retry invariants failed for reminder ${job.id}`,
+        );
+      }
+    }
     const activeValid =
       job.state === "active" &&
       job.nextRunAt !== null &&
-      (job.occurrenceAt === null || job.occurrenceAt === job.nextRunAt) &&
+      (job.retryAt === null
+        ? job.occurrenceAt === null
+        : job.occurrenceAt === job.nextRunAt) &&
       job.leaseUntil === null;
     const deliveringValid =
       job.state === "delivering" &&

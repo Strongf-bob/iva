@@ -113,6 +113,53 @@ void test("JSON-valid stores fail closed on schedule and state invariants", asyn
   await assert.rejects(() => loadReminderStore(dataDir), /state invariants/u);
 });
 
+void test("retry and lease metadata cannot make a reminder run before its schedule", async () => {
+  const dataDir = await fixture();
+  const file = reminderFile(dataDir);
+  const nextRunAt = Date.parse("2026-08-10T10:00:00.000Z");
+  const base = {
+    id: "00000000-0000-4000-8000-000000000002",
+    idempotencyKey: "corrupt-timing-1",
+    message: "Never early",
+    timezone: "UTC",
+    schedule: { kind: "once", at: "2026-08-10T10:00:00.000Z" },
+    state: "active",
+    createdAt: "2026-08-09T10:00:00.000Z",
+    updatedAt: "2026-08-09T10:00:00.000Z",
+    nextRunAt,
+    occurrenceAt: null,
+    leaseUntil: null,
+    lastAttemptAt: null,
+    lastDeliveredAt: null,
+    failureCount: 0,
+    retryAt: 0,
+    lastError: null,
+  };
+  await writeFile(
+    file,
+    JSON.stringify({ schema: "iva-reminders/v1", revision: 1, jobs: [base] }),
+  );
+  await assert.rejects(() => loadReminderStore(dataDir), /retry invariants/u);
+
+  await writeFile(
+    file,
+    JSON.stringify({
+      schema: "iva-reminders/v1",
+      revision: 1,
+      jobs: [
+        {
+          ...base,
+          state: "delivering",
+          occurrenceAt: nextRunAt,
+          retryAt: null,
+          leaseUntil: nextRunAt - 1,
+        },
+      ],
+    }),
+  );
+  await assert.rejects(() => loadReminderStore(dataDir), /lease invariants/u);
+});
+
 void test("concurrent creates serialize without losing jobs", async () => {
   const dataDir = await fixture();
   await Promise.all(

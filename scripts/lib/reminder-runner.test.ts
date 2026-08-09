@@ -159,12 +159,14 @@ void test("inactive users are skipped and expired leases recover", async () => {
     )!;
     job.state = "delivering";
     job.occurrenceAt = dueAt;
-    job.leaseUntil = dueAt - 1;
+    job.lastAttemptAt = dueAt;
+    job.leaseUntil = dueAt + 1;
   });
+  const recoveryAt = dueAt + 1;
   let deliveries = 0;
   await runReminderTick({
     users: [{ id: "101", status: "blocked", dataDir: data }],
-    now: () => dueAt,
+    now: () => recoveryAt,
     deliver: () => {
       deliveries += 1;
       return Promise.resolve({ ok: true, error: "" });
@@ -173,7 +175,7 @@ void test("inactive users are skipped and expired leases recover", async () => {
   assert.equal(deliveries, 0);
   await runReminderTick({
     users: [{ id: "101", status: "active", dataDir: data }],
-    now: () => dueAt,
+    now: () => recoveryAt,
     deliver: () => {
       deliveries += 1;
       return Promise.resolve({ ok: true, error: "" });

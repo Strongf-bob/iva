@@ -89,3 +89,26 @@ test("container timers screen lists personal reminders without host timer claims
   assert.doesNotMatch(view.text, /No Iva timers found/u);
   assert.doesNotMatch(view.text, /digest .*disabled/u);
 });
+
+test("container timers screen reports corrupt personal reminder storage", async () => {
+  const globalData = mkdtempSync(join(tmpdir(), "iva-menu-container-crons-"));
+  const personalRoot = join(globalData, "users", "101");
+  const personalData = join(personalRoot, "runtime", "data");
+  mkdirSync(personalData, { recursive: true });
+  writeFileSync(join(personalData, "reminders.json"), "{broken");
+  const view = await crons.render(
+    { page: 0, personalRoot },
+    {
+      deps: { dataDir: globalData, runtime: "container" },
+      tr: (en: string) => en,
+      btn: (text: string, callbackData: string) => ({
+        text,
+        callback_data: callbackData,
+      }),
+      backRow: () => [{ text: "Back", callback_data: "iva_menu:r:o" }],
+    },
+  );
+
+  assert.match(view.text, /Reminder data unavailable/u);
+  assert.doesNotMatch(view.text, /No active reminders/u);
+});

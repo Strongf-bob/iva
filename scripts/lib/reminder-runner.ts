@@ -148,7 +148,12 @@ async function releaseDelivery(
       return;
     }
     job.state = "active";
-    job.occurrenceAt = null;
+    if (job.retryAt === null) {
+      job.occurrenceAt = null;
+    } else {
+      job.occurrenceAt = job.nextRunAt;
+      job.retryAt = now + retryDelay(job.failureCount);
+    }
     job.leaseUntil = null;
     job.updatedAt = new Date(now).toISOString();
   });
