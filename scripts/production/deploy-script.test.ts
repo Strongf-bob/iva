@@ -60,6 +60,7 @@ function harness(): {
       'last=""; for arg in "$@"; do last="$arg"; done\n' +
       'if [ "${1:-}" = "inspect" ] && [ "$last" = "poller-container" ]; then printf "%s 0\\n" "${MOCK_POLLER_STATE:-running}"; exit 0; fi\n' +
       'if [ "${1:-}" = "inspect" ] && [ "$last" = "userbot-container" ]; then printf "%s %s\\n" "${MOCK_USERBOT_STATE:-running}" "${MOCK_USERBOT_RESTARTS:-0}"; exit 0; fi\n' +
+      'if [ "${1:-}" = "exec" ] && [ "${2:-}" = "poller-container" ]; then [ "${MOCK_ROUTING_HEALTH:-1}" = "1" ]; exit; fi\n' +
       'if [ "${1:-}" = "exec" ] && [ "${2:-}" = "userbot-container" ]; then if [ "${MOCK_USERBOT_EXECUTE:-0}" = "1" ]; then /bin/sh -c "${5:-}"; else [ "${MOCK_USERBOT_HEALTH:-1}" = "1" ]; fi; exit; fi\n' +
       'if [ "${1:-}" = "inspect" ]; then image=$(/bin/cat "$MOCK_IMAGE_STATE"); case "$image" in *sha-b*) printf "unhealthy\\n" ;; *) printf "healthy\\n" ;; esac; fi\n',
   );
@@ -209,6 +210,17 @@ void test("a stopped Telegram poller fails deployment", () => {
   const result = run(`deploy ${goodSha}`, {
     ...env,
     MOCK_POLLER_STATE: "exited",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /candidate failed health checks/u);
+});
+
+void test("an unusable Telegram owner route fails deployment", () => {
+  const { env } = harness();
+  const result = run(`deploy ${goodSha}`, {
+    ...env,
+    MOCK_ROUTING_HEALTH: "0",
   });
 
   assert.notEqual(result.status, 0);

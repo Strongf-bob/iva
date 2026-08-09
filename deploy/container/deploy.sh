@@ -150,6 +150,7 @@ runtime_ok() {
     docker inspect --format '{{.State.Status}} {{.RestartCount}}' "$poller_id"
   )" || return 1
   [ "$poller_state" = "running 0" ] || return 1
+  docker exec "$poller_id" node scripts/production/routing-health.ts || return 1
   userbot_id="$(compose "$image" "$allow_inert" ps -q telegram-userbot)" || return 1
   [ -n "$userbot_id" ] || return 1
   userbot_state="$(
