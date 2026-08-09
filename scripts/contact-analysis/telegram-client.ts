@@ -22,6 +22,11 @@ const MessagesPageSchema = z.strictObject({
   messages: z.array(TelegramMessageSchema).max(200),
   nextAfterId: z.int().nonnegative(),
 });
+const MessageWindowSchema = z.strictObject({
+  messages: z.array(TelegramMessageSchema).max(5000),
+  latestMessageId: z.int().nonnegative(),
+  skippedMessages: z.int().nonnegative(),
+});
 const FailureMetadataSchema = z.object({
   retryAfterSeconds: z.int().positive().max(86_400).optional(),
 });
@@ -45,6 +50,7 @@ export interface TelegramMessagesPage {
   messages: TelegramMessage[];
   nextAfterId: number;
 }
+export type TelegramMessageWindow = z.infer<typeof MessageWindowSchema>;
 
 export interface TelegramAnalysisClient {
   account(): Promise<TelegramAccount>;
@@ -54,6 +60,11 @@ export interface TelegramAnalysisClient {
     afterId: number,
     limit: number,
   ): Promise<TelegramMessagesPage>;
+  messageWindow?(
+    chatId: number,
+    afterId: number,
+    maxChars: number,
+  ): Promise<TelegramMessageWindow>;
 }
 
 export interface TelegramAnalysisClientOptions {
@@ -175,6 +186,20 @@ export function createTelegramAnalysisClient({
           limit: String(limit),
         })}`,
         MessagesPageSchema,
+      );
+    },
+    messageWindow(chatId, afterId, maxChars) {
+      safeInteger(chatId, "chat ID", -(2 ** 53) + 1, 2 ** 53 - 1);
+      if (chatId === 0) throw new TypeError("invalid chat ID");
+      safeInteger(afterId, "message cursor", 0, 2 ** 53 - 1);
+      safeInteger(maxChars, "message character budget", 1, 500_000);
+      return request(
+        `/message-window?${new URLSearchParams({
+          chat_id: String(chatId),
+          after_id: String(afterId),
+          max_chars: String(maxChars),
+        })}`,
+        MessageWindowSchema,
       );
     },
   };

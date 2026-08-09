@@ -196,3 +196,33 @@ test("client derives analysis routes from the configured MCP sidecar URL", async
     "http://telegram-userbot:8724/analysis/v1/account",
   ]);
 });
+
+test("client requests a bounded newest-message window from the sidecar", async () => {
+  const requests: string[] = [];
+  const root = await mkdtemp(join(tmpdir(), "iva-contact-message-window-"));
+  await mkdir(join(root, "data"), { recursive: true });
+  await writeFile(join(root, "data", "telegram-userbot.token"), "secret\n", {
+    mode: 0o600,
+  });
+  const client = createTelegramAnalysisClient({
+    root,
+    mcpUrl: "http://telegram-userbot:8724/mcp",
+    fetchImpl: async (input) => {
+      requests.push(String(input));
+      return jsonResponse({
+        messages: [],
+        latestMessageId: 15,
+        skippedMessages: 4,
+      });
+    },
+  });
+
+  assert.deepEqual(await client.messageWindow?.(-1001, 8, 320_000), {
+    messages: [],
+    latestMessageId: 15,
+    skippedMessages: 4,
+  });
+  assert.deepEqual(requests, [
+    "http://telegram-userbot:8724/analysis/v1/message-window?chat_id=-1001&after_id=8&max_chars=320000",
+  ]);
+});
