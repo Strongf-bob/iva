@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { LanguageModel } from "ai";
 
+import { CONTACT_ANALYSIS_MAX_OUTPUT_TOKENS } from "./context-budget.ts";
 import { analyzeStructured } from "./model.ts";
 
 const model = { modelId: "fake-model" } as unknown as LanguageModel;
@@ -52,7 +53,8 @@ test("structured analysis passes the exact skill and bounded chat context", asyn
   assert.deepEqual(result, batch);
   assert.equal(received?.model, model);
   assert.equal(received?.system, "PRIVATE CHAT SKILL");
-  assert.equal(received?.maxOutputTokens, 16_384);
+  assert.equal(CONTACT_ANALYSIS_MAX_OUTPUT_TOKENS, 32_768);
+  assert.equal(received?.maxOutputTokens, CONTACT_ANALYSIS_MAX_OUTPUT_TOKENS);
   assert.equal(received?.maxRetries, 0);
   assert.ok(received?.abortSignal instanceof AbortSignal);
   const parsedPrompt: unknown = JSON.parse(String(received?.prompt));

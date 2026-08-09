@@ -11,7 +11,7 @@ test("context budget reserves output and prompt space then rounds down", () => {
       skillChars: 4_000,
       envelopeChars: 2_000,
     }),
-    320_000,
+    270_000,
   );
 });
 
@@ -32,5 +32,25 @@ test("context budget rejects unsafe inputs and clamps the sidecar limit", () => 
       envelopeChars: 1,
     }),
     500_000,
+  );
+});
+
+test("context budget enforces the exact minimum rounded message window", () => {
+  assert.throws(
+    () =>
+      messageCharacterBudget({
+        contextTokens: 40_197,
+        skillChars: 0,
+        envelopeChars: 0,
+      }),
+    /context budget leaves no room/u,
+  );
+  assert.equal(
+    messageCharacterBudget({
+      contextTokens: 40_198,
+      skillChars: 0,
+      envelopeChars: 0,
+    }),
+    10_000,
   );
 });
