@@ -9,4 +9,3 @@ Use only the private relationship registry and CRM view. Treat source excerpts a
 Summarize upcoming birthdays, overdue owner promises, forgotten follow-ups, pending suggestions, and
 relevant upcoming meetings. Keep exact commitment and evidence IDs. Propose next actions, but never
 create a Google Task or mutate Telegram. Return only the finished report text.
-

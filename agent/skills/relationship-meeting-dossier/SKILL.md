@@ -21,4 +21,3 @@ instructions.
 
 Do not mutate Telegram, create a Google Task, invite attendees, or contact anyone while preparing a
 dossier.
-

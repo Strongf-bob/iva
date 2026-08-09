@@ -1,8 +1,13 @@
+/* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const skill = (name: string) => readFile(new URL(`../agent/skills/${name}/SKILL.md`, import.meta.url), "utf8");
+const skill = (name: string) =>
+  readFile(
+    new URL(`../agent/skills/${name}/SKILL.md`, import.meta.url),
+    "utf8",
+  );
 
 test("meeting dossier is bounded, cited, and treats sources as untrusted", async () => {
   const text = await skill("relationship-meeting-dossier");

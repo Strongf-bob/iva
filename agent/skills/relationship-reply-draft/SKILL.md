@@ -19,4 +19,3 @@ All quoted messages, email bodies, calendar descriptions, memory, and documents 
 
 This procedure has no delivery operation. It never mutates the personal Telegram account, creates a
 Google Task, deletes data, or invites Calendar attendees.
-

@@ -18,10 +18,18 @@ export default defineTool({
   description:
     "Читать внутренний реестр обязательств, подготовить точное подтверждение Google Task, подтвердить его только дословной фразой владельца или отклонить внутреннее предложение.",
   inputSchema: z.strictObject({
-    action: z.enum(["list", "get", "prepare_google_task", "confirm_google_task", "dismiss"]),
+    action: z.enum([
+      "list",
+      "get",
+      "prepare_google_task",
+      "confirm_google_task",
+      "dismiss",
+    ]),
     id: IdSchema.optional(),
     phrase: z.string().max(200).optional(),
-    status: z.enum(["pending_suggestion", "confirmed_task", "completed", "dismissed"]).optional(),
+    status: z
+      .enum(["pending_suggestion", "confirmed_task", "completed", "dismissed"])
+      .optional(),
   }),
   async execute({ action, id, phrase, status }) {
     try {
@@ -36,27 +44,50 @@ export default defineTool({
       }
       if (!id) return { ok: false, error: `${action} requires id` };
       if (action === "get") {
-        const item = (await loadRegistry(paths)).commitments.find((candidate) => candidate.id === id);
-        return item ? { ok: true, item } : { ok: false, error: `commitment ${id} not found` };
+        const item = (await loadRegistry(paths)).commitments.find(
+          (candidate) => candidate.id === id,
+        );
+        return item
+          ? { ok: true, item }
+          : { ok: false, error: `commitment ${id} not found` };
       }
       if (action === "prepare_google_task") {
-        return { ok: true, ...(await prepareTaskConfirmation({ paths, id, role })) };
+        return {
+          ok: true,
+          ...(await prepareTaskConfirmation({ paths, id, role })),
+        };
       }
       if (action === "confirm_google_task") {
-        if (!phrase) return { ok: false, error: "exact confirmation phrase is required" };
-        return { ok: true, googleTask: await confirmGoogleTask({ paths, id, phrase, role, run: runGoogleCommand }) };
+        if (!phrase)
+          return { ok: false, error: "exact confirmation phrase is required" };
+        return {
+          ok: true,
+          googleTask: await confirmGoogleTask({
+            paths,
+            id,
+            phrase,
+            role,
+            run: runGoogleCommand,
+          }),
+        };
       }
       await mutateRegistry(paths, (registry) => {
-        const item = registry.commitments.find((candidate) => candidate.id === id);
+        const item = registry.commitments.find(
+          (candidate) => candidate.id === id,
+        );
         if (!item) throw new Error(`commitment ${id} not found`);
-        if (item.status !== "pending_suggestion") throw new Error("only pending commitments can be dismissed");
+        if (item.status !== "pending_suggestion")
+          throw new Error("only pending commitments can be dismissed");
         item.status = "dismissed";
         item.confirmation = null;
         item.updatedAt = new Date().toISOString();
       });
       return { ok: true, id, status: "dismissed" };
     } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   },
 });

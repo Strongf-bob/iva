@@ -16,7 +16,9 @@ function safe(value: string): string {
     .replace(/\p{Cc}+/gu, " ")
     .replace(/<!--/gu, "&lt;!--")
     .replace(/-->/gu, "--&gt;")
-    .replace(/[|\[\]]/gu, " ")
+    .replaceAll("[", " ")
+    .replaceAll("]", " ")
+    .replaceAll("|", " ")
     .replace(/\s+/gu, " ")
     .trim();
 }
@@ -73,6 +75,7 @@ function contactRegion(
   ].join("\n");
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await -- synchronous multi-file locking is exposed through the async pipeline boundary.
 export async function renderRelationshipCrm({
   vault,
   registry: raw,

@@ -44,14 +44,31 @@ void test("Google tool rejects auth/config flags and host path escapes", () => {
 void test("Google policy blocks sending, task bypasses, deletion, and attendees", () => {
   for (const args of [
     ["gmail", "+send", "--to", "x@example.com", "--body", "hi"],
-    ["tasks", "tasks", "insert", "--params", '{"tasklist":"@default"}', "--json", '{"title":"x"}'],
+    [
+      "tasks",
+      "tasks",
+      "insert",
+      "--params",
+      '{"tasklist":"@default"}',
+      "--json",
+      '{"title":"x"}',
+    ],
     ["drive", "files", "delete", "--params", '{"fileId":"x"}'],
     ["calendar", "+insert", "--json", '{"summary":"x","attendees":[]}'],
   ]) {
-    assert.throws(() => validateGoogleWorkspaceArgs(args), /not allowed|attendees/u);
+    assert.throws(
+      () => validateGoogleWorkspaceArgs(args),
+      /not allowed|attendees/u,
+    );
   }
   assert.deepEqual(
-    validateGoogleWorkspaceArgs(["tasks", "tasks", "list", "--params", '{"tasklist":"@default"}']),
+    validateGoogleWorkspaceArgs([
+      "tasks",
+      "tasks",
+      "list",
+      "--params",
+      '{"tasklist":"@default"}',
+    ]),
     ["tasks", "tasks", "list", "--params", '{"tasklist":"@default"}'],
   );
 });
