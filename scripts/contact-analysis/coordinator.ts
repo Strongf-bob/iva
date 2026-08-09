@@ -1,7 +1,11 @@
 import { ZodError } from "zod";
 
 import { reduceRelationshipObservations } from "../relationship-intelligence/reducer.ts";
-import { relationshipPaths } from "../relationship-intelligence/store.ts";
+import { renderRelationshipCrm } from "../relationship-intelligence/crm.ts";
+import {
+  loadRegistry,
+  relationshipPaths,
+} from "../relationship-intelligence/store.ts";
 
 import { analyzePage, type AnalyzePageInput } from "./analyzer.ts";
 import {
@@ -276,6 +280,10 @@ export async function runContactAnalysis({
         paths: relationshipStatePaths,
         ownerUserId: input.ownerUserId,
         observations: input.batch.observations,
+      });
+      await renderRelationshipCrm({
+        vault,
+        registry: await loadRegistry(relationshipStatePaths),
       });
       return result;
     });
