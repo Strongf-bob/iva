@@ -36,6 +36,7 @@ test("daily attention skill is bounded, evidence-backed and read-only", () => {
   assert.match(skill.body, /`tasks`/u);
   assert.match(skill.body, /`memory_search`/u);
   assert.match(skill.body, /`read_file`/u);
+  assert.match(skill.body, /cwd="\$VAULT"/u);
   assert.match(skill.body, /EXTRACTED/u);
   assert.match(skill.body, /INFERRED/u);
   assert.match(skill.body, /superseded/u);
@@ -58,6 +59,7 @@ test("relationship briefing preserves identity ambiguity and evidence", () => {
   assert.match(skill.body, /INFERRED/u);
   assert.match(skill.body, /vault-relative/u);
   assert.match(skill.body, /telegram:message/u);
+  assert.match(skill.body, /every memory-derived claim/iu);
   assert.match(skill.body, /do not create, modify, or send/iu);
 });
 
@@ -68,6 +70,7 @@ test("weekly review is honest about coverage and tracks decision arcs", () => {
   assert.match(skill.frontmatter.description, /^Use when /u);
   assert.match(skill.body, /`tasks`/u);
   assert.match(skill.body, /`glob`/u);
+  assert.match(skill.body, /cwd="\$VAULT"/u);
   assert.match(skill.body, /`memory_search`/u);
   assert.match(skill.body, /(?:seven|7) available daily summaries/iu);
   assert.match(skill.body, /(?:one|1)[-–](?:two|2)|1–2/iu);
@@ -77,6 +80,8 @@ test("weekly review is honest about coverage and tracks decision arcs", () => {
   assert.match(skill.body, /CHANGED/u);
   assert.match(skill.body, /(?:three|3) next-week priorities/iu);
   assert.match(skill.body, /vault-relative/u);
+  assert.match(skill.body, /telegram:message/u);
+  assert.match(skill.body, /every memory-derived claim/iu);
   assert.match(skill.body, /do not create, modify, or send/iu);
 });
 
@@ -105,4 +110,11 @@ test("core instructions expose all chief-of-staff workflows", () => {
     assert.match(source, /relationship-briefing/u, relativePath);
     assert.match(source, /weekly-review/u, relativePath);
   }
+
+  const rootInstructions = readFileSync(
+    new URL("../agent/instructions.md", import.meta.url),
+    "utf8",
+  );
+  assert.match(rootInstructions, /read-only брифы/u);
+  assert.match(rootInstructions, /НЕ вызывай `send_rich\.py`/u);
 });

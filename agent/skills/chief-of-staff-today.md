@@ -11,8 +11,8 @@ description: Use when the user asks what needs attention today, requests a chief
 ## Собери факты
 
 1. Вызови `tasks` с `action="list"`.
-2. Через `glob` найди самый свежий доступный `summaries/daily/*.md` и прочитай
-   его через `read_file`.
+2. Через `glob` с `cwd="$VAULT"` найди самый свежий доступный
+   `summaries/daily/*.md` и прочитай его через `read_file`.
 3. Выполни `memory_search` по текущим обязательствам, блокерам и нерешённым или
    конфликтующим решениям. Открой через `read_file` не больше трёх лучших
    релевантных хитов.

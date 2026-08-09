@@ -38,7 +38,7 @@ description: Use when the user wants to prepare for a meeting, call, negotiation
    подтверждённому контексту.
 5. **Источники** — только реально прочитанные vault-relative пути.
 
-После каждого существенного утверждения добавляй
+For every memory-derived claim, включая каждый talking point, добавляй
 `[Источник: <vault-relative path>]`. Сохраняй идентификаторы вида
 `telegram:message:<chat>:<message>` рядом с соответствующим источником. Если
 контакт или контекст не найден, назови недостающие данные и не создавай общий

@@ -10,8 +10,8 @@ description: Use when the user asks for a weekly review, week recap, recurring t
 
 ## Собери неделю
 
-1. Через `glob` найди 7 available daily summaries с самыми поздними датами в
-   `summaries/daily/*.md` и прочитай их через `read_file`.
+1. Через `glob` с `cwd="$VAULT"` найди 7 available daily summaries с самыми
+   поздними датами в `summaries/daily/*.md` и прочитай их через `read_file`.
 2. Если доступно 1–2 саммари, назови результат лёгким срезом. Если нет ни
    одного, сообщи, что недельный обзор по дням собрать нельзя, и не изображай
    полную неделю.
@@ -46,9 +46,11 @@ description: Use when the user asks for a weekly review, week recap, recurring t
 4. **Следующая неделя** — ровно 3 next-week priorities либо меньше, если
    подтверждённых оснований не хватает. Не дополняй список общими советами.
 
-После каждого существенного пункта из памяти добавляй
-`[Источник: <vault-relative path>]`; для конфликтов указывай оба пути. Задачи
-обозначай их ID. Если источник недоступен, назови пробел и ограничь выводы.
+For every memory-derived claim, включая каждый тезис и приоритет, добавляй
+`[Источник: <vault-relative path>]`; для конфликтов указывай оба пути. Если в
+источнике есть `telegram:message:<chat>:<message>`, сохрани этот идентификатор
+рядом с путём. Задачи обозначай их ID. Если источник недоступен, назови пробел и
+ограничь выводы.
 
 This workflow is read-only: do not create, modify, or send tasks, cards, files,
 messages, calendar events, or other external actions.
