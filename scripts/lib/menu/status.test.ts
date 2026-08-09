@@ -137,6 +137,7 @@ test("container status reads Google and scheduler state from the selected user",
   await Promise.all([
     mkdir(join(root, "data", "control"), { recursive: true }),
     mkdir(join(personalRoot, ".config", "gws"), { recursive: true }),
+    mkdir(join(personalRoot, "runtime", "data"), { recursive: true }),
   ]);
   await Promise.all([
     writeFile(
@@ -144,6 +145,14 @@ test("container status reads Google and scheduler state from the selected user",
       JSON.stringify({ updatedAt: Date.now() }),
     ),
     writeFile(join(personalRoot, ".config", "gws", "client_secret.json"), "{}"),
+    writeFile(
+      join(root, "data", "usage.jsonl"),
+      `${JSON.stringify({ ts: new Date().toISOString(), source: "telegram", provider: "test", model: "test", sessionId: "global", turnId: "global", step: 1, in: 999, out: 0, cacheRead: 0, cacheWrite: 0, total: 999 })}\n`,
+    ),
+    writeFile(
+      join(personalRoot, "runtime", "data", "usage.jsonl"),
+      `${JSON.stringify({ ts: new Date().toISOString(), source: "telegram", provider: "test", model: "test", sessionId: "personal", turnId: "personal", step: 1, in: 123, out: 0, cacheRead: 0, cacheWrite: 0, total: 123 })}\n`,
+    ),
   ]);
   const state: StatusState = {
     chatId: 101,
@@ -172,4 +181,6 @@ test("container status reads Google and scheduler state from the selected user",
   assert.match(view.text, /Runtime: container/u);
   assert.match(view.text, /Scheduler: ready/u);
   assert.match(view.text, /Google: configured/u);
+  assert.match(view.text, /Usage today: 123 tokens/u);
+  assert.doesNotMatch(view.text, /999 tokens/u);
 });

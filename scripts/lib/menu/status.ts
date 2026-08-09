@@ -122,6 +122,10 @@ function fastFields(env: Env, ctx: MenuContext, state: StatusState) {
   const runtimeStatus = container
     ? readContainerRuntimeStatus(ctx.deps.dataDir)
     : null;
+  const personalDataDir =
+    container && state.personalRoot && isAbsolute(state.personalRoot)
+      ? join(state.personalRoot, "runtime", "data")
+      : ctx.deps.dataDir;
   return {
     version: version(ctx.deps.root),
     provider,
@@ -136,7 +140,7 @@ function fastFields(env: Env, ctx: MenuContext, state: StatusState) {
     ),
     runtime: container ? "container" : "host",
     scheduler: runtimeStatus?.scheduler ?? "host-managed",
-    usage: usageToday(ctx.deps.dataDir, env.ASSISTANT_TIMEZONE, ctx.tr),
+    usage: usageToday(personalDataDir, env.ASSISTANT_TIMEZONE, ctx.tr),
   };
 }
 

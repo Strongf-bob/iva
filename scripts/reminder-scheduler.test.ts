@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   executeReminderCommand,
+  runSchedulerIteration,
   schedulerStatusFile,
   writeSchedulerHeartbeat,
 } from "./reminder-scheduler.ts";
@@ -65,6 +66,7 @@ void test("scheduler heartbeat has a stable health contract", async () => {
     delivered: 2,
     failed: 1,
     recovered: 0,
+    userFailures: 0,
   });
   const status = await executeReminderCommand(
     ["health"],
@@ -77,4 +79,34 @@ void test("scheduler heartbeat has a stable health contract", async () => {
     schedulerStatusFile(dataDir),
     /reminder-scheduler-status\.json$/u,
   );
+
+  const future = await executeReminderCommand(
+    ["health"],
+    { ASSISTANT_DATA_DIR: dataDir },
+    { now: () => now - 120_000 },
+  );
+  assert.equal(future.ok, false);
+  assert.equal(future.status, "invalid");
+});
+
+void test("a failed registry iteration writes a fresh degraded heartbeat", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "iva-reminder-degraded-"));
+  const now = Date.parse("2026-08-09T10:00:00.000Z");
+  const report = await runSchedulerIteration({
+    dataDir,
+    token: "test-token",
+    now: () => now,
+    loadUsers: () => Promise.reject(new Error("registry unavailable")),
+    deliver: () => Promise.resolve({ ok: true, error: "" }),
+    log: () => {},
+  });
+  assert.equal(report.userFailures, 1);
+  const status = await executeReminderCommand(
+    ["health"],
+    { ASSISTANT_DATA_DIR: dataDir },
+    { now: () => now + 1000 },
+  );
+  assert.equal(status.ok, true);
+  assert.equal(status.status, "degraded");
+  assert.equal(status.userFailures, 1);
 });

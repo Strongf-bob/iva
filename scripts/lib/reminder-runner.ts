@@ -18,6 +18,7 @@ export type ReminderTickReport = {
   delivered: number;
   failed: number;
   recovered: number;
+  userFailures: number;
 };
 
 type ReservedReminder = { job: ReminderJob; recovered: boolean };
@@ -113,15 +114,38 @@ async function finishDelivery(
   });
 }
 
+async function releaseDelivery(
+  dataDir: string,
+  reserved: ReminderJob,
+  now: number,
+): Promise<void> {
+  await mutateReminderStore(dataDir, (store) => {
+    const job = store.jobs.find((candidate) => candidate.id === reserved.id);
+    if (
+      !job ||
+      job.state !== "delivering" ||
+      job.occurrenceAt !== reserved.occurrenceAt
+    ) {
+      return;
+    }
+    job.state = "active";
+    job.occurrenceAt = null;
+    job.leaseUntil = null;
+    job.updatedAt = new Date(now).toISOString();
+  });
+}
+
 export async function runReminderTick({
   users,
   deliver,
+  authorize,
   now = () => Date.now(),
   leaseMs = DEFAULT_LEASE_MS,
   log = () => {},
 }: {
   users: readonly ReminderUser[];
   deliver: (chatId: string, message: string) => Promise<ReminderDeliveryResult>;
+  authorize?: (userId: string) => Promise<boolean>;
   now?: () => number;
   leaseMs?: number;
   log?: (...parts: unknown[]) => void;
@@ -131,32 +155,51 @@ export async function runReminderTick({
     delivered: 0,
     failed: 0,
     recovered: 0,
+    userFailures: 0,
   };
   for (const user of users) {
     if (user.status !== "active") continue;
     report.users += 1;
-    for (let count = 0; count < MAX_DELIVERIES_PER_USER; count += 1) {
-      const at = now();
-      const reserved = await reserveDueReminder(user.dataDir, at, leaseMs);
-      if (!reserved) break;
-      if (reserved.recovered) report.recovered += 1;
-      let result: ReminderDeliveryResult;
-      try {
-        result = await deliver(user.id, reserved.job.message);
-      } catch (error) {
-        result = {
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        };
+    try {
+      for (let count = 0; count < MAX_DELIVERIES_PER_USER; count += 1) {
+        const at = now();
+        const reserved = await reserveDueReminder(user.dataDir, at, leaseMs);
+        if (!reserved) break;
+        if (reserved.recovered) report.recovered += 1;
+        if (authorize) {
+          let allowed: boolean;
+          try {
+            allowed = await authorize(user.id);
+          } catch (error) {
+            await releaseDelivery(user.dataDir, reserved.job, now());
+            throw error;
+          }
+          if (!allowed) {
+            await releaseDelivery(user.dataDir, reserved.job, now());
+            break;
+          }
+        }
+        let result: ReminderDeliveryResult;
+        try {
+          result = await deliver(user.id, reserved.job.message);
+        } catch (error) {
+          result = {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+        await finishDelivery(user.dataDir, reserved.job, result, now());
+        if (result.ok) report.delivered += 1;
+        else report.failed += 1;
+        log(
+          "reminder-scheduler:",
+          reserved.job.id,
+          result.ok ? "delivered" : "failed",
+        );
       }
-      await finishDelivery(user.dataDir, reserved.job, result, now());
-      if (result.ok) report.delivered += 1;
-      else report.failed += 1;
-      log(
-        "reminder-scheduler:",
-        reserved.job.id,
-        result.ok ? "delivered" : "failed",
-      );
+    } catch {
+      report.userFailures += 1;
+      log("reminder-scheduler:", user.id, "tenant-failed");
     }
   }
   return report;

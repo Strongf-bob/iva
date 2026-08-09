@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { childEnv, gwsBin } from "./menu/gws-auth.ts";
+import { parseOffsetFile } from "./offset-store.ts";
 import { runScheduledJob } from "./schedule-runner.ts";
 import { parseTelegramUserId } from "./user-registry.ts";
 
@@ -22,7 +23,7 @@ export type ContainerProcessSpec = {
 };
 export type ContainerRuntimeStatus = {
   runtime: "container";
-  scheduler: "ready" | "stale" | "missing" | "invalid";
+  scheduler: "ready" | "degraded" | "stale" | "missing" | "invalid";
   schedulerUpdatedAt?: number;
 };
 
@@ -132,16 +133,86 @@ export function readContainerRuntimeStatus(
   if (typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) {
     return { runtime: "container", scheduler: "invalid" };
   }
+  const age = now - updatedAt;
+  if (age < -5_000) {
+    return { runtime: "container", scheduler: "invalid" };
+  }
   return {
     runtime: "container",
-    scheduler: now - updatedAt <= 60_000 ? "ready" : "stale",
+    scheduler:
+      age > 60_000
+        ? "stale"
+        : (parsed as { degraded?: unknown }).degraded === true
+          ? "degraded"
+          : "ready",
     schedulerUpdatedAt: updatedAt,
   };
 }
 
+type DoctorSpawnResult = { status: number | null; stdout?: unknown };
+type DoctorDependencies = {
+  spawn: (
+    command: string,
+    args: readonly string[],
+    options?: Record<string, unknown>,
+  ) => DoctorSpawnResult;
+  log: (line: string) => void;
+  error: (line: string) => void;
+};
+
+function lastScheduleEvidence(dataDir: string): {
+  text: string;
+  invalid: boolean;
+} {
+  const file = join(dataDir, "rollup-status.json");
+  try {
+    const value: unknown = JSON.parse(readFileSync(file, "utf8"));
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      return { text: "invalid", invalid: true };
+    }
+    const entries = Object.entries(value as Record<string, unknown>)
+      .map(([name, raw]) => {
+        const entry = raw as {
+          lastFinishedAt?: unknown;
+          lastExitCode?: unknown;
+        };
+        return {
+          name,
+          finished:
+            typeof entry?.lastFinishedAt === "number" &&
+            Number.isFinite(entry.lastFinishedAt)
+              ? entry.lastFinishedAt
+              : null,
+          exitCode: entry?.lastExitCode,
+        };
+      })
+      .filter((entry) => entry.finished !== null)
+      .sort(
+        (left, right) => (right.finished as number) - (left.finished as number),
+      );
+    const latest = entries[0];
+    if (!latest) return { text: "none recorded", invalid: false };
+    return {
+      text: `${latest.name} ${latest.exitCode === 0 ? "succeeded" : "failed"}`,
+      invalid: false,
+    };
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT"
+      ? { text: "none recorded", invalid: false }
+      : { text: "invalid", invalid: true };
+  }
+}
+
 export function runContainerDoctor(
   env: NodeJS.ProcessEnv = process.env,
+  dependencies: Partial<DoctorDependencies> = {},
 ): number {
+  const deps: DoctorDependencies = {
+    spawn: spawnSync,
+    log: (line) => console.log(line),
+    error: (line) => console.error(line),
+    ...dependencies,
+  };
   const home = env.ASSISTANT_PERSONAL_ROOT;
   const dataDir = env.ASSISTANT_DATA_DIR;
   const vaultDir = env.ASSISTANT_VAULT_DIR;
@@ -158,29 +229,63 @@ export function runContainerDoctor(
     }
     try {
       accessSync(path, constants.R_OK | constants.W_OK);
-      console.log(`ok: ${label} is readable and writable`);
+      deps.log(`ok: ${label} is readable and writable`);
     } catch {
       failures.push(`${label}: unavailable`);
     }
   }
   if (home) {
-    const gws = spawnSync(gwsBin(), ["--version"], {
+    const gws = deps.spawn(gwsBin(), ["--version"], {
       env: childEnv(home),
       encoding: "utf8",
       timeout: 5000,
     });
-    if (gws.status === 0) console.log(String(gws.stdout).split("\n")[0]);
+    if (gws.status === 0) deps.log(String(gws.stdout).split("\n")[0]);
     else failures.push("gws: unavailable");
   }
   if (globalDataDir) {
     const status = readContainerRuntimeStatus(globalDataDir);
-    console.log(`scheduler: ${status.scheduler}`);
+    deps.log(`scheduler: ${status.scheduler}`);
     if (status.scheduler !== "ready")
       failures.push(`scheduler: ${status.scheduler}`);
   } else {
     failures.push("scheduler: global data path missing");
   }
-  for (const failure of failures) console.error(`issue: ${failure}`);
+  const host = env.ASSISTANT_HOST;
+  if (host) {
+    const eve = deps.spawn(
+      "curl",
+      [
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--max-time",
+        "5",
+        `${host.replace(/\/$/u, "")}/eve/v1/health`,
+      ],
+      { encoding: "utf8", timeout: 6000 },
+    );
+    if (eve.status === 0) deps.log("eve: ready");
+    else failures.push("eve: unavailable");
+  } else {
+    failures.push("eve: ASSISTANT_HOST missing");
+  }
+  if (globalDataDir) {
+    try {
+      const offset = parseOffsetFile(
+        readFileSync(join(globalDataDir, "telegram-offset.json"), "utf8"),
+      );
+      deps.log(`poller: offset ${offset.offset}`);
+    } catch {
+      failures.push("poller: durable offset unavailable");
+    }
+  }
+  if (dataDir) {
+    const schedule = lastScheduleEvidence(dataDir);
+    deps.log(`last schedule: ${schedule.text}`);
+    if (schedule.invalid) failures.push("last schedule: invalid status");
+  }
+  for (const failure of failures) deps.error(`issue: ${failure}`);
   return failures.length ? 1 : 0;
 }
 

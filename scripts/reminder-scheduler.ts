@@ -18,6 +18,7 @@ import {
 import { sendTelegramHtml } from "./lib/telegram-send.ts";
 
 const HEARTBEAT_MAX_AGE_MS = 60_000;
+const HEARTBEAT_MAX_FUTURE_SKEW_MS = 5_000;
 const TICK_MS = 15_000;
 
 type CommandResult = Record<string, unknown> & { ok: boolean };
@@ -78,6 +79,8 @@ export async function writeSchedulerHeartbeat(
     delivered: report.delivered,
     failed: report.failed,
     recovered: report.recovered ?? 0,
+    userFailures: report.userFailures ?? 0,
+    degraded: (report.userFailures ?? 0) > 0,
   });
 }
 
@@ -88,11 +91,20 @@ async function health(dataDir: string, now: number): Promise<CommandResult> {
       {},
     );
     const updatedAt = status.updatedAt;
-    const ready =
+    const age = typeof updatedAt === "number" ? now - updatedAt : NaN;
+    const fresh =
       typeof updatedAt === "number" &&
       Number.isFinite(updatedAt) &&
-      now - updatedAt <= HEARTBEAT_MAX_AGE_MS;
-    return { ...status, ok: ready, status: ready ? "ready" : "stale" };
+      age >= -HEARTBEAT_MAX_FUTURE_SKEW_MS &&
+      age <= HEARTBEAT_MAX_AGE_MS;
+    const state = !fresh
+      ? age < -HEARTBEAT_MAX_FUTURE_SKEW_MS
+        ? "invalid"
+        : "stale"
+      : status.degraded === true
+        ? "degraded"
+        : "ready";
+    return { ...status, ok: fresh, status: state };
   } catch (error) {
     return {
       ok: false,
@@ -162,6 +174,55 @@ async function schedulerUsers(dataDir: string): Promise<ReminderUser[]> {
   }));
 }
 
+export async function runSchedulerIteration({
+  dataDir,
+  token,
+  now = () => Date.now(),
+  loadUsers = schedulerUsers,
+  deliver = async (chatId, message) => {
+    const result = await sendTelegramHtml(token, chatId, message);
+    return { ok: result.ok, error: result.error };
+  },
+  authorize = async (userId) =>
+    (await schedulerUsers(dataDir)).some(
+      (user) => user.id === userId && user.status === "active",
+    ),
+  log = () => {},
+}: {
+  dataDir: string;
+  token: string;
+  now?: () => number;
+  loadUsers?: (dataDir: string) => Promise<ReminderUser[]>;
+  deliver?: (
+    chatId: string,
+    message: string,
+  ) => Promise<{ ok: boolean; error: string }>;
+  authorize?: (userId: string) => Promise<boolean>;
+  log?: (...parts: unknown[]) => void;
+}): Promise<ReminderTickReport> {
+  let report: ReminderTickReport;
+  try {
+    report = await runReminderTick({
+      users: await loadUsers(dataDir),
+      deliver,
+      authorize,
+      now,
+      log,
+    });
+  } catch {
+    report = {
+      users: 0,
+      delivered: 0,
+      failed: 0,
+      recovered: 0,
+      userFailures: 1,
+    };
+    log("reminder-scheduler:", "iteration-failed");
+  }
+  await writeSchedulerHeartbeat(dataDir, { now: now(), ...report });
+  return report;
+}
+
 export async function runScheduler(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
@@ -181,15 +242,11 @@ export async function runScheduler(
   process.once("SIGTERM", stop);
   try {
     while (!stopping) {
-      const report = await runReminderTick({
-        users: await schedulerUsers(dataDir),
-        deliver: async (chatId, message) => {
-          const result = await sendTelegramHtml(token, chatId, message);
-          return { ok: result.ok, error: result.error };
-        },
+      await runSchedulerIteration({
+        dataDir,
+        token,
         log: (...parts) => console.log(new Date().toISOString(), ...parts),
       });
-      await writeSchedulerHeartbeat(dataDir, { now: Date.now(), ...report });
       await new Promise<void>((done) => {
         const timer = setTimeout(() => {
           wake = null;

@@ -66,11 +66,24 @@ listReminders(dataDir, options);
 getReminder(dataDir, id);
 cancelReminder(dataDir, id);
 runReminderTick({ users, deliver, now, leaseMs, log });
+runSchedulerIteration({
+  dataDir,
+  token,
+  loadUsers,
+  authorize,
+  deliver,
+  now,
+  log,
+});
 ```
 
 Callers should treat returned jobs as data snapshots. Store mutations must continue to
 go through these functions so locking, validation, revision increments, and atomic
 writes remain consistent.
+
+Invalid store JSON is never replaced with an empty store and never quarantined into a
+path that the next tick ignores. The original `reminders.json` remains in place and that
+user fails closed until an operator explicitly repairs or restores it.
 
 ## Operator CLI
 
@@ -109,10 +122,16 @@ acknowledgement window is the only intentional duplicate case; consumers must no
 exactly-once delivery. A recurring job that missed several slots while the stack was
 down coalesces them into one delivery, then advances to the first future occurrence.
 Each tick processes at most 20 jobs per active user to prevent a restart storm.
+The scheduler re-reads the durable user registry after reserving each occurrence and
+immediately before Telegram I/O. If the user is no longer active, the reservation is
+returned to `active` without sending. A corrupt or inaccessible tenant store increments
+`userFailures` but does not stop other tenants or the process heartbeat.
 
 The scheduler writes `data/control/reminder-scheduler-status.json` after every tick using
 schema `iva-reminder-scheduler-status/v1`. Health is `ready` while its `updatedAt` is at
-most 60 seconds old, otherwise `stale`; malformed or absent state is unhealthy.
+most 60 seconds old. A fresh heartbeat with tenant failures reports `degraded` while the
+container stays alive; an older heartbeat is `stale`, a timestamp materially in the
+future is `invalid`, and malformed or absent state is unhealthy.
 
 ## Container lifecycle
 
@@ -133,3 +152,7 @@ docker compose -f deploy/container/compose.production.yml up -d
 
 Do not run a second scheduler against the same data mount. The per-store lock protects
 individual writes, but the supported topology has exactly one registry scanner.
+The forced production deploy path starts and health-checks this service together with
+Iva, the poller, and the userbot. Rollback images that predate the scheduler are restored
+with the scheduler container removed, rather than being falsely reported as a healthy
+four-service release.

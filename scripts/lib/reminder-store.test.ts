@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -61,13 +61,10 @@ void test("corrupt reminder data is preserved and rejected", async () => {
   const file = reminderFile(dataDir);
   await writeFile(file, "{broken", "utf8");
 
-  await assert.rejects(() => loadReminderStore(dataDir), /damaged/u);
-  assert.equal(existsSync(file), false);
-  assert.ok(
-    readdirSync(dataDir).some((name) =>
-      name.startsWith("reminders.json.corrupt-"),
-    ),
-  );
+  await assert.rejects(() => loadReminderStore(dataDir), /invalid JSON/u);
+  await assert.rejects(() => loadReminderStore(dataDir), /invalid JSON/u);
+  assert.equal(existsSync(file), true);
+  assert.equal(await readFile(file, "utf8"), "{broken");
 });
 
 void test("concurrent creates serialize without losing jobs", async () => {

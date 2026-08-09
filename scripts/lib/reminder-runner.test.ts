@@ -60,11 +60,16 @@ void test("concurrent ticks reserve one occurrence only once", async () => {
   );
   let deliveries = 0;
   let release!: () => void;
+  let started!: () => void;
   const wait = new Promise<void>((resolve) => {
     release = resolve;
   });
+  const deliveryStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
   const deliver = async () => {
     deliveries += 1;
+    started();
     await wait;
     return { ok: true, error: "" };
   };
@@ -74,7 +79,7 @@ void test("concurrent ticks reserve one occurrence only once", async () => {
     now: () => dueAt,
     deliver,
   });
-  await new Promise((resolve) => setImmediate(resolve));
+  await deliveryStarted;
   const second = await runReminderTick({
     users: [{ id: "101", status: "active", dataDir: data }],
     now: () => dueAt,
@@ -175,4 +180,68 @@ void test("inactive users are skipped and expired leases recover", async () => {
     },
   });
   assert.equal(deliveries, 1);
+});
+
+void test("one corrupt tenant does not block reminders for another tenant", async () => {
+  const corrupt = await dataDir();
+  const healthy = await dataDir();
+  await import("node:fs/promises").then(({ writeFile }) =>
+    writeFile(join(corrupt, "reminders.json"), "{broken"),
+  );
+  await createReminder(
+    healthy,
+    {
+      idempotencyKey: "healthy-1",
+      message: "Still deliver",
+      timezone: "UTC",
+      schedule: { kind: "once", at: new Date(dueAt).toISOString() },
+    },
+    { now: () => createdAt },
+  );
+  const calls: string[] = [];
+
+  const report = await runReminderTick({
+    users: [
+      { id: "101", status: "active", dataDir: corrupt },
+      { id: "202", status: "active", dataDir: healthy },
+    ],
+    now: () => dueAt,
+    deliver: (chatId) => {
+      calls.push(chatId);
+      return Promise.resolve({ ok: true, error: "" });
+    },
+  });
+
+  assert.deepEqual(calls, ["202"]);
+  assert.equal(report.userFailures, 1);
+  assert.equal(report.delivered, 1);
+});
+
+void test("registry authorization is revalidated after reservation and before I/O", async () => {
+  const data = await dataDir();
+  const created = await createReminder(
+    data,
+    {
+      idempotencyKey: "blocked-race-1",
+      message: "Do not deliver",
+      timezone: "UTC",
+      schedule: { kind: "once", at: new Date(dueAt).toISOString() },
+    },
+    { now: () => createdAt },
+  );
+  let deliveries = 0;
+
+  const report = await runReminderTick({
+    users: [{ id: "101", status: "active", dataDir: data }],
+    now: () => dueAt,
+    authorize: () => Promise.resolve(false),
+    deliver: () => {
+      deliveries += 1;
+      return Promise.resolve({ ok: true, error: "" });
+    },
+  });
+
+  assert.equal(deliveries, 0);
+  assert.equal(report.delivered, 0);
+  assert.equal((await getReminder(data, created.job.id))?.state, "active");
 });

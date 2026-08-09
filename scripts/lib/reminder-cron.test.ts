@@ -32,3 +32,19 @@ void test("cron skips a nonexistent DST wall-clock minute", () => {
     Date.parse("2026-03-30T00:30:00.000Z"),
   );
 });
+
+void test("cron preserves both occurrences of a repeated DST wall-clock minute", () => {
+  const first = Date.parse("2026-10-25T00:30:00.000Z");
+  assert.equal(
+    nextCronOccurrence("30 2 * * *", "Europe/Berlin", first),
+    Date.parse("2026-10-25T01:30:00.000Z"),
+  );
+});
+
+void test("cron finds the next leap day across the century-safe maximum gap", () => {
+  const after = Date.parse("2028-02-29T00:00:00.000Z");
+  assert.equal(
+    nextCronOccurrence("0 0 29 2 *", "UTC", after),
+    Date.parse("2032-02-29T00:00:00.000Z"),
+  );
+});

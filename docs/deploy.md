@@ -67,7 +67,11 @@ docker compose -f deploy/container/compose.production.yml ps
 
 Keep exactly one `reminder-scheduler` replica for a data mount. Container health is the
 authoritative scheduler status; `data/control/reminder-scheduler-status.json` is the
-persisted diagnostic evidence shown by `/menu`.
+persisted diagnostic evidence shown by `/menu`. The forced release script requires the
+candidate image to contain the scheduler and checks a healthy zero-restart scheduler
+container before activation. If it must roll back to an older pre-scheduler image, it
+removes the unsupported scheduler service and verifies the legacy three-service runtime
+instead of claiming that the new foundation is active.
 
 ## systemd units
 

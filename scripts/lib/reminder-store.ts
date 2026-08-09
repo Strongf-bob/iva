@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod";
 
 import {
   acquireLock,
-  loadJsonStrict,
   releaseLock,
   saveJsonAtomic,
 } from "../../agent/lib/json-store.ts";
@@ -66,9 +66,21 @@ export function reminderFile(dataDir: string): string {
 export async function loadReminderStore(
   dataDir: string,
 ): Promise<ReminderStore> {
-  return parseStore(
-    await loadJsonStrict<unknown>(reminderFile(dataDir), emptyStore()),
-  );
+  const file = reminderFile(dataDir);
+  let raw: string;
+  try {
+    raw = await readFile(file, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return emptyStore();
+    throw error;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    throw new Error(`reminder store has invalid JSON: ${file}`);
+  }
+  return parseStore(parsed);
 }
 
 export async function mutateReminderStore<T>(

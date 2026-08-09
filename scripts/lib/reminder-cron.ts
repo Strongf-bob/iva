@@ -130,8 +130,11 @@ export function nextCronOccurrence(
     hourCycle: "h23",
   });
   const firstMinute = Math.floor(afterMs / 60_000) * 60_000 + 60_000;
-  const horizon = firstMinute + 2 * 366 * 24 * 60 * 60_000;
-  for (let candidate = firstMinute; candidate <= horizon; candidate += 60_000) {
+  // A valid five-field cron can wait eight years for February 29 when a
+  // non-leap century intervenes. Visit only allowed wall-clock minutes so the
+  // longer correctness horizon does not turn sparse schedules into a hot loop.
+  const horizon = firstMinute + 8 * 366 * 24 * 60 * 60_000;
+  for (let candidate = firstMinute; candidate <= horizon;) {
     const parts = Object.fromEntries(
       formatter
         .formatToParts(candidate)
@@ -139,6 +142,13 @@ export function nextCronOccurrence(
         .map((part) => [part.type, part.value]),
     );
     if (matches(parsed, parts)) return candidate;
+    const minute = Number(parts.minute);
+    let advance = 60;
+    for (const allowed of parsed.minutes) {
+      const delta = (allowed - minute + 60) % 60 || 60;
+      if (delta < advance) advance = delta;
+    }
+    candidate += advance * 60_000;
   }
-  throw new Error("cron expression has no occurrence within two years");
+  throw new Error("cron expression has no occurrence within eight years");
 }
