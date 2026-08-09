@@ -18,6 +18,8 @@ import {
   InboxStateSchema,
   inboxStatePaths,
   loadInboxState,
+  pruneInboxState,
+  recordClassifications,
   recordSourceFailure,
   reduceObservationPage,
   saveInboxState,
@@ -233,4 +235,55 @@ test("reporting selection is timestamp based and source failures are sanitized",
     JSON.stringify(state.sourceHealth).includes("alice@example.com"),
     false,
   );
+});
+
+test("retention prunes expired non-actionable observations by source timestamp", async (t) => {
+  const root = await temporaryRoot(t);
+  const paths = inboxStatePaths(root, "data", "7");
+  const makeObservation = (
+    externalId: string,
+    sourceTimestamp: string,
+  ): InboxObservation => {
+    const identity = {
+      source: "gmail" as const,
+      sourceAccountId: "me",
+      externalId,
+    };
+    return InboxObservationSchema.parse({
+      ...observation(),
+      ...identity,
+      id: canonicalObservationId(identity),
+      occurredAt: sourceTimestamp,
+      updatedAt: sourceTimestamp,
+      evidence: {
+        source: "gmail",
+        externalId,
+        timestamp: sourceTimestamp,
+        locator: `Gmail message ${externalId}`,
+      },
+    });
+  };
+  const oldInfo = makeObservation("old-info", "2026-07-01T00:00:00.000Z");
+  const oldUrgent = makeObservation("old-urgent", "2026-07-01T00:00:00.000Z");
+  const recentIgnore = makeObservation(
+    "recent-ignore",
+    "2026-08-31T00:00:00.000Z",
+  );
+  let state = await loadInboxState(paths);
+  for (const [order, item] of [oldInfo, oldUrgent, recentIgnore].entries()) {
+    state = reduceObservationPage(state, page(order + 1, item));
+  }
+  state = recordClassifications(state, {
+    [oldInfo.id]: "informational",
+    [oldUrgent.id]: "urgent",
+    [recentIgnore.id]: "ignorable",
+  });
+
+  const pruned = pruneInboxState(state, new Date("2026-09-01T00:00:00.000Z"));
+
+  assert.equal(pruned.observations[oldInfo.id], undefined);
+  assert.equal(pruned.classifications[oldInfo.id], undefined);
+  assert.equal(pruned.observations[oldUrgent.id]?.id, oldUrgent.id);
+  assert.equal(pruned.observations[recentIgnore.id]?.id, recentIgnore.id);
+  assert.equal(pruned.processedFingerprints.length, 3);
 });

@@ -55,12 +55,14 @@
 **Dependencies:** Approved design spec only.
 
 **Files:**
+
 - Create: `scripts/unified-inbox/types.ts`
 - Create: `scripts/unified-inbox/types.test.ts`
 
 **Accepted decisions:** Observation IDs are stable across revisions; dedupe fingerprints combine stable ID plus revision. Cursor keys are source-qualified and cursor order is a nonnegative safe integer used only for monotonic comparison.
 
 **Interfaces:**
+
 - Produces: `InboxObservationSchema`, `ObservationPageSchema`, `InboxAnalysisSchema`, `InboxSource`, `RelationshipContextProvider`, `PrivateInboxReportEnvelopeSchema`, `canonicalObservationId()`, `observationFingerprint()`, and `truncateCodePoints()`.
 
 **DoD:** Strict schemas reject unknown fields, malformed timestamps, oversized content, invalid source/cursor combinations, and non-private report destinations; canonical helpers are deterministic.
@@ -84,15 +86,17 @@ test("canonical identity is stable across revisions while fingerprints are not",
 });
 
 test("analysis and private envelopes reject invented evidence and non-private targets", () => {
-  assert.throws(() => PrivateInboxReportEnvelopeSchema.parse({
-    schemaVersion: 1,
-    ownerChatId: "7",
-    targetChatId: "8",
-    chatKind: "private",
-    generatedAt: "2026-08-09T08:00:00.000Z",
-    text: "report",
-    report: emptyReport,
-  }));
+  assert.throws(() =>
+    PrivateInboxReportEnvelopeSchema.parse({
+      schemaVersion: 1,
+      ownerChatId: "7",
+      targetChatId: "8",
+      chatKind: "private",
+      generatedAt: "2026-08-09T08:00:00.000Z",
+      text: "report",
+      report: emptyReport,
+    }),
+  );
 });
 ```
 
@@ -150,12 +154,14 @@ git commit -m "feat(inbox): define normalized evidence model" -m "Add strict sou
 **Dependencies:** Task 1 schemas and canonical helpers.
 
 **Files:**
+
 - Create: `scripts/unified-inbox/state.ts`
 - Create: `scripts/unified-inbox/state.test.ts`
 
 **Accepted decisions:** The state root is `<resolved ASSISTANT_DATA_DIR>/unified-inbox/owner-<id>`; an owner mismatch fails closed. A cursor is committed only with all observations from its page. State revisions update stable observation records and a bounded fingerprint ledger.
 
 **Interfaces:**
+
 - Consumes: `ObservationPage`, `InboxObservation`, `SourceCursor`.
 - Produces: `InboxState`, `inboxStatePaths(root, dataDir, ownerId)`, `loadInboxState()`, `reduceObservationPage()`, `saveInboxState()`, `withInboxLock()` and `selectReportingObservations()`.
 
@@ -177,7 +183,10 @@ test("a replayed page advances once and stores one stable observation", async ()
 });
 
 test("cursor regression fails before the prior state is overwritten", () => {
-  assert.throws(() => reduceObservationPage(stateAt100, pageAt99), /cursor_regression/u);
+  assert.throws(
+    () => reduceObservationPage(stateAt100, pageAt99),
+    /cursor_regression/u,
+  );
 });
 ```
 
@@ -195,7 +204,9 @@ export const InboxStateSchema = z.strictObject({
   ownerId: OwnerIdSchema,
   cursors: z.record(z.string(), SourceCursorSchema),
   observations: z.record(z.string(), InboxObservationSchema),
-  processedFingerprints: z.array(z.string().regex(/^[a-f0-9]{64}$/u)).max(10_000),
+  processedFingerprints: z
+    .array(z.string().regex(/^[a-f0-9]{64}$/u))
+    .max(10_000),
   sourceHealth: z.record(z.string(), SourceHealthSchema),
   lastReport: LastReportMetadataSchema.nullable(),
 });
@@ -225,6 +236,7 @@ git commit -m "feat(inbox): persist incremental private state" -m "Store normali
 **Dependencies:** Tasks 1-2 domain and state cursor contracts.
 
 **Files:**
+
 - Create: `scripts/unified-inbox/telegram-source.ts`
 - Create: `scripts/unified-inbox/telegram-source.test.ts`
 - Create: `scripts/unified-inbox/google-source.ts`
@@ -233,6 +245,7 @@ git commit -m "feat(inbox): persist incremental private state" -m "Store normali
 **Accepted decisions:** Telegram reuses `TelegramAnalysisClient` and per-chat `afterId`. Gmail queries `in:inbox after:<overlapped-seconds>`, fetches listed messages, and advances by validated `internalDate`. Calendar lists a bounded event window with an overlapped `updatedMin` and advances by validated event `updated` timestamps. Provider overlap plus stable identities supplies deduplication.
 
 **Interfaces:**
+
 - Consumes: `CollectSourceInput`, existing `TelegramAnalysisClient`, injected `GwsRunner`.
 - Produces: `createTelegramInboxSource()`, `createGmailInboxSource()`, `createCalendarInboxSource()`, `execGws()`, and exported provider response parsers for bounded tests.
 
@@ -254,8 +267,12 @@ test("multi-user non-owner fails before contacting Telegram", async () => {
 });
 
 test("Telegram pages use the persisted per-chat afterId and exact message evidence", async () => {
-  const pages = await collect(source, { "telegram:11": cursor("telegram:11", "40", 40) });
-  assert.deepEqual(requestedMessages, [{ chatId: 11, afterId: 40, limit: 200 }]);
+  const pages = await collect(source, {
+    "telegram:11": cursor("telegram:11", "40", 40),
+  });
+  assert.deepEqual(requestedMessages, [
+    { chatId: 11, afterId: 40, limit: 200 },
+  ]);
   assert.equal(pages[0]!.observations[0]!.evidence.externalId, "11:41");
 });
 ```
@@ -266,12 +283,20 @@ test("Telegram pages use the persisted per-chat afterId and exact message eviden
 test("Gmail and Calendar issue only fixed read commands", async () => {
   await collect(gmailSource);
   await collect(calendarSource);
-  assert.deepEqual(calls.map((call) => call.slice(0, 4)), [
-    ["gmail", "users", "messages", "list"],
-    ["gmail", "users", "messages", "get"],
-    ["calendar", "events", "list", "--params"],
-  ]);
-  assert.equal(calls.flat().some((value) => /send|delete|trash|modify|insert|tasks/iu.test(value)), false);
+  assert.deepEqual(
+    calls.map((call) => call.slice(0, 4)),
+    [
+      ["gmail", "users", "messages", "list"],
+      ["gmail", "users", "messages", "get"],
+      ["calendar", "events", "list", "--params"],
+    ],
+  );
+  assert.equal(
+    calls
+      .flat()
+      .some((value) => /send|delete|trash|modify|insert|tasks/iu.test(value)),
+    false,
+  );
 });
 ```
 
@@ -284,7 +309,9 @@ Expected: FAIL because the adapters do not exist.
 - [ ] **Step 4: Implement the Telegram adapter**
 
 ```ts
-export function createTelegramInboxSource(options: TelegramSourceOptions): InboxSource {
+export function createTelegramInboxSource(
+  options: TelegramSourceOptions,
+): InboxSource {
   return {
     source: "telegram",
     async *collect(input) {
@@ -292,8 +319,13 @@ export function createTelegramInboxSource(options: TelegramSourceOptions): Inbox
       const account = await options.client.account();
       for (const dialog of await listDialogs(options.client)) {
         const prior = input.cursors[`telegram:${dialog.id}`];
-        const page = await options.client.messages(dialog.id, prior?.order ?? 0, 200);
-        if (page.messages.length > 0) yield normalizeTelegramPage(account, dialog, page);
+        const page = await options.client.messages(
+          dialog.id,
+          prior?.order ?? 0,
+          200,
+        );
+        if (page.messages.length > 0)
+          yield normalizeTelegramPage(account, dialog, page);
       }
     },
   };
@@ -307,7 +339,10 @@ Do not import Telethon, add MCP tools, or call any endpoint outside the existing
 ```ts
 export type GwsRunner = (args: readonly string[]) => Promise<GwsResult>;
 
-export function execGws(args: readonly string[], options: GwsExecOptions = {}): Promise<GwsResult> {
+export function execGws(
+  args: readonly string[],
+  options: GwsExecOptions = {},
+): Promise<GwsResult> {
   validateReadOnlyGwsArgs(args);
   return execFilePromise(options.bin ?? gwsBin(), args, {
     env: childEnv(options.personalRoot),
@@ -341,6 +376,7 @@ git commit -m "feat(inbox): collect read-only source observations" -m "Adapt the
 **Dependencies:** Task 1 analysis schema and Task 3 normalized observations.
 
 **Files:**
+
 - Create: `agent/skills/unified-inbox/SKILL.md`
 - Create: `scripts/unified-inbox/classifier.ts`
 - Create: `scripts/unified-inbox/classifier.test.ts`
@@ -348,6 +384,7 @@ git commit -m "feat(inbox): collect read-only source observations" -m "Adapt the
 **Accepted decisions:** One structured model call returns decisions, meeting briefs, and optional Gmail proposals. Code validates exact input membership, category completeness, proposal eligibility, addresses derived from Gmail metadata, and output bounds. One malformed-structure repair retry is allowed; semantic evidence failures are not retried.
 
 **Interfaces:**
+
 - Consumes: `InboxObservation[]`, `MeetingContext[]`, `RelationshipContext[]`.
 - Produces: `InboxClassifier`, `analyzeInboxStructured()`, `validateInboxAnalysis()`, and `createModelInboxClassifier()`.
 
@@ -412,7 +449,10 @@ export async function analyzeInboxStructured(
     model: dependencies.model ?? createTextModel(),
     schema: InboxAnalysisSchema,
     system: input.skillText,
-    prompt: JSON.stringify({ observations: input.observations, meetings: input.meetings }),
+    prompt: JSON.stringify({
+      observations: input.observations,
+      meetings: input.meetings,
+    }),
   });
   return InboxAnalysisSchema.parse(await result.object);
 }
@@ -448,6 +488,7 @@ git commit -m "feat(inbox): constrain evidence-based judgment" -m "Add the unifi
 **Dependencies:** Tasks 1 and 4 domain/analysis contracts.
 
 **Files:**
+
 - Create: `scripts/unified-inbox/meeting-prep.ts`
 - Create: `scripts/unified-inbox/meeting-prep.test.ts`
 - Create: `scripts/unified-inbox/report.ts`
@@ -456,6 +497,7 @@ git commit -m "feat(inbox): constrain evidence-based judgment" -m "Add the unifi
 **Accepted decisions:** Meeting correlation uses event attendees, normalized actor addresses/labels, thread metadata, and optional relationship context. Reports list actionable items and meetings, summarize informational/ignorable counts, and never include individual ignorable excerpts.
 
 **Interfaces:**
+
 - Consumes: `InboxObservation[]`, `RelationshipContextProvider`, validated `InboxAnalysis`.
 - Produces: `buildMeetingContexts()`, `EmptyRelationshipContextProvider`, `buildInboxReport()`, `renderInboxReport()`, and `createPrivateInboxEnvelope()`.
 
@@ -467,8 +509,15 @@ git commit -m "feat(inbox): constrain evidence-based judgment" -m "Add the unifi
 
 ```ts
 test("meeting contexts include related recent evidence and optional registry context", async () => {
-  const contexts = await buildMeetingContexts(observations, relationshipProvider, now);
-  assert.deepEqual(contexts[0]!.relatedObservationIds, [gmailMessage.id, telegramMessage.id]);
+  const contexts = await buildMeetingContexts(
+    observations,
+    relationshipProvider,
+    now,
+  );
+  assert.deepEqual(contexts[0]!.relatedObservationIds, [
+    gmailMessage.id,
+    telegramMessage.id,
+  ]);
   assert.equal(contexts[0]!.relationshipContext[0]!.subjectId, "contact:alice");
 });
 
@@ -495,7 +544,11 @@ export async function buildMeetingContexts(
   now = new Date(),
 ): Promise<MeetingContext[]> {
   const events = upcomingCalendarEvents(observations, now, 48 * 60 * 60 * 1000);
-  return Promise.all(events.map((event) => buildOneMeetingContext(event, observations, relationships)));
+  return Promise.all(
+    events.map((event) =>
+      buildOneMeetingContext(event, observations, relationships),
+    ),
+  );
 }
 ```
 
@@ -510,7 +563,8 @@ export function createPrivateInboxEnvelope(
   targetChatId: string,
   generatedAt = new Date(),
 ): PrivateInboxReportEnvelope {
-  if (ownerChatId !== targetChatId) throw new Error("inbox_report_owner_mismatch");
+  if (ownerChatId !== targetChatId)
+    throw new Error("inbox_report_owner_mismatch");
   return PrivateInboxReportEnvelopeSchema.parse({
     schemaVersion: 1,
     ownerChatId,
@@ -547,6 +601,7 @@ git commit -m "feat(inbox): prepare meetings and private reports" -m "Correlate 
 **Dependencies:** Tasks 1-5.
 
 **Files:**
+
 - Create: `scripts/unified-inbox/pipeline.ts`
 - Create: `scripts/unified-inbox/pipeline.test.ts`
 - Create: `scripts/unified-inbox.ts`
@@ -555,6 +610,7 @@ git commit -m "feat(inbox): prepare meetings and private reports" -m "Correlate 
 **Accepted decisions:** Source pages commit serially under the state lock. Nonfatal source errors create sanitized partial health notes; authorization, owner/state mismatch, cursor regression, and invalid model evidence are fatal. The CLI prints text or JSON and never sends it.
 
 **Interfaces:**
+
 - Consumes: `InboxSource[]`, `InboxClassifier`, `RelationshipContextProvider`, state/report functions.
 - Produces: `runUnifiedInbox()`, `runUnifiedInboxCommand()`, `UnifiedInboxResult`, and `InboxReportSink` interface for later scheduler/delivery integration.
 
@@ -578,7 +634,10 @@ test("first run collects three sources and replay stays deduplicated", async () 
 });
 
 test("invalid model evidence produces no delivery envelope", async () => {
-  await assert.rejects(() => runUnifiedInbox(dependenciesWithInventedEvidence), /unknown_evidence/u);
+  await assert.rejects(
+    () => runUnifiedInbox(dependenciesWithInventedEvidence),
+    /unknown_evidence/u,
+  );
   assert.equal(sinkCalls, 0);
 });
 ```
@@ -588,7 +647,10 @@ test("invalid model evidence produces no delivery envelope", async () => {
 ```ts
 test("command refuses non-owner, non-read-only, or redirected output before collection", async () => {
   for (const env of invalidEnvironments) {
-    const code = await runUnifiedInboxCommand(["run", "--json"], { env, runImpl });
+    const code = await runUnifiedInboxCommand(["run", "--json"], {
+      env,
+      runImpl,
+    });
     assert.equal(code, 1);
   }
   assert.equal(runCalls, 0);
@@ -604,13 +666,18 @@ Expected: FAIL because orchestration and command modules do not exist.
 - [ ] **Step 4: Implement pipeline orchestration**
 
 ```ts
-export async function runUnifiedInbox(options: RunUnifiedInboxOptions): Promise<UnifiedInboxResult> {
+export async function runUnifiedInbox(
+  options: RunUnifiedInboxOptions,
+): Promise<UnifiedInboxResult> {
   return withInboxLock(options.paths, async () => {
     let state = await loadInboxState(options.paths);
     const health: SourceRunHealth[] = [];
     for (const source of options.sources) {
       try {
-        for await (const page of source.collect({ cursors: state.cursors, now: options.now.toISOString() })) {
+        for await (const page of source.collect({
+          cursors: state.cursors,
+          now: options.now.toISOString(),
+        })) {
           state = reduceObservationPage(state, page);
           await saveInboxState(options.paths, state);
         }
@@ -621,10 +688,22 @@ export async function runUnifiedInbox(options: RunUnifiedInboxOptions): Promise<
       }
     }
     const observations = selectReportingObservations(state, options.now);
-    const meetings = await buildMeetingContexts(observations, options.relationships, options.now);
-    const analysis = await options.classifier.analyze({ observations, meetings });
+    const meetings = await buildMeetingContexts(
+      observations,
+      options.relationships,
+      options.now,
+    );
+    const analysis = await options.classifier.analyze({
+      observations,
+      meetings,
+    });
     const report = buildInboxReport(observations, meetings, analysis, health);
-    const envelope = createPrivateInboxEnvelope(report, options.ownerId, options.targetChatId, options.now);
+    const envelope = createPrivateInboxEnvelope(
+      report,
+      options.ownerId,
+      options.targetChatId,
+      options.now,
+    );
     state = recordSuccessfulReport(state, report, options.now);
     await saveInboxState(options.paths, state);
     return { state, report, envelope, collected: summarizeCollection(state) };
@@ -647,9 +726,11 @@ export async function runUnifiedInboxCommand(
   const policy = validateCommandPolicy(dependencies.env ?? process.env);
   if (argv[0] !== "run") return writeFailure("unified_inbox_usage_error");
   const result = await (dependencies.runImpl ?? runRealUnifiedInbox)(policy);
-  dependencies.writeOutput?.(argv.includes("--json")
-    ? JSON.stringify(result.envelope)
-    : result.envelope.text);
+  dependencies.writeOutput?.(
+    argv.includes("--json")
+      ? JSON.stringify(result.envelope)
+      : result.envelope.text,
+  );
   return result.report.partial ? 2 : 0;
 }
 ```
@@ -684,6 +765,7 @@ git commit -m "feat(inbox): compose unified read-only reports" -m "Run increment
 **Dependencies:** Tasks 1-6 complete and locally committed.
 
 **Files:**
+
 - Modify: `docs/plans/2026-08-07-assistant-capability-backlog.md`
 - Review: every file changed from `origin/main...HEAD`
 

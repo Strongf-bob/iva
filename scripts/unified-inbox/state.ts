@@ -28,6 +28,7 @@ import {
 
 const MAX_FINGERPRINTS = 10_000;
 const DEFAULT_REPORT_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
+const DEFAULT_NON_ACTIONABLE_RETENTION_MS = 14 * 24 * 60 * 60 * 1_000;
 
 const SourceHealthStateSchema = z.strictObject({
   status: z.enum(["ok", "failed"]),
@@ -348,6 +349,33 @@ export function recordClassifications(
       throw new Error("unified_inbox_unknown_classification");
     }
     state.classifications[observationId] = InboxCategorySchema.parse(category);
+  }
+  return InboxStateSchema.parse(state);
+}
+
+export function pruneInboxState(
+  current: InboxState,
+  now = new Date(),
+  nonActionableRetentionMs = DEFAULT_NON_ACTIONABLE_RETENTION_MS,
+): InboxState {
+  if (
+    !Number.isSafeInteger(nonActionableRetentionMs) ||
+    nonActionableRetentionMs <= 0
+  ) {
+    throw new TypeError("retention window must be a safe positive integer");
+  }
+  const state = structuredClone(InboxStateSchema.parse(current));
+  const cutoff = now.getTime() - nonActionableRetentionMs;
+  for (const [observationId, observation] of Object.entries(
+    state.observations,
+  )) {
+    const category = state.classifications[observationId];
+    const isNonActionable =
+      category === "informational" || category === "ignorable";
+    if (isNonActionable && Date.parse(observation.occurredAt) < cutoff) {
+      delete state.observations[observationId];
+      delete state.classifications[observationId];
+    }
   }
   return InboxStateSchema.parse(state);
 }

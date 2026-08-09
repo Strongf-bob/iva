@@ -9,6 +9,7 @@ import { buildInboxReport, createPrivateInboxEnvelope } from "./report.ts";
 import {
   loadInboxState,
   recordClassifications,
+  pruneInboxState,
   recordSourceFailure,
   recordSourceSuccess,
   recordSuccessfulReport,
@@ -169,6 +170,7 @@ export async function runUnifiedInbox({
         ]),
       ),
     );
+    state = pruneInboxState(state, now);
     state = recordSuccessfulReport(state, report, reportDigest(report));
     await saveInboxState(paths, state);
 
