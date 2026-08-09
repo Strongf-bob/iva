@@ -48,7 +48,10 @@ void test("cancellation is scoped to the supplied personal data directory", asyn
   const created = await createReminder(firstDir, input, { now: () => now });
   await createReminder(secondDir, input, { now: () => now });
 
-  assert.equal((await cancelReminder(firstDir, created.job.id)).state, "cancelled");
+  assert.equal(
+    (await cancelReminder(firstDir, created.job.id)).state,
+    "cancelled",
+  );
   assert.equal((await listReminders(firstDir)).length, 0);
   assert.equal((await listReminders(secondDir)).length, 1);
 });
@@ -60,7 +63,11 @@ void test("corrupt reminder data is preserved and rejected", async () => {
 
   await assert.rejects(() => loadReminderStore(dataDir), /damaged/u);
   assert.equal(existsSync(file), false);
-  assert.ok(readdirSync(dataDir).some((name) => name.startsWith("reminders.json.corrupt-")));
+  assert.ok(
+    readdirSync(dataDir).some((name) =>
+      name.startsWith("reminders.json.corrupt-"),
+    ),
+  );
 });
 
 void test("concurrent creates serialize without losing jobs", async () => {
@@ -69,7 +76,11 @@ void test("concurrent creates serialize without losing jobs", async () => {
     Array.from({ length: 8 }, (_, index) =>
       createReminder(
         dataDir,
-        { ...input, idempotencyKey: `parallel-${index}`, message: `job ${index}` },
+        {
+          ...input,
+          idempotencyKey: `parallel-${index}`,
+          message: `job ${index}`,
+        },
         { now: () => now },
       ),
     ),

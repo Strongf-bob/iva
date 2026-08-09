@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { createReminder, getReminder, mutateReminderStore } from "./reminder-store.ts";
+import {
+  createReminder,
+  getReminder,
+  mutateReminderStore,
+} from "./reminder-store.ts";
 import { runReminderTick } from "./reminder-runner.ts";
 
 const createdAt = Date.parse("2026-08-09T10:00:00.000Z");
@@ -145,7 +149,9 @@ void test("inactive users are skipped and expired leases recover", async () => {
     { now: () => createdAt },
   );
   await mutateReminderStore(data, (store) => {
-    const job = store.jobs.find((candidate) => candidate.id === created.job.id)!;
+    const job = store.jobs.find(
+      (candidate) => candidate.id === created.job.id,
+    )!;
     job.state = "delivering";
     job.occurrenceAt = dueAt;
     job.leaseUntil = dueAt - 1;

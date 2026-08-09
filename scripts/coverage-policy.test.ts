@@ -8,12 +8,12 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
-const EXPECTED_PRODUCTION_COUNT = 164;
+const EXPECTED_PRODUCTION_COUNT = 171;
 const EXPECTED_INVENTORY_SHA256 =
-  "41f6860bbee73bbf3cfec3061728032b3652715512722750873c852ba3c9929e";
+  "788fb8df1817c2727750551f9291aeff7d6abe3e0ac4e67df1903b8bc924eabf";
 
 // Node's native include globs filter loaded modules; they do not load untouched files.
-// This test pins the exact production path inventory and a separately measured 29-path
+// This test pins the exact production path inventory and a separately measured 31-path
 // blind-spot snapshot. It does not determine what the current import graph loads, claim
 // that the other paths are reported, or notice import-graph changes without path changes.
 const MEASURED_UNREPORTED_BY_CATEGORY = {

@@ -63,7 +63,9 @@ export function reminderFile(dataDir: string): string {
   return join(resolve(dataDir), "reminders.json");
 }
 
-export async function loadReminderStore(dataDir: string): Promise<ReminderStore> {
+export async function loadReminderStore(
+  dataDir: string,
+): Promise<ReminderStore> {
   return parseStore(
     await loadJsonStrict<unknown>(reminderFile(dataDir), emptyStore()),
   );
@@ -143,7 +145,9 @@ export async function getReminder(
   dataDir: string,
   id: string,
 ): Promise<ReminderJob | null> {
-  return (await loadReminderStore(dataDir)).jobs.find((job) => job.id === id) ?? null;
+  return (
+    (await loadReminderStore(dataDir)).jobs.find((job) => job.id === id) ?? null
+  );
 }
 
 export async function cancelReminder(
@@ -153,7 +157,8 @@ export async function cancelReminder(
   return mutateReminderStore(dataDir, (store) => {
     const job = store.jobs.find((candidate) => candidate.id === id);
     if (!job) throw new Error(`reminder ${id} not found`);
-    if (job.state === "completed") throw new Error("completed reminder cannot be cancelled");
+    if (job.state === "completed")
+      throw new Error("completed reminder cannot be cancelled");
     job.state = "cancelled";
     job.nextRunAt = null;
     job.retryAt = null;

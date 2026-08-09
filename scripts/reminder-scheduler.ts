@@ -3,10 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { loadJsonStrict, saveJsonAtomic } from "../agent/lib/json-store.ts";
 import { resolveUserLayout } from "./lib/user-layout.ts";
-import {
-  parseTelegramUserId,
-  readUserRegistry,
-} from "./lib/user-registry.ts";
+import { parseTelegramUserId, readUserRegistry } from "./lib/user-registry.ts";
 import {
   cancelReminder,
   createReminder,
@@ -41,7 +38,9 @@ function personalContext(env: NodeJS.ProcessEnv): {
   const userId = parseTelegramUserId(env.ASSISTANT_USER_ID);
   const rawDataDir = env.ASSISTANT_DATA_DIR;
   if (!userId || !rawDataDir) {
-    throw new Error("reminder command requires a fixed user identity and data directory");
+    throw new Error(
+      "reminder command requires a fixed user identity and data directory",
+    );
   }
   const dataDir = resolve(rawDataDir);
   if (env.ASSISTANT_MULTI_USER === "1" || env.IVA_RUNTIME === "container") {
@@ -50,7 +49,8 @@ function personalContext(env: NodeJS.ProcessEnv): {
       throw new Error("reminder command requires an absolute personal root");
     }
     const root = resolve(rawRoot);
-    if (!inside(root, dataDir)) throw new Error("reminder data escaped personal root");
+    if (!inside(root, dataDir))
+      throw new Error("reminder data escaped personal root");
   }
   return { userId, dataDir };
 }
@@ -111,7 +111,8 @@ export async function executeReminderCommand(
   const action = args[0];
   if (action === "health") {
     const dataDir = env.ASSISTANT_DATA_DIR;
-    if (!dataDir) throw new Error("scheduler health requires ASSISTANT_DATA_DIR");
+    if (!dataDir)
+      throw new Error("scheduler health requires ASSISTANT_DATA_DIR");
     return health(dataDir, now());
   }
   const { dataDir } = personalContext(env);
@@ -146,7 +147,9 @@ export async function executeReminderCommand(
     );
     return { ok: true, counts };
   }
-  throw new Error("reminder action must be create, list, get, cancel, status, or health");
+  throw new Error(
+    "reminder action must be create, list, get, cancel, status, or health",
+  );
 }
 
 async function schedulerUsers(dataDir: string): Promise<ReminderUser[]> {
@@ -215,7 +218,10 @@ async function main(): Promise<void> {
   if (!result.ok) process.exitCode = 1;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
   void main().catch((error: unknown) => {
     process.stderr.write(
       `${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })}\n`,

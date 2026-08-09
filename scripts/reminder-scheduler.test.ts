@@ -22,12 +22,14 @@ void test("CLI create and list use the fixed personal user environment", async (
   const created = await executeReminderCommand(["create"], env, {
     now: () => Date.parse("2026-08-09T10:00:00.000Z"),
     readInput: () =>
-      Promise.resolve(JSON.stringify({
-        idempotencyKey: "cli-1",
-        message: "CLI reminder",
-        timezone: "UTC",
-        schedule: { kind: "once", at: "2026-08-09T11:00:00.000Z" },
-      })),
+      Promise.resolve(
+        JSON.stringify({
+          idempotencyKey: "cli-1",
+          message: "CLI reminder",
+          timezone: "UTC",
+          schedule: { kind: "once", at: "2026-08-09T11:00:00.000Z" },
+        }),
+      ),
   });
   const listed = await executeReminderCommand(["list"], env);
 
@@ -71,5 +73,8 @@ void test("scheduler heartbeat has a stable health contract", async () => {
   );
   assert.equal(status.ok, true);
   assert.equal(status.status, "ready");
-  assert.match(schedulerStatusFile(dataDir), /reminder-scheduler-status\.json$/u);
+  assert.match(
+    schedulerStatusFile(dataDir),
+    /reminder-scheduler-status\.json$/u,
+  );
 });

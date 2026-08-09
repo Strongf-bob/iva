@@ -28,6 +28,7 @@
 **Dependencies:** Existing `scripts/lib/menu/gws-auth.ts`, `scripts/lib/menu/gws.ts`, `agent/tools/google_workspace.ts`, and menu state `personalRoot`.
 
 **Files:**
+
 - Modify: `Containerfile`
 - Modify: `scripts/lib/menu/gws-auth.ts`
 - Modify: `scripts/lib/menu/gws.ts`
@@ -39,6 +40,7 @@
 **Accepted decisions:** Pin `@googleworkspace/cli@0.22.5`, the current immutable upstream release verified from the package registry and upstream release page. Container or multi-user execution fails closed when the personal root is absent or non-absolute.
 
 **Interfaces:**
+
 - Produces: `resolveGoogleHome({ personalRoot, container, multiUser }): string` and `childEnv(homeDir: string): NodeJS.ProcessEnv`.
 - Consumes: absolute `personalRoot` from the authenticated menu/worker route.
 
@@ -58,7 +60,10 @@ assert.throws(
   /personal Google HOME/u,
 );
 assert.equal(
-  resolveGoogleHome({ personalRoot: "/srv/iva/data/users/101", container: true }),
+  resolveGoogleHome({
+    personalRoot: "/srv/iva/data/users/101",
+    container: true,
+  }),
   "/srv/iva/data/users/101",
 );
 ```
@@ -103,6 +108,7 @@ git commit -m "feat(container): pin Google Workspace CLI" -m "Install a verified
 **Dependencies:** `agent/lib/json-store.ts`, `scripts/lib/timezone.ts`, and fixed per-user `ASSISTANT_DATA_DIR`.
 
 **Files:**
+
 - Create: `scripts/lib/reminder-schema.ts`
 - Create: `scripts/lib/reminder-cron.ts`
 - Create: `scripts/lib/reminder-store.ts`
@@ -113,6 +119,7 @@ git commit -m "feat(container): pin Google Workspace CLI" -m "Install a verified
 **Accepted decisions:** Persist `iva-reminders/v1` JSON under `<personal data>/reminders.json`; use exclusive lock plus atomic rename; implement bounded standard five-field cron parsing without adding a scheduler database or daemon dependency.
 
 **Interfaces:**
+
 - Produces: `ReminderInputSchema`, `ReminderJob`, `ReminderStore`, `nextCronOccurrence(expression, timezone, afterMs)`, `createReminder`, `listReminders`, `cancelReminder`, and `mutateReminderStore`.
 - Store fields: schema, revision, jobs; each job contains id, idempotencyKey, message, timezone, schedule, state, nextRunAt, attempt/delivery timestamps, failure count, and bounded sanitized last error.
 
@@ -125,8 +132,14 @@ git commit -m "feat(container): pin Google Workspace CLI" -m "Install a verified
 Cover exact cases:
 
 ```ts
-assert.equal(nextCronOccurrence("0 8 * * 1", "Europe/Moscow", mondayBefore), mondayAtEight);
-assert.throws(() => nextCronOccurrence("@daily", "Europe/Moscow", now), /five fields/u);
+assert.equal(
+  nextCronOccurrence("0 8 * * 1", "Europe/Moscow", mondayBefore),
+  mondayAtEight,
+);
+assert.throws(
+  () => nextCronOccurrence("@daily", "Europe/Moscow", now),
+  /five fields/u,
+);
 assert.equal((await createReminder(store, input)).created, true);
 assert.equal((await createReminder(store, input)).created, false);
 await assert.rejects(() => loadReminderStore(corruptPath), /damaged/u);
@@ -180,6 +193,7 @@ git commit -m "feat(scheduler): add durable reminder store" -m "Define validated
 **Dependencies:** Task 2 reminder interfaces, `readUserRegistry`, `resolveUserLayout`, and `sendTelegramHtml`.
 
 **Files:**
+
 - Create: `scripts/lib/reminder-runner.ts`
 - Create: `scripts/lib/reminder-runner.test.ts`
 - Create: `scripts/reminder-scheduler.ts`
@@ -193,6 +207,7 @@ git commit -m "feat(scheduler): add durable reminder store" -m "Define validated
 **Accepted decisions:** Scheduler is a separate Compose service using the same image and `data` bind mount. Delivery is at-least-once with a persisted delivery lease; a crash around Telegram acknowledgement can cause at most one retry, never an unbounded replay storm. Missed recurring slots coalesce to one delivery.
 
 **Interfaces:**
+
 - Produces: `runReminderTick(options): Promise<TickReport>`, `runScheduler(options): Promise<never>`, CLI actions `create|list|get|cancel|status|run|health`, and Eve tool actions `create|list|get|cancel|status`.
 - Consumes: fixed `ASSISTANT_USER_ID` and `ASSISTANT_DATA_DIR` for mutations; scheduler service alone iterates active registry users.
 
@@ -263,6 +278,7 @@ git commit -m "feat(scheduler): run durable container reminders" -m "Add a dedic
 **Dependencies:** Task 3 scheduler heartbeat/status and existing `svc-run.ts`, `schedule-runner.ts`, and menu state `personalRoot`.
 
 **Files:**
+
 - Create: `scripts/lib/container-maintenance.ts`
 - Create: `scripts/lib/container-maintenance.test.ts`
 - Modify: `scripts/lib/menu/service.ts`
@@ -279,6 +295,7 @@ git commit -m "feat(scheduler): run durable container reminders" -m "Add a dedic
 **Accepted decisions:** `IVA_RUNTIME=container` selects the adapter. Container actions are attached bounded processes; no Docker socket, `systemctl`, `systemd-run`, `crontab`, self-restart, or in-chat update execution.
 
 **Interfaces:**
+
 - Produces: `containerMaintenanceSpec(command, context): ProcessSpec`, `readContainerRuntimeStatus(...)`, and per-process explicit environment in `startProcess`.
 - Consumes: authenticated menu state's absolute `personalRoot`, personal data/vault paths, scheduler heartbeat, and existing update UI copy.
 
@@ -291,7 +308,10 @@ git commit -m "feat(scheduler): run durable container reminders" -m "Add a dedic
 Assert:
 
 ```ts
-assert.equal(calls.some(({ file }) => file === "systemctl"), false);
+assert.equal(
+  calls.some(({ file }) => file === "systemctl"),
+  false,
+);
 assert.equal(spec.cwd, "/app/data/users/101/vault");
 assert.equal(spec.env?.HOME, "/app/data/users/101");
 assert.match(updateView.text, /docker compose pull/u);
@@ -332,6 +352,7 @@ git commit -m "feat(container): adapt Maintenance runtime" -m "Run diagnostics, 
 **Dependencies:** Tasks 1-4 complete.
 
 **Files:**
+
 - Create: `docs/scheduler.md`
 - Modify: `agent/instructions.md`
 - Modify: `docs/deploy.md`
@@ -343,6 +364,7 @@ git commit -m "feat(container): adapt Maintenance runtime" -m "Run diagnostics, 
 **Accepted decisions:** User reminders use the `reminders` tool, not bash or host schedulers. Documentation states at-least-once delivery and the narrow duplicate window. Future daily/weekly branches use the stable tool/library contract.
 
 **Interfaces:**
+
 - Documents: schema version, action inputs/outputs, one-off/cron semantics, timezone/DST behavior, restart recovery, retry/coalescing, private delivery invariant, health/status, and Compose lifecycle.
 
 **DoD:** Agent instructions contain no active recommendation to use `systemd-run` or `crontab` for user reminders; container deployment includes scheduler lifecycle and `gws` verification; docs preserve Google and Telegram policies; full checks pass; final review has no unresolved findings; branch is clean and local-only.

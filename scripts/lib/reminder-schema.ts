@@ -26,7 +26,10 @@ export const ReminderCreateInputSchema = z.strictObject({
   idempotencyKey: IdempotencyKeySchema,
   message: MessageSchema,
   timezone: TimeZoneSchema,
-  schedule: z.discriminatedUnion("kind", [OnceScheduleSchema, CronScheduleSchema]),
+  schedule: z.discriminatedUnion("kind", [
+    OnceScheduleSchema,
+    CronScheduleSchema,
+  ]),
 });
 
 export type ReminderCreateInput = z.infer<typeof ReminderCreateInputSchema>;

@@ -1,8 +1,5 @@
 import { nextCronOccurrence } from "./reminder-cron.ts";
-import {
-  mutateReminderStore,
-  type ReminderJob,
-} from "./reminder-store.ts";
+import { mutateReminderStore, type ReminderJob } from "./reminder-store.ts";
 
 const DEFAULT_LEASE_MS = 2 * 60_000;
 const MAX_DELIVERIES_PER_USER = 20;
@@ -26,7 +23,10 @@ export type ReminderTickReport = {
 type ReservedReminder = { job: ReminderJob; recovered: boolean };
 
 function retryDelay(failureCount: number): number {
-  return Math.min(5 * 60_000 * 2 ** Math.max(0, failureCount - 1), 6 * 60 * 60_000);
+  return Math.min(
+    5 * 60_000 * 2 ** Math.max(0, failureCount - 1),
+    6 * 60 * 60_000,
+  );
 }
 
 async function reserveDueReminder(
@@ -59,8 +59,13 @@ async function reserveDueReminder(
   });
 }
 
-function nextRecurringRun(job: ReminderJob, occurrenceAt: number, now: number): number {
-  if (job.schedule.kind !== "cron") throw new Error("reminder is not recurring");
+function nextRecurringRun(
+  job: ReminderJob,
+  occurrenceAt: number,
+  now: number,
+): number {
+  if (job.schedule.kind !== "cron")
+    throw new Error("reminder is not recurring");
   let next = occurrenceAt;
   for (let skipped = 0; skipped < 1000; skipped += 1) {
     next = nextCronOccurrence(job.schedule.expression, job.timezone, next);
@@ -116,10 +121,7 @@ export async function runReminderTick({
   log = () => {},
 }: {
   users: readonly ReminderUser[];
-  deliver: (
-    chatId: string,
-    message: string,
-  ) => Promise<ReminderDeliveryResult>;
+  deliver: (chatId: string, message: string) => Promise<ReminderDeliveryResult>;
   now?: () => number;
   leaseMs?: number;
   log?: (...parts: unknown[]) => void;

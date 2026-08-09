@@ -68,7 +68,8 @@ function parseField(source: string, field: Field): ReadonlySet<number> {
 
 export function parseCronExpression(expression: string): ParsedCronExpression {
   const fields = expression.trim().split(/\s+/u);
-  if (fields.length !== 5) throw new Error("cron expression must have five fields");
+  if (fields.length !== 5)
+    throw new Error("cron expression must have five fields");
   const parsed = fields.map((field, index) => parseField(field, FIELDS[index]));
   return {
     minutes: parsed[0],
@@ -114,7 +115,8 @@ export function nextCronOccurrence(
   timezone: string,
   afterMs: number,
 ): number {
-  if (!Number.isFinite(afterMs)) throw new Error("cron reference time is invalid");
+  if (!Number.isFinite(afterMs))
+    throw new Error("cron reference time is invalid");
   const zone = validateTimeZone(timezone);
   if (!zone) throw new Error("reminder timezone is invalid");
   const parsed = parseCronExpression(expression);
