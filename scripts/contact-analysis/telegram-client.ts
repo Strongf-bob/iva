@@ -55,12 +55,12 @@ export type TelegramMessageWindow = z.infer<typeof MessageWindowSchema>;
 export interface TelegramAnalysisClient {
   account(): Promise<TelegramAccount>;
   dialogs(offset: number, limit: number): Promise<TelegramDialogsPage>;
-  messages(
+  messages?(
     chatId: number,
     afterId: number,
     limit: number,
   ): Promise<TelegramMessagesPage>;
-  messageWindow?(
+  messageWindow(
     chatId: number,
     afterId: number,
     maxChars: number,

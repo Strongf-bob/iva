@@ -76,7 +76,7 @@ test("client uses loopback GET routes, bearer auth and encoded pagination", asyn
 
   assert.equal((await client.account()).userId, 7);
   assert.equal((await client.dialogs(100, 25)).dialogs[0]?.kind, "group");
-  assert.equal((await client.messages(-1001, 8, 200)).messages[0]?.id, 9);
+  assert.equal((await client.messages?.(-1001, 8, 200))?.messages[0]?.id, 9);
 
   assert.deepEqual(
     requests.map((request) => request.url),

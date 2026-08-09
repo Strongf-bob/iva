@@ -50,14 +50,18 @@ function fakeClient(accountUserId = 7, inaccessible = new Set<number>()) {
       dialogs: dialogs.slice(offset, offset + limit),
       nextOffset: offset + limit < dialogs.length ? offset + limit : null,
     }),
-    messages: async (chatId: number, afterId: number) => {
+    messageWindow: async (chatId: number, afterId: number) => {
       if (inaccessible.has(chatId)) {
         throw new Error("telegram_analysis_http_404");
       }
-      const nextId = afterId + 1;
-      return nextId <= 3
-        ? { messages: [message(chatId, nextId)], nextAfterId: nextId }
-        : { messages: [], nextAfterId: afterId };
+      const messages = [1, 2, 3]
+        .filter((id) => id > afterId)
+        .map((id) => message(chatId, id));
+      return {
+        messages,
+        latestMessageId: messages.at(-1)?.id ?? afterId,
+        skippedMessages: 0,
+      };
     },
   };
 }
@@ -91,7 +95,7 @@ test("fixed worker pool preserves result order with bounded concurrency", async 
   );
 });
 
-test("five chats run three at once while pages and reducer stay sequential", async () => {
+test("five chats run three at once with one model call and serial reducers", async () => {
   const root = await mkdtemp(join(tmpdir(), "iva-contact-coordinator-"));
   let activeChats = 0;
   let maxConcurrentChats = 0;
@@ -122,13 +126,18 @@ test("five chats run three at once while pages and reducer stay sequential", asy
       reducerActive--;
       return { writtenFiles: [], observationIds: [] };
     },
+    updateQuestionWorkbookImpl: async () => ({
+      file: join(root, "vault", "inbox", "contact-analysis-questions.md"),
+      questionIds: [],
+    }),
+    readSkillTextImpl: async () => "skill",
     sleepImpl: async () => {},
   });
 
   assert.equal(maxConcurrentChats, 3);
   assert.equal(reducerMaxConcurrency, 1);
   for (const id of [1, 2, 3, 4, 5]) {
-    assert.deepEqual(pageOrder.get(id), [1, 2, 3]);
+    assert.deepEqual(pageOrder.get(id), [1]);
   }
   assert.deepEqual(report, {
     completedChats: 5,
@@ -137,10 +146,12 @@ test("five chats run three at once while pages and reducer stay sequential", asy
     failedChats: 0,
     processedMessages: 15,
     unsupportedMedia: 5,
+    skippedMessages: 0,
+    generatedQuestions: 0,
   });
 });
 
-test("cursor advances only after reduction and a resumed page is reduced once", async () => {
+test("cursor advances only after both reducers and a resumed window is reduced once", async () => {
   const root = await mkdtemp(join(tmpdir(), "iva-contact-coordinator-"));
   const analyzedPages: number[] = [];
   const reducedPages: number[] = [];
@@ -163,13 +174,18 @@ test("cursor advances only after reduction and a resumed page is reduced once", 
     },
     reduceBatchImpl: async (input: { batch: AnalysisBatch }) => {
       const pageId = Number(input.batch.rollingSummary.slice("page:".length));
-      if (pageId === 2 && crash) {
+      if (pageId === 1 && crash) {
         crash = false;
         throw new Error("simulated_before_durable_reduce");
       }
       reducedPages.push(pageId);
       return { writtenFiles: [], observationIds: [] };
     },
+    updateQuestionWorkbookImpl: async () => ({
+      file: join(root, "vault", "inbox", "contact-analysis-questions.md"),
+      questionIds: [],
+    }),
+    readSkillTextImpl: async () => "skill",
     sleepImpl: async () => {},
   };
 
@@ -177,13 +193,13 @@ test("cursor advances only after reduction and a resumed page is reduced once", 
   assert.equal(first.failedChats, 1);
   assert.equal(
     (await loadState(statePaths(root, "data", 7))).jobs["1"]?.committedThrough,
-    1,
+    0,
   );
 
   const second = await runContactAnalysis(common);
   assert.equal(second.completedChats, 1);
-  assert.deepEqual(analyzedPages, [1, 2, 2, 3]);
-  assert.deepEqual(reducedPages, [1, 2, 3]);
+  assert.deepEqual(analyzedPages, [1, 1]);
+  assert.deepEqual(reducedPages, [1]);
   assert.equal(
     (await loadState(statePaths(root, "data", 7))).jobs["1"]?.committedThrough,
     3,
@@ -205,6 +221,10 @@ test("validation and inaccessible-chat failures stay isolated", async () => {
       return analyzed(input.dialog.id, input.messages[0]!.id);
     },
     reduceBatchImpl: async () => ({ writtenFiles: [], observationIds: [] }),
+    updateQuestionWorkbookImpl: async () => ({
+      file: join(root, "vault", "inbox", "contact-analysis-questions.md"),
+      questionIds: [],
+    }),
     sleepImpl: async () => {},
   });
 
@@ -229,12 +249,13 @@ test("a non-advancing message cursor fails before analysis", async () => {
     client: {
       ...fakeClient(),
       dialogs: async () => ({ dialogs: [dialog(1)], nextOffset: null }),
-      messages: async () => {
+      messageWindow: async () => {
         messageCalls++;
-        if (messageCalls > 1) {
-          throw new Error("telegram_analysis_invalid_message_cursor");
-        }
-        return { messages: [message(1, 1)], nextAfterId: 0 };
+        return {
+          messages: [message(1, 1)],
+          latestMessageId: 0,
+          skippedMessages: 0,
+        };
       },
     },
     analyzePageImpl: async () => {
@@ -242,6 +263,10 @@ test("a non-advancing message cursor fails before analysis", async () => {
       return analyzed(1, 1);
     },
     reduceBatchImpl: async () => ({ writtenFiles: [], observationIds: [] }),
+    updateQuestionWorkbookImpl: async () => ({
+      file: join(root, "vault", "inbox", "contact-analysis-questions.md"),
+      questionIds: [],
+    }),
     sleepImpl: async () => {},
   });
 
@@ -251,6 +276,41 @@ test("a non-advancing message cursor fails before analysis", async () => {
     (await loadState(statePaths(root, "data", 7))).jobs["1"]?.lastErrorCode,
     "telegram_analysis_invalid_message_cursor",
   );
+});
+
+test("an empty oversized window advances without a model call", async () => {
+  const root = await mkdtemp(join(tmpdir(), "iva-contact-coordinator-"));
+  let analysisCalls = 0;
+  const report = await runContactAnalysis({
+    root,
+    dataDir: "data",
+    vault: join(root, "vault"),
+    client: {
+      ...fakeClient(),
+      dialogs: async () => ({ dialogs: [dialog(1)], nextOffset: null }),
+      messageWindow: async () => ({
+        messages: [],
+        latestMessageId: 3,
+        skippedMessages: 3,
+      }),
+    },
+    analyzePageImpl: async () => {
+      analysisCalls++;
+      return analyzed(1, 3);
+    },
+    reduceBatchImpl: async () => ({ writtenFiles: [], observationIds: [] }),
+    updateQuestionWorkbookImpl: async () => ({
+      file: join(root, "vault", "inbox", "contact-analysis-questions.md"),
+      questionIds: [],
+    }),
+    sleepImpl: async () => {},
+  });
+
+  assert.equal(analysisCalls, 0);
+  assert.equal(report.skippedMessages, 3);
+  const job = (await loadState(statePaths(root, "data", 7))).jobs["1"]!;
+  assert.equal(job.committedThrough, 3);
+  assert.equal(job.skippedMessages, 3);
 });
 
 test("authorization loss blocks the account and account IDs never share state", async () => {

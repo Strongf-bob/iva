@@ -62,6 +62,8 @@ test("sync runs under the shared pipeline lock and prints a bounded report", asy
     failedChats: 0,
     processedMessages: 42,
     unsupportedMedia: 2,
+    skippedMessages: 7,
+    generatedQuestions: 5,
   };
 
   const code = await runContactAnalysisCommand(["sync", "--json"], {
@@ -109,6 +111,8 @@ test("multi-user owner keeps personal checkpoints but reads the shared userbot t
         failedChats: 0,
         processedMessages: 0,
         unsupportedMedia: 0,
+        skippedMessages: 0,
+        generatedQuestions: 0,
       };
     },
   });

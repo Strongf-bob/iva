@@ -133,6 +133,7 @@ export interface AnalyzePageInput {
   rollingSummary: string;
   messages: TelegramMessage[];
   allowedSubjects: ReadonlySet<string>;
+  skillText?: string;
   maxChars?: number;
 }
 
@@ -148,7 +149,8 @@ export async function analyzePage(
   const readSkillText =
     dependencies.readSkillText ?? ((path) => readFile(path, "utf8"));
   const run = dependencies.analyzeStructuredImpl ?? analyzeStructured;
-  const skillText = await readSkillText(skillPathFor(input.dialog.kind));
+  const skillText =
+    input.skillText ?? (await readSkillText(skillPathFor(input.dialog.kind)));
   const batch = await run({
     skillText,
     ownerUserId: input.ownerUserId,

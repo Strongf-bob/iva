@@ -17,6 +17,7 @@ const JobStateSchema = z.strictObject({
   title: z.string().min(1).max(500),
   committedThrough: z.int().nonnegative(),
   contextSummary: z.string().max(4000),
+  skippedMessages: z.int().nonnegative().default(0),
   status: z.enum(["ready", "running", "retry", "complete"]),
   attempts: z.int().nonnegative(),
   lastErrorCode: z.string().min(1).max(100).nullable(),
