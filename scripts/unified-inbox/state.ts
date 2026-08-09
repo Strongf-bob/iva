@@ -299,6 +299,26 @@ export function recordSourceFailure(
   return InboxStateSchema.parse(state);
 }
 
+export function recordSourceSuccess(
+  current: InboxState,
+  source: InboxSourceName,
+  collected: number,
+  checkedAt = new Date(),
+): InboxState {
+  if (!Number.isSafeInteger(collected) || collected < 0) {
+    throw new TypeError("collected must be a safe nonnegative integer");
+  }
+  const state = structuredClone(InboxStateSchema.parse(current));
+  const parsedSource = InboxSourceNameSchema.parse(source);
+  state.sourceHealth[parsedSource] = {
+    status: "ok",
+    collected,
+    checkedAt: checkedAt.toISOString(),
+    errorCode: null,
+  };
+  return InboxStateSchema.parse(state);
+}
+
 export function selectReportingObservations(
   current: InboxState,
   now = new Date(),
