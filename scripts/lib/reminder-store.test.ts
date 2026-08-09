@@ -242,6 +242,39 @@ void test("persisted reminder history must be temporally possible", async () => 
   await assert.rejects(() => loadReminderStore(dataDir), /history invariants/u);
 });
 
+void test("completed one-off requires an attempt at or after its due time", async () => {
+  const dataDir = await fixture();
+  await writeFile(
+    reminderFile(dataDir),
+    JSON.stringify({
+      schema: "iva-reminders/v1",
+      revision: 1,
+      jobs: [
+        {
+          id: "00000000-0000-4000-8000-000000000005",
+          idempotencyKey: "corrupt-completed-1",
+          message: "Impossible completion",
+          timezone: "UTC",
+          schedule: { kind: "once", at: "2026-08-09T11:00:00.000Z" },
+          state: "completed",
+          createdAt: "2026-08-09T10:00:00.000Z",
+          updatedAt: "2026-08-09T11:00:00.000Z",
+          nextRunAt: null,
+          occurrenceAt: null,
+          leaseUntil: null,
+          lastAttemptAt: Date.parse("2026-08-09T10:30:00.000Z"),
+          lastDeliveredAt: Date.parse("2026-08-09T11:00:00.000Z"),
+          failureCount: 0,
+          retryAt: null,
+          lastError: null,
+        },
+      ],
+    }),
+  );
+
+  await assert.rejects(() => loadReminderStore(dataDir), /history invariants/u);
+});
+
 void test("concurrent creates serialize without losing jobs", async () => {
   const dataDir = await fixture();
   await Promise.all(

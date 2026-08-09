@@ -72,8 +72,7 @@ function parseStore(value: unknown): ReminderStore {
       (job.lastAttemptAt === null ||
         (job.lastAttemptAt >= createdAt && job.lastAttemptAt <= updatedAt)) &&
       (job.lastDeliveredAt === null ||
-        (job.lastAttemptAt !== null &&
-          job.lastDeliveredAt >= job.lastAttemptAt &&
+        (job.lastDeliveredAt >= createdAt &&
           job.lastDeliveredAt <= updatedAt)) &&
       (inactive ||
         (job.nextRunAt !== null &&
@@ -83,8 +82,12 @@ function parseStore(value: unknown): ReminderStore {
       (scheduleAt === null || scheduleAt > createdAt) &&
       (job.state !== "completed" ||
         (scheduleAt !== null &&
+          job.lastAttemptAt !== null &&
+          job.lastAttemptAt >= scheduleAt &&
           job.lastDeliveredAt !== null &&
-          job.lastDeliveredAt >= scheduleAt)) &&
+          job.lastDeliveredAt >= job.lastAttemptAt &&
+          job.failureCount === 0 &&
+          job.lastError === null)) &&
       (job.schedule.kind !== "once" ||
         inactive ||
         job.lastDeliveredAt === null);

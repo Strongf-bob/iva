@@ -286,3 +286,37 @@ void test("post-delivery recurrence failure is durable and never replays", async
   assert.equal(job?.nextRunAt, null);
   assert.match(job?.lastError ?? "", /recurrence disabled/u);
 });
+
+void test("a later recurring failure preserves an earlier successful delivery", async () => {
+  const data = await dataDir();
+  const firstRun = Date.parse("2026-08-09T08:00:00.000Z");
+  const secondRun = Date.parse("2026-08-10T08:00:00.000Z");
+  const created = await createReminder(
+    data,
+    {
+      idempotencyKey: "recurring-history-1",
+      message: "Daily",
+      timezone: "UTC",
+      schedule: { kind: "cron", expression: "0 8 * * *" },
+    },
+    { now: () => Date.parse("2026-08-09T07:00:00.000Z") },
+  );
+  await runReminderTick({
+    users: [{ id: "101", status: "active", dataDir: data }],
+    now: () => firstRun,
+    deliver: () => Promise.resolve({ ok: true, error: "" }),
+  });
+  const report = await runReminderTick({
+    users: [{ id: "101", status: "active", dataDir: data }],
+    now: () => secondRun,
+    deliver: () => Promise.resolve({ ok: false, error: "temporary" }),
+  });
+
+  assert.equal(report.failed, 1);
+  assert.equal(report.userFailures, 0);
+  const job = await getReminder(data, created.job.id);
+  assert.equal(job?.state, "active");
+  assert.equal(job?.lastDeliveredAt, firstRun);
+  assert.equal(job?.lastAttemptAt, secondRun);
+  assert.equal(job?.failureCount, 1);
+});
