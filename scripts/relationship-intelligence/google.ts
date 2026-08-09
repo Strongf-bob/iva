@@ -1,9 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
+import { open, readFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 
 import { childEnv, gwsBin } from "../lib/menu/gws-auth.ts";
-import { acquireLock, releaseLock } from "../../agent/lib/json-store.ts";
 
 import {
   loadRegistry,
@@ -20,6 +20,77 @@ export interface GoogleRunResult {
 export type GoogleRunner = (
   args: readonly string[],
 ) => Promise<GoogleRunResult>;
+
+const actionSleep = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
+const PROCESS_STARTED_AT = Math.round(Date.now() - process.uptime() * 1000);
+
+async function acquireGoogleActionLock(path: string): Promise<string> {
+  const token = randomBytes(16).toString("hex");
+  const deadline = Date.now() + 5 * 60_000;
+  for (;;) {
+    if (Date.now() > deadline)
+      throw new Error("Google Task action lock timeout");
+    try {
+      const handle = await open(path, "wx", 0o600);
+      await handle.writeFile(
+        JSON.stringify({
+          token,
+          pid: process.pid,
+          processStartedAt: PROCESS_STARTED_AT,
+        }),
+        "utf8",
+      );
+      await handle.close();
+      return token;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      try {
+        const current = JSON.parse(await readFile(path, "utf8")) as {
+          pid?: unknown;
+          processStartedAt?: unknown;
+        };
+        const pid = current.pid;
+        let active = false;
+        if (typeof pid === "number" && Number.isInteger(pid) && pid > 0) {
+          if (pid === process.pid) {
+            active = current.processStartedAt === PROCESS_STARTED_AT;
+          } else {
+            try {
+              process.kill(pid, 0);
+              active = true;
+            } catch (pidError) {
+              if ((pidError as NodeJS.ErrnoException).code === "EPERM")
+                active = true;
+            }
+          }
+        }
+        if (!active) {
+          await rm(path, { force: true });
+          continue;
+        }
+      } catch (readError) {
+        if ((readError as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw readError;
+      }
+      await actionSleep(50);
+    }
+  }
+}
+
+async function releaseGoogleActionLock(
+  path: string,
+  token: string,
+): Promise<void> {
+  try {
+    const current = JSON.parse(await readFile(path, "utf8")) as {
+      token?: unknown;
+    };
+    if (current.token === token) await rm(path, { force: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
 
 export async function runGoogleCommand(
   args: readonly string[],
@@ -115,7 +186,8 @@ export async function confirmGoogleTask({
 }): Promise<{ taskListId: string; taskId: string; createdAt: string }> {
   if (role !== "owner")
     throw new Error("only the owner may confirm Google Tasks");
-  const token = await acquireLock(`${paths.lock}.${id}.google-task`);
+  const actionLock = `${paths.lock}.${id}.google-task`;
+  const token = await acquireGoogleActionLock(actionLock);
   try {
     let item = findItem((await loadRegistry(paths)).commitments, id);
     if (item.googleTask) return item.googleTask;
@@ -186,7 +258,7 @@ export async function confirmGoogleTask({
     item = findItem((await loadRegistry(paths)).commitments, id);
     return item.googleTask!;
   } finally {
-    releaseLock(`${paths.lock}.${id}.google-task`, token);
+    await releaseGoogleActionLock(actionLock, token);
   }
 }
 

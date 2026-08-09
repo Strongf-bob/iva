@@ -67,3 +67,14 @@ test("model tools cannot confirm tasks and trusted Telegram wiring owns confirma
   assert.match(channel, /confirmGoogleTaskFromOwnerMessage/u);
   assert.match(channel, /message\.chat\.type/u);
 });
+
+test("scheduled reports collect fixed read-only evidence without an agent tool loop", async () => {
+  const source = await readFile(
+    new URL("./relationship-report.ts", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /from ["']eve\/client["']/u);
+  assert.doesNotMatch(source, /\.session\(/u);
+  assert.match(source, /collectCalendarMeetings/u);
+  assert.match(source, /requireActiveTelegramOwner/u);
+});

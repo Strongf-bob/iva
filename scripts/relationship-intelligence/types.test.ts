@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   classifyCommitment,
   commitmentId,
+  nextBirthdayOccurrence,
   transitionCommitment,
   type Commitment,
 } from "./types.ts";
@@ -46,6 +47,17 @@ test("stable IDs bind normalized content to exact evidence", () => {
       text: "send report",
       evidence: [{ ...evidence[0], sourceId: "telegram:message:44:10" }],
     }),
+  );
+});
+
+test("birthday occurrences advance deterministically", () => {
+  assert.equal(
+    nextBirthdayOccurrence("--08-17", "2026-08-09T00:00:00.000Z"),
+    "2026-08-17",
+  );
+  assert.equal(
+    nextBirthdayOccurrence("--01-01", "2026-08-09T00:00:00.000Z"),
+    "2027-01-01",
   );
 });
 

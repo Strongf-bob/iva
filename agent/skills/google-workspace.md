@@ -1,5 +1,5 @@
 ---
-description: Безопасная работа с Gmail, Google Calendar, Tasks, Drive, Sheets и Docs через `gws`: чтение, Gmail drafts, события без участников, подтверждённые задачи и личные артефакты.
+description: "Безопасная работа с Gmail, Google Calendar, Tasks, Drive, Sheets и Docs через gws: чтение, Gmail drafts, события без участников, подтверждённые задачи и личные артефакты."
 ---
 
 # Google Workspace (`gws`)

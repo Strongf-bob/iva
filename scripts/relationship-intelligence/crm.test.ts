@@ -37,6 +37,19 @@ test("CRM renders relationship status while preserving handwritten content", asy
         },
         followUps: [],
       },
+      "telegram:user:55": {
+        birthday: {
+          value: "--12-01",
+          evidence: {
+            source: "telegram",
+            sourceId: "telegram:message:55:1",
+            observedAt: "2026-08-01T00:00:00Z",
+          },
+        },
+        lastMeaningfulContactAt: null,
+        meaningfulContactEvidence: null,
+        followUps: [],
+      },
     },
     commitments: [
       {
@@ -77,4 +90,5 @@ test("CRM renders relationship status while preserving handwritten content", asy
   assert.match(overview, /## Pending suggestions/u);
   assert.match(overview, /## Forgotten follow-ups/u);
   assert.match(overview, /RI-aaaaaaaaaaaaaaaa.*Send report/u);
+  assert.doesNotMatch(overview, /telegram:user:55/u);
 });

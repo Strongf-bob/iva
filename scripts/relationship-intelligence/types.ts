@@ -90,8 +90,28 @@ function normalizeText(value: string): string {
   return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
 }
 
-export function commitmentObservationKey(text: string): string {
-  return normalizeText(text);
+export function nextBirthdayOccurrence(value: string, now: string): string {
+  const match = /^(?:\d{4}-|--)(\d{2})-(\d{2})$/u.exec(value);
+  if (!match) throw new Error("invalid birthday");
+  const current = new Date(IsoDateSchema.parse(now));
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+  const today = Date.UTC(
+    current.getUTCFullYear(),
+    current.getUTCMonth(),
+    current.getUTCDate(),
+  );
+  for (let offset = 0; offset <= 8; offset += 1) {
+    const year = current.getUTCFullYear() + offset;
+    const candidate = new Date(Date.UTC(year, month - 1, day));
+    if (
+      candidate.getUTCMonth() === month - 1 &&
+      candidate.getUTCDate() === day &&
+      candidate.getTime() >= today
+    )
+      return candidate.toISOString().slice(0, 10);
+  }
+  throw new Error("birthday has no future occurrence");
 }
 
 function canonicalJson(value: unknown): string {

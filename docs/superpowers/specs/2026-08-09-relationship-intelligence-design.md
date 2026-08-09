@@ -296,9 +296,10 @@ Relationship schedules use Eve's existing local-time cron and shared schedule ru
 - weekly preparation: `45 7 * * 1`;
 - weekly delivery: `0 8 * * 1`.
 
-Preparation writes a bounded, versioned report artifact under the personal runtime root. Delivery
-reads only a fresh successful artifact for the intended period. A failed or stale preparation does
-not send an old report.
+Preparation deterministically reads the private registry and a fixed Calendar `events list` call,
+without opening an agent session or exposing mutation tools. It writes a bounded, versioned report
+artifact under the personal runtime root. Delivery reads only a fresh successful artifact for the
+intended period. A failed or stale preparation does not send an old report.
 
 In multi-user mode, all relationship schedules are disabled unless `ASSISTANT_ROLE=owner`.
 Delivery additionally requires a private destination equal to the owner user ID. In legacy mode it

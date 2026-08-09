@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { acquireLock, atomicWrite } from "../../agent/lib/card-store.ts";
 import {
   classifyCommitment,
+  nextBirthdayOccurrence,
   RelationshipRegistrySchema,
   type RelationshipRegistry,
 } from "./types.ts";
@@ -133,12 +134,24 @@ export async function renderRelationshipCrm({
       );
       return `- ${safe(item.id)} ${safe(item.text)} (${item.status}; direction: ${item.direction}; evidence: ${item.evidence.map((entry) => safe(entry.sourceId)).join(", ")}; overdue: ${state.overdue}; forgotten: ${state.forgotten})`;
     };
+    const birthdayHorizon = Date.parse(now) + 30 * 24 * 60 * 60 * 1000;
     const birthdays = Object.entries(registry.contacts)
-      .filter(([, contact]) => contact.birthday !== null)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .flatMap(([id, contact]) => {
+        const birthday = contact.birthday;
+        if (!birthday) return [];
+        const occurrence = nextBirthdayOccurrence(birthday.value, now);
+        return Date.parse(`${occurrence}T00:00:00Z`) <= birthdayHorizon
+          ? [{ id, birthday, occurrence }]
+          : [];
+      })
+      .sort(
+        (left, right) =>
+          left.occurrence.localeCompare(right.occurrence) ||
+          left.id.localeCompare(right.id),
+      )
       .map(
-        ([id, contact]) =>
-          `- ${safe(id)}: ${contact.birthday!.value} (evidence: ${safe(contact.birthday!.evidence.sourceId)})`,
+        ({ id, birthday, occurrence }) =>
+          `- ${safe(id)}: ${occurrence} (${birthday.value}; evidence: ${safe(birthday.evidence.sourceId)})`,
       );
     const overdue = open.filter((item) => {
       const contact = item.contactIds[0]

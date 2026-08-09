@@ -76,7 +76,7 @@ test("Telegram observations become pending commitments and contact activity", as
   );
 });
 
-test("later observations enrich one commitment without reviving terminal items", async () => {
+test("only explicitly correlated observations enrich a commitment", async () => {
   const root = await mkdtemp(join(tmpdir(), "iva-relationship-reducer-"));
   const paths = relationshipPaths(root, "data");
   await reduceRelationshipObservations({
@@ -94,13 +94,7 @@ test("later observations enrich one commitment without reviving terminal items",
     observations: [
       observation({
         subjectId: "telegram:user:55",
-        evidence: [
-          {
-            chatId: 55,
-            messageId: 10,
-            timestamp: "2026-08-10T10:00:00Z",
-          },
-        ],
+        evidence,
         relationship: {
           direction: "owner_to_contact",
           dueAt: "2026-08-15T10:00:00Z",
@@ -116,6 +110,33 @@ test("later observations enrich one commitment without reviving terminal items",
     "telegram:user:44",
     "telegram:user:55",
   ]);
-  assert.equal(registry.commitments[0].evidence.length, 2);
+  assert.equal(registry.commitments[0].evidence.length, 1);
   assert.equal(registry.commitments[0].dueAt, "2026-08-15T10:00:00Z");
+});
+
+test("equal text with disjoint evidence remains separate commitments", async () => {
+  const root = await mkdtemp(join(tmpdir(), "iva-relationship-reducer-"));
+  const paths = relationshipPaths(root, "data");
+  await reduceRelationshipObservations({
+    paths,
+    ownerUserId: 7,
+    observations: [
+      observation({}),
+      observation({
+        subjectId: "telegram:user:55",
+        evidence: [
+          {
+            chatId: 55,
+            messageId: 10,
+            timestamp: "2026-08-10T10:00:00Z",
+          },
+        ],
+        relationship: {
+          direction: "owner_to_contact",
+          dueAt: "2026-08-15T10:00:00Z",
+        },
+      }),
+    ],
+  });
+  assert.equal((await loadRegistry(paths)).commitments.length, 2);
 });

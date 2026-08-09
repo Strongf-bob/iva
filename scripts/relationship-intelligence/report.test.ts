@@ -6,9 +6,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  collectCalendarMeetings,
   deliverRelationshipReport,
   prepareRelationshipReport,
-  relationshipReportPrompt,
+  resolveOwnerReportRoute,
 } from "./report.ts";
 import { mutateRegistry, relationshipPaths } from "./store.ts";
 
@@ -68,19 +69,81 @@ test("prepared reports deliver once only to the owner private chat", async () =>
   );
 });
 
-test("period prompts request the complete evidence-linked report views", () => {
-  assert.match(
-    relationshipReportPrompt("daily"),
-    /birthdays.*today's meetings/isu,
+test("owner report routing rejects group or ambiguous legacy destinations", () => {
+  assert.deepEqual(
+    resolveOwnerReportRoute({
+      multiUser: false,
+      role: undefined,
+      assignedUserId: undefined,
+      routedOwnerId: "7",
+      allowedUserIds: "7",
+      digestChatId: "7",
+    }),
+    { ownerUserId: "7", destination: "7", role: "owner" },
   );
-  assert.match(
-    relationshipReportPrompt("weekly"),
-    /activity.*next-week meetings/isu,
+  assert.throws(
+    () =>
+      resolveOwnerReportRoute({
+        multiUser: false,
+        role: undefined,
+        assignedUserId: undefined,
+        routedOwnerId: "7",
+        allowedUserIds: "7",
+        digestChatId: "-1001",
+      }),
+    /owner private chat/u,
   );
-  assert.match(
-    relationshipReportPrompt("weekly"),
-    /relationship-report skill/iu,
+  assert.throws(
+    () =>
+      resolveOwnerReportRoute({
+        multiUser: false,
+        role: undefined,
+        assignedUserId: undefined,
+        routedOwnerId: undefined,
+        allowedUserIds: "7,8",
+        digestChatId: undefined,
+      }),
+    /exactly one owner/u,
   );
+});
+
+test("scheduled report collection uses one fixed read-only Calendar call", async () => {
+  const calls: string[][] = [];
+  const meetings = await collectCalendarMeetings({
+    period: "daily",
+    now: "2026-08-09T04:45:00Z",
+    timeZone: "Europe/Moscow",
+    run: async (args) => {
+      calls.push([...args]);
+      return {
+        exitCode: 0,
+        stdout: JSON.stringify({
+          items: [
+            {
+              id: "event-1",
+              summary: "Planning",
+              start: { dateTime: "2026-08-09T10:00:00+03:00" },
+            },
+          ],
+        }),
+      };
+    },
+  });
+  assert.deepEqual(calls[0].slice(0, 3), ["calendar", "events", "list"]);
+  assert.equal(calls.length, 1);
+  const params = JSON.parse(calls[0][calls[0].indexOf("--params") + 1]) as {
+    timeMin: string;
+    timeMax: string;
+  };
+  assert.deepEqual(params, {
+    calendarId: "primary",
+    timeMin: "2026-08-08T21:00:00.000Z",
+    timeMax: "2026-08-09T21:00:00.000Z",
+    singleEvents: true,
+    orderBy: "startTime",
+    maxResults: 100,
+  });
+  assert.equal(meetings[0].id, "event-1");
 });
 
 test("parallel delivery reserves the artifact before external send", async () => {

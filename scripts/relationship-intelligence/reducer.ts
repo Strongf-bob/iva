@@ -5,7 +5,6 @@ import {
 import { mutateRegistry, type RelationshipPaths } from "./store.ts";
 import {
   commitmentId,
-  commitmentObservationKey,
   type ContactActivity,
   type RelationshipEvidence,
 } from "./types.ts";
@@ -91,13 +90,9 @@ export async function reduceRelationshipObservations({
         observation.predicate === "follow_up"
           ? "owner_to_contact"
           : (observation.relationship?.direction ?? "unknown");
-      let item = registry.commitments.find(
-        (candidate) =>
-          commitmentObservationKey(candidate.text) ===
-          commitmentObservationKey(observation.value!),
-      );
+      const id = commitmentId(draft);
+      let item = registry.commitments.find((candidate) => candidate.id === id);
       if (!item) {
-        const id = commitmentId(draft);
         item = {
           id,
           text: observation.value,

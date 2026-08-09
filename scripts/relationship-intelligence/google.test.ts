@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/require-await -- Node's test runner owns registrations and injected runners retain async contracts. */
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -175,6 +175,86 @@ test("task confirmation is accepted only as a fresh private owner message", asyn
   const result = await confirmGoogleTaskFromOwnerMessage(base);
   assert.equal(result.handled, true);
   assert.equal(result.receipt?.taskId, "task-1");
+});
+
+test("an aged active Task action lock cannot be stolen", async () => {
+  const paths = await setup();
+  const prepared = await prepareTaskConfirmation({
+    paths,
+    id: "RI-aaaaaaaaaaaaaaaa",
+    role: "owner",
+    now: NOW,
+    nonce: "ABCD12",
+  });
+  let inserts = 0;
+  let enteredInsert!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enteredInsert = resolve;
+  });
+  let releaseInsert!: () => void;
+  const release = new Promise<void>((resolve) => {
+    releaseInsert = resolve;
+  });
+  const run = async (args: readonly string[]) => {
+    if (args.includes("list")) return { stdout: '{"items":[]}', exitCode: 0 };
+    inserts += 1;
+    enteredInsert();
+    await release;
+    return { stdout: '{"id":"task-1"}', exitCode: 0 };
+  };
+  const first = confirmGoogleTask({
+    paths,
+    id: prepared.id,
+    phrase: prepared.phrase,
+    role: "owner",
+    now: NOW,
+    run,
+  });
+  await entered;
+  await utimes(
+    `${paths.lock}.${prepared.id}.google-task`,
+    new Date(0),
+    new Date(0),
+  );
+  const second = confirmGoogleTask({
+    paths,
+    id: prepared.id,
+    phrase: prepared.phrase,
+    role: "owner",
+    now: NOW,
+    run,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  releaseInsert();
+  await Promise.all([first, second]);
+  assert.equal(inserts, 1);
+});
+
+test("a same-PID lock from an older process incarnation is recovered", async () => {
+  const paths = await setup();
+  const prepared = await prepareTaskConfirmation({
+    paths,
+    id: "RI-aaaaaaaaaaaaaaaa",
+    role: "owner",
+    now: NOW,
+    nonce: "ABCD12",
+  });
+  await writeFile(
+    `${paths.lock}.${prepared.id}.google-task`,
+    JSON.stringify({ token: "orphan", pid: process.pid, processStartedAt: 0 }),
+  );
+  const receipt = await confirmGoogleTask({
+    paths,
+    id: prepared.id,
+    phrase: prepared.phrase,
+    role: "owner",
+    now: NOW,
+    run: async (args) =>
+      args.includes("list")
+        ? { stdout: '{"items":[]}', exitCode: 0 }
+        : { stdout: '{"id":"task-1"}', exitCode: 0 },
+  });
+  assert.equal(receipt.taskId, "task-1");
 });
 
 test("Gmail adapter creates a draft and exposes no send path", async () => {

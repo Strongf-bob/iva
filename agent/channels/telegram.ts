@@ -75,7 +75,7 @@ import {
 import { pathToFileURL } from "node:url";
 import { releaseUserTurn } from "../../scripts/lib/user-quota.ts";
 import { parseTelegramUserId } from "../../scripts/lib/user-registry.ts";
-import { notificationChat } from "../../scripts/lib/notification-chat.ts";
+import { requireActiveTelegramOwner } from "../../scripts/lib/owner-routing.ts";
 import {
   confirmGoogleTaskFromOwnerMessage,
   runGoogleCommand,
@@ -1150,10 +1150,18 @@ const telegram = telegramChannel({
       /^CREATE TASK RI-[a-f0-9]{16} [A-Z0-9]{6}$/u.test(message.text.trim())
     ) {
       const multiUser = process.env.ASSISTANT_MULTI_USER === "1";
-      const ownerUserId = multiUser
-        ? process.env.ASSISTANT_USER_ID
-        : notificationChat();
       try {
+        const ownerUserId = multiUser
+          ? process.env.ASSISTANT_USER_ID
+          : process.env.IVA_USER_CONTROL_DIR
+            ? (
+                await requireActiveTelegramOwner(
+                  process.env.IVA_USER_CONTROL_DIR,
+                )
+              ).id
+            : ALLOWED.size === 1
+              ? [...ALLOWED][0]
+              : undefined;
         const confirmation = await confirmGoogleTaskFromOwnerMessage({
           paths: relationshipPaths(),
           text: message.text.trim(),
