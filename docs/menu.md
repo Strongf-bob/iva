@@ -86,24 +86,24 @@ userbot remains opt-in beta; the full picture, including the anti-ban guardrail:
 
 ## Google Workspace
 
-The **🔗 Google** screen checks for `~/.config/gws/client_secret.json`. Missing, it walks you through console.cloud.google.com — create an OAuth client of type _Desktop app_, download the JSON, and send it into the chat — paste the contents or attach the `.json` file (it's shape-checked and written `0600`). Present, it probes authorization; if you're not signed in yet it shows a **Connect** button that runs the whole sign-in for you — no SSH. `gws auth login` only supports the loopback flow (it waits for the browser to hit `http://localhost:<port>` on the server), which can't complete from a browser on another machine. So Iva starts `gws` itself, sends you the Google consent link, and when you approve and paste the redirect URL back — the one that lands on a `http://localhost:…` page your browser can't load — it replays that callback against the loopback listener locally, finishing the exchange and storing the token. The pasted URL carries a one-time code, so Iva deletes that message and never logs it, then edits the screen to a final status (connected, or retry). What `gws` reaches: Gmail, Calendar, Tasks, Drive, Sheets, Docs.
+The **🔗 Google** screen checks for `.config/gws/client_secret.json` beneath the active user's `HOME`. In personalized containers that `HOME` is the selected user's private root, so credentials and OAuth tokens cannot cross users. Missing, it walks you through console.cloud.google.com — create an OAuth client of type _Desktop app_, download the JSON, and send it into the chat — paste the contents or attach the `.json` file (it's shape-checked and written `0600`). Present, it probes authorization; if you're not signed in yet it shows a **Connect** button that runs the whole sign-in for you — no SSH. `gws auth login` only supports the loopback flow (it waits for the browser to hit `http://localhost:<port>` on the server), which can't complete from a browser on another machine. So Iva starts `gws` with that same private `HOME`, sends you the Google consent link, and when you approve and paste the redirect URL back — the one that lands on a `http://localhost:…` page your browser can't load — it replays that callback against the loopback listener locally, finishing the exchange and storing the token. The pasted URL carries a one-time code, so Iva deletes that message and never logs it, then edits the screen to a final status (connected, or retry). What `gws` reaches: Gmail, Calendar, Tasks, Drive, Sheets, Docs.
 
 ## Timers, Skills, Status
 
 Three read-only screens.
 
-- **⏰ Timers** — the `iva-*` (and `xfeed-daily`) systemd timers with their next run, plus the open-task count from `data/tasks.json`.
+- **⏰ Timers** — personal durable reminders in containers; host-native installs show the `iva-*` (and `xfeed-daily`) systemd timers. Both include the open-task count and built-in eve schedules.
 - **🧩 Skills** — every installed skill with a one-line description, paged.
 - **📊 Status** — one card: version, provider · model · thinking, search provider and key badge, language, userbot state, Google, and today's token usage (the same figure as `/usage`). **🔄 Refresh** re-reads everything. Thinking levels are selectable for OpenAI subscriptions and for the OpenAI-compatible Ollama Cloud and OpenCode Go APIs; the latter expose the common `low` / `medium` / `high` contract.
 
 ## Maintenance
 
-**🛠 Maintenance** gathers the install's technical commands so none of them need SSH:
+**🛠 Maintenance** gathers the install's technical commands so routine checks do not need SSH. Host-native and container runtimes use different adapters:
 
-- **🩺 Doctor** — `iva doctor`: diagnoses and auto-repairs units, timers, port, `.env`, build.
+- **🩺 Doctor** — host-native `iva doctor` diagnoses and repairs units, timers, port, `.env`, and build. In a container it checks private writable paths, `gws`, and scheduler evidence without claiming to repair immutable image or host services.
 - **🧹 Vault cleanup** — the streaming cleaner from 0.3.1 (`cleanup.py --apply`): collapses description bloat, never touches card bodies.
-- **🌙 Night memory cycle** — starts the nightly `iva-memory-doctor.service` right now instead of 05:00; it runs as the same systemd unit, so it survives bridge restarts.
-- **🔄 Update** — hands off to the existing `/update` flow (check → confirm buttons → an update that survives its own restart).
+- **🌙 Night memory cycle** — host-native mode starts `iva-memory-doctor.service`; container mode runs the selected user's bounded memory job with its normal lock and status file.
+- **🔄 Update** — host-native mode hands off to the existing `/update` flow. A container cannot safely replace itself from chat, so container mode shows exact host-side `docker compose pull` and `docker compose up -d` guidance.
 
 Every command asks for confirmation, then shows live progress in the same message — an animated loader from the same custom-emoji pack the update flow uses (a swirl for doctor, green for cleanup, an orange spinner for the memory cycle; plain ◇ when the bot owner has no Premium), the current step and elapsed time, with a ✖ Cancel button. One command runs at a time, and doctor/cleanup refuse to start while an update is in progress. The final summary is a single line with numbers (files cleaned and MB freed, ok/warn counts) plus the output tail when something failed.
 
