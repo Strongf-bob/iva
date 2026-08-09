@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   resolveTenant,
+  routesForTenant,
   workerRoutes,
   type TenantRouteResult,
 } from "./tenant-routing.ts";
@@ -91,6 +92,27 @@ void test("groups, missing senders, unknown users, and blocked users fail closed
 
 void test("worker routes are fixed loopback URLs derived only from registry port", () => {
   assert.deepEqual(workerRoutes(user("123")), {
+    webhook: "http://127.0.0.1:8923/eve/v1/telegram",
+    acceptance: "http://127.0.0.1:8923/eve/v1/telegram/accepted",
+    reset: "http://127.0.0.1:8923/eve/v1/telegram/reset",
+  });
+});
+
+void test("the legacy owner uses the trusted assistant host across containers", () => {
+  const legacyOwner: UserRecord = {
+    ...user("123", "active", "owner"),
+    port: 8723,
+  };
+
+  assert.deepEqual(routesForTenant(legacyOwner, "http://iva:8723/"), {
+    webhook: "http://iva:8723/eve/v1/telegram",
+    acceptance: "http://iva:8723/eve/v1/telegram/accepted",
+    reset: "http://iva:8723/eve/v1/telegram/reset",
+  });
+});
+
+void test("a personalized user ignores the legacy host and keeps an isolated loopback route", () => {
+  assert.deepEqual(routesForTenant(user("123"), "http://iva:8723"), {
     webhook: "http://127.0.0.1:8923/eve/v1/telegram",
     acceptance: "http://127.0.0.1:8923/eve/v1/telegram/accepted",
     reset: "http://127.0.0.1:8923/eve/v1/telegram/reset",
