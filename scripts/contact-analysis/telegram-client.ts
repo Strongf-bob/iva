@@ -60,6 +60,7 @@ export interface TelegramAnalysisClientOptions {
   root?: string;
   dataDir?: string;
   tokenPath?: string;
+  mcpUrl?: string;
   port?: string | number;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
@@ -91,11 +92,16 @@ export function createTelegramAnalysisClient({
   root = process.cwd(),
   dataDir = "data",
   tokenPath,
-  port = process.env.TELEGRAM_MCP_PORT ?? "8724",
+  mcpUrl,
+  port,
   timeoutMs = 30_000,
   fetchImpl = globalThis.fetch,
 }: TelegramAnalysisClientOptions = {}): TelegramAnalysisClient {
-  const baseUrl = `http://127.0.0.1:${safePort(port)}/analysis/v1`;
+  const configuredMcpUrl =
+    mcpUrl ?? (port === undefined ? process.env.TELEGRAM_MCP_URL : undefined);
+  const baseUrl = configuredMcpUrl
+    ? new URL("/analysis/v1", configuredMcpUrl).toString().replace(/\/$/u, "")
+    : `http://127.0.0.1:${safePort(port ?? process.env.TELEGRAM_MCP_PORT ?? "8724")}/analysis/v1`;
   const resolvedTokenPath = tokenPath
     ? resolve(root, tokenPath)
     : resolve(root, dataDir, "telegram-userbot.token");

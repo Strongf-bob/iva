@@ -173,3 +173,26 @@ test("client can read a shared token independently from personal state", async (
   await client.account();
   assert.equal(authorization, "Bearer shared-secret");
 });
+
+test("client derives analysis routes from the configured MCP sidecar URL", async () => {
+  const requests: string[] = [];
+  const root = await mkdtemp(join(tmpdir(), "iva-contact-sidecar-url-"));
+  await mkdir(join(root, "data"), { recursive: true });
+  await writeFile(join(root, "data", "telegram-userbot.token"), "secret\n", {
+    mode: 0o600,
+  });
+  const client = createTelegramAnalysisClient({
+    root,
+    mcpUrl: "http://telegram-userbot:8724/mcp",
+    fetchImpl: async (input) => {
+      requests.push(String(input));
+      return jsonResponse({ userId: 7, displayName: "Owner", username: null });
+    },
+  });
+
+  await client.account();
+
+  assert.deepEqual(requests, [
+    "http://telegram-userbot:8724/analysis/v1/account",
+  ]);
+});
