@@ -340,7 +340,7 @@ export async function runContactAnalysis({
                 (message, index) =>
                   message.id <= job.committedThrough ||
                   message.id > page.latestMessageId ||
-                  (index > 0 && message.id <= page.messages[index - 1]!.id),
+                  (index > 0 && message.id <= page.messages[index - 1].id),
               )))
         ) {
           throw new Error("telegram_analysis_invalid_message_cursor");

@@ -116,7 +116,7 @@ test("evidence must come from the current page and match provenance", () => {
           {
             chatId: -1001,
             messageId: 9,
-            timestamp: messages[0]!.timestamp,
+            timestamp: messages[0].timestamp,
           },
         ],
       },
@@ -132,7 +132,7 @@ test("evidence must come from the current page and match provenance", () => {
         {
           ...withQuestion,
           questions: [
-            { ...withQuestion.questions[0]!, subjectId: "telegram:user:999" },
+            { ...withQuestion.questions[0], subjectId: "telegram:user:999" },
           ],
         },
         messages,

@@ -163,7 +163,7 @@ function renderManaged(
   ];
   if (groups.size === 0) body.push("No clarification questions yet.");
   for (const entries of groups.values()) {
-    body.push(`## ${safeInline(entries[0]!.dialog.title)}`, "");
+    body.push(`## ${safeInline(entries[0].dialog.title)}`, "");
     entries.forEach((entry, index) => {
       body.push(renderEntry(entry, index + 1, answers.get(entry.id)), "");
     });

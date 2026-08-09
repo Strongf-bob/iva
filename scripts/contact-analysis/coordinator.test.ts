@@ -271,6 +271,7 @@ test("a non-advancing message cursor fails before analysis", async () => {
   });
 
   assert.equal(report.failedChats, 1);
+  assert.equal(messageCalls, 1);
   assert.equal(analysisCalls, 0);
   assert.equal(
     (await loadState(statePaths(root, "data", 7))).jobs["1"]?.lastErrorCode,
