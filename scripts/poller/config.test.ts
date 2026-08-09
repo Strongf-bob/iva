@@ -18,6 +18,7 @@ interface ConfigSnapshot {
   readonly dataDirRaw: string;
   readonly dataDir: string;
   readonly envPath: string;
+  readonly controlDir: string;
   readonly route: string;
   readonly acceptanceRoute: string;
   readonly resetRoute: string;
@@ -57,6 +58,7 @@ process.stdout.write(JSON.stringify({
   dataDirRaw: config.DATA_DIR_RAW,
   dataDir: config.DATA_DIR,
   envPath: config.ENV_PATH,
+  controlDir: config.CONTROL_DIR,
   route: config.ROUTE,
   acceptanceRoute: config.ACCEPTANCE_ROUTE,
   resetRoute: config.RESET_ROUTE,
@@ -115,6 +117,7 @@ void test("poller config snapshots default root, routes, data, and helper behavi
   assert.equal(config.dataDirRaw, "data");
   assert.equal(config.dataDir, join(ROOT, "data"));
   assert.equal(config.envPath, join(ROOT, ".env"));
+  assert.equal(config.controlDir, join(ROOT, "data", "control"));
   assert.equal(config.route, "http://127.0.0.1:8723/eve/v1/telegram");
   assert.equal(
     config.acceptanceRoute,
@@ -156,6 +159,7 @@ void test("poller config keeps explicit host, token, relative data, and allowlis
   assert.equal(config.host, "https://poll.example.test:9443");
   assert.equal(config.dataDirRaw, "runtime-data");
   assert.equal(config.dataDir, join(ROOT, "runtime-data"));
+  assert.equal(config.controlDir, join(ROOT, "runtime-data", "control"));
   assert.equal(config.route, "https://poll.example.test:9443/eve/v1/telegram");
   assert.equal(
     config.acceptanceRoute,

@@ -216,6 +216,7 @@ export function invalidTelegramUpdatesDiagnostic(
 export type TelegramQueueItem = {
   version: number;
   updateId: number;
+  tenantId?: string;
   enqueuedAt?: number;
   update?: TelegramQueueUpdate;
   legacyText?: string;
@@ -259,6 +260,7 @@ type QueueFileOptions = {
   quarantineNonce?: () => string;
   onLegacyQuarantine?: (path: string) => void;
   now?: () => number;
+  tenantId?: string;
 };
 
 type TelegramEntity = {
@@ -303,6 +305,13 @@ function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function updateSenderId(update: TelegramQueueUpdate): string | null {
+  const raw = update.message?.from?.id ?? update.callback_query?.from?.id;
+  if (typeof raw !== "string" && typeof raw !== "number") return null;
+  const id = String(raw);
+  return /^[1-9][0-9]{0,19}$/u.test(id) ? id : null;
+}
+
 function legacyUpdateId(chatKey: string, index: number, text: string): number {
   const digest = createHash("sha256")
     .update(`${chatKey}\0${index}\0${text}`)
@@ -343,6 +352,15 @@ function normalizeItem(
   if (!hasUpdate && !hasLegacyText) {
     throw new Error(
       `Telegram queue item ${chatKey}[${index}] has no replayable payload`,
+    );
+  }
+  if (
+    candidate.tenantId !== undefined &&
+    (typeof candidate.tenantId !== "string" ||
+      !/^[1-9][0-9]{0,19}$/u.test(candidate.tenantId))
+  ) {
+    throw new Error(
+      `Telegram queue item ${chatKey}[${index}] has invalid tenant identity`,
     );
   }
   return cloneJson(candidate) as TelegramQueueItem;
@@ -396,16 +414,21 @@ export function normalizeQueueDocument(value: unknown): {
 export function createQueueItem(
   update: unknown,
   now = Date.now(),
+  tenantId?: string,
 ): TelegramQueueItem {
   if (!isTelegramQueueUpdate(update)) {
     throw new Error(
       "queued Telegram update must have a safe integer update_id",
     );
   }
+  if (tenantId !== undefined && updateSenderId(update) !== tenantId) {
+    throw new Error("queued Telegram tenant does not match verified sender");
+  }
   return {
     version: TELEGRAM_QUEUE_ITEM_VERSION,
     updateId: update.update_id,
     enqueuedAt: now,
+    ...(tenantId === undefined ? {} : { tenantId }),
     update: cloneJson(update),
   };
 }
@@ -539,7 +562,13 @@ export function materializeQueueItem(
     legacyAllowedUserIds?: ReadonlySet<string> | Iterable<unknown> | null;
   } = {},
 ): TelegramQueueUpdate | null {
-  if (item.update) return cloneJson(item.update);
+  if (item.update) {
+    if (item.tenantId && updateSenderId(item.update) !== item.tenantId) {
+      return null;
+    }
+    return cloneJson(item.update);
+  }
+  if (item.tenantId) return null;
   const route = splitChatKey(chatKey);
   const allowed =
     legacyAllowedUserIds instanceof Set
@@ -983,7 +1012,7 @@ export async function enqueueQueueFile(
   const result = enqueueItem(
     loaded.document,
     chatKey,
-    createQueueItem(update, options.now?.() ?? Date.now()),
+    createQueueItem(update, options.now?.() ?? Date.now(), options.tenantId),
   );
   // A previous rename can be visible even when its parent-directory fsync failed.
   // Rewrite duplicate retries too, so offset advancement always follows a write

@@ -47,6 +47,7 @@ import { humanizeProviderError } from "../lib/error-humanizer.js";
 import {
   chatKeyOf,
   getChatStatus,
+  RUN_STALE_MS,
   setChatStatus,
   setChatStatusIf,
 } from "../lib/run-status.js";
@@ -72,6 +73,8 @@ import {
   publishTelegramTurnStarted,
 } from "../../scripts/lib/telegram-turn-start.ts";
 import { pathToFileURL } from "node:url";
+import { releaseUserTurn } from "../../scripts/lib/user-quota.ts";
+import { parseTelegramUserId } from "../../scripts/lib/user-registry.ts";
 
 // Токен (TELEGRAM_BOT_TOKEN) и секрет вебхука (TELEGRAM_WEBHOOK_SECRET_TOKEN)
 // читаются из окружения автоматически.
@@ -755,6 +758,16 @@ async function finishStatus(
   const tg = channel.telegram;
   const key = chatKeyOf(tg.chatId, tg.messageThreadId);
   const st = getChatStatus(key);
+  if (st?.sessionId !== sessionId) return false;
+  const quotaControlDir = process.env.IVA_USER_CONTROL_DIR;
+  const quotaUserId = parseTelegramUserId(process.env.ASSISTANT_USER_ID);
+  if (quotaControlDir && quotaUserId) {
+    try {
+      await releaseUserTurn(quotaControlDir, quotaUserId);
+    } catch (error) {
+      console.error("[telegram] не удалось освободить квоту хода:", error);
+    }
+  }
   // Compare and update happen under one per-chat lock. A reset can remove
   // sessionId after this read; a late terminal event then becomes a no-op.
   if (
@@ -950,25 +963,10 @@ const telegram = telegramChannel({
       await finishStatus(channel, ctx.session.id, "cancelled");
     },
     // Страховка: если терминальное turn-событие потерялось (краш), парковка сессии
-    // всё равно снимает busy-флаг — мост не должен буферизовать вечно.
-    "session.waiting"(_data, channel, ctx) {
-      const tg = channel.telegram;
-      const key = chatKeyOf(tg.chatId, tg.messageThreadId);
-      setChatStatusIf(
-        key,
-        { status: "running", sessionId: ctx.session.id },
-        {
-          status: "idle",
-          continuationToken: toChannelLocalToken(channel.continuationToken),
-          turnId: null,
-          ingressId: null,
-          ingressAt: null,
-          statusAt: null,
-          turnAt: null,
-          firstOutputAt: null,
-          latencyLogged: null,
-        },
-      );
+    // всё равно снимает busy-флаг И удаляет осиротевший «Работаю…» — та же уборка, что у
+    // turn.completed. После обычного финала CAS по sessionId не совпадает — no-op.
+    async "session.waiting"(_data, channel, ctx) {
+      await finishStatus(channel, ctx.session.id, "completed");
     },
     "message.appended"(_data, channel, ctx) {
       markTelegramFirstOutput({
@@ -1185,7 +1183,8 @@ const telegram = telegramChannel({
     const earlyKey = chatKeyOf(message.chat.id, message.messageThreadId);
     const earlyIngressId = await publishTelegramEarlyStatus({
       chatKey: earlyKey,
-      setStatusImpl: setChatStatus,
+      staleMs: RUN_STALE_MS,
+      getStatusImpl: getChatStatus,
       setStatusIfImpl: setChatStatusIf,
       sendWorkingStatusImpl: (options) =>
         sendWorkingStatus(ctx.telegram, options),

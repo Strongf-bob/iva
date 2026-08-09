@@ -2,6 +2,11 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { readdir } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
+import {
+  multiUserMode,
+  personalRoot,
+  resolvePersonalReadPath,
+} from "../lib/safe-user-path.ts";
 
 // Host-native glob. Переопределяет встроенный glob eve: ищет файлы на реальной ФС VPS.
 // fast-glob в node_modules отсутствует, поэтому реализовано через рекурсивный обход fs
@@ -79,7 +84,9 @@ export default defineTool({
       .describe("Базовая директория поиска (абсолютный путь)"),
   }),
   async execute({ pattern, cwd }) {
-    const root = cwd ?? process.cwd();
+    const root = multiUserMode()
+      ? resolvePersonalReadPath(cwd ?? ".", personalRoot())
+      : (cwd ?? process.cwd());
     const all: string[] = [];
     await walk(root, root, all);
     const re = globToRegExp(pattern);

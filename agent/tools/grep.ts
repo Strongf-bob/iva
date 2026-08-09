@@ -2,6 +2,11 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
+import {
+  multiUserMode,
+  personalRoot,
+  resolvePersonalReadPath,
+} from "../lib/safe-user-path.ts";
 
 // Host-native grep. Переопределяет встроенный grep eve: regex-поиск по содержимому
 // реальных файлов на ФС VPS (node:fs + RegExp). Самодостаточно (eve/tools, zod,
@@ -88,7 +93,9 @@ export default defineTool({
     flags: z.string().optional().describe("Флаги RegExp, напр. 'i' или 'm'"),
   }),
   async execute({ pattern, path, glob, flags }) {
-    const root = path ?? process.cwd();
+    const root = multiUserMode()
+      ? resolvePersonalReadPath(path ?? ".", personalRoot())
+      : (path ?? process.cwd());
     const re = new RegExp(pattern, flags ?? "");
     const globRe = glob ? globToRegExp(glob) : null;
 

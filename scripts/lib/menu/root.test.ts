@@ -101,3 +101,27 @@ test("root exposes the top-level screen contract", () => {
   assert.equal(root.parent, null);
   assert.equal(root.on("ignored", [], {}, makeCtx("en")), undefined);
 });
+
+test("ordinary user root exposes only personal Google setup", () => {
+  const view = root.render({ role: "user" }, makeCtx("en"));
+  assert.deepEqual(compact(view.rows), [
+    [["🔗 Google", "iva_menu:gws:o"]],
+    [["✖ Close", "iva_menu:r:x"]],
+  ]);
+});
+
+test("personalized owner menu never opens legacy-path personal settings", () => {
+  const view = root.render(
+    { role: "owner", personalRoot: "/srv/iva/data/users/101" },
+    makeCtx("en"),
+  );
+  const callbacks = compact(view.rows)
+    .flat()
+    .map(([, callback]) => callback);
+  assert.equal(callbacks.includes("iva_menu:lang:o"), false);
+  assert.equal(callbacks.includes("iva_menu:chr:o"), false);
+  assert.equal(callbacks.includes("iva_menu:core:o"), false);
+  assert.equal(callbacks.includes("iva_menu:cron:o"), false);
+  assert.equal(callbacks.includes("iva_menu:gws:o"), true);
+  assert.equal(callbacks.includes("iva_menu:ub:o"), true);
+});

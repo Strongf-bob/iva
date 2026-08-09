@@ -113,7 +113,11 @@ type MenuOptions = {
   deps: MenuDeps;
   screens?: ScreenRegistry;
 };
-type OpenOptions = { msgId?: number };
+type OpenOptions = {
+  msgId?: number;
+  role?: "owner" | "user";
+  personalRoot?: string;
+};
 
 function isMenuAwaitText(value: unknown): value is MenuAwaitText {
   return (
@@ -401,6 +405,8 @@ export function createMenu({
       screen: "r",
       page: 0,
       msgId: opts.msgId ?? null,
+      role: opts.role,
+      personalRoot: opts.personalRoot,
     });
     await renderScreen(st);
     return st;

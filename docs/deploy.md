@@ -1,6 +1,6 @@
 # Deploy
 
-Iva runs on one VPS as two systemd user services, two systemd watchdog timers, and five in-process eve schedules. `install.sh` sets all of it up ([install](./install.md)); this page is what's actually running and how to operate it.
+Iva runs on one VPS as a Telegram gateway, one Eve worker per active isolated user, two systemd watchdog timers, and six in-process Eve schedules per worker. A legacy single-user installation keeps `iva.service` until the owner migration is run. `install.sh` sets the base installation up ([install](./install.md)); this page is what's actually running and how to operate it.
 
 ## Transport: long polling
 
@@ -48,13 +48,29 @@ printf 'header = "Authorization: Bearer %s"\n' "$ASSISTANT_BEARER" |
 unset ASSISTANT_BEARER IVA_PORT
 ```
 
-| Unit                           | When                         | Job                                                           |
-| ------------------------------ | ---------------------------- | ------------------------------------------------------------- |
-| `iva.service`                  | always                       | the agent (`eve start`), `Restart=always`                     |
-| `iva-telegram-poll.service`    | always                       | the long-polling bridge                                       |
-| `iva-telegram-userbot.service` | opt-in (`iva userbot setup`) | Telethon userbot MCP proxy — see [userbot.md](userbot.md)     |
-| `iva-memory-doctor.timer`      | 05:00 nightly                | schema/health/decay/MOC checks + vault `git push`             |
-| `iva-update-check.timer`       | 10:00 daily                  | check for a newer stable Iva version; notify once per version |
+| Unit                           | When             | Job                                                              |
+| ------------------------------ | ---------------- | ---------------------------------------------------------------- |
+| `iva-worker-<id>.service`      | each active user | isolated Eve worker with personal HOME, vault, data and port     |
+| `iva-telegram-poll.service`    | always           | long-polling gateway, private-chat routing and per-user quotas   |
+| `iva-telegram-userbot.service` | owner opt-in     | owner-only Telethon userbot proxy — see [userbot.md](userbot.md) |
+| `iva-memory-doctor.timer`      | 05:00 nightly    | schema/health/decay/MOC checks + vault `git push`                |
+| `iva-update-check.timer`       | 10:00 daily      | check for a newer stable Iva version; notify once per version    |
+
+### Enabling isolated users on an existing server
+
+Build the authored agent code before starting personalized workers, then migrate the current owner explicitly:
+
+```bash
+npm run build
+iva users migrate-owner 123456789
+iva users add 987654321
+iva restart
+iva users list
+```
+
+The migration verifies copied files by size and SHA-256 and retains its backup in `data/migration-backups/`. It registers the candidate as non-routable `provisioning`, disables the legacy `iva.service`, starts the personalized owner worker, probes that worker's exact loopback health route, then activates routing. A readiness failure removes the provisional registry entry, restores and health-checks the legacy service, and installs a private owner-only route to its old port before polling resumes, so Telegram remains usable and the same migration command can be retried. The temporary legacy route deliberately bypasses personalized quota reservations because the old worker cannot release them; it is owner-only and should exist only until the migration is retried. If any rollback step or legacy health check fails, polling stays paused instead of consuming updates without a proven destination. Do not remove the backup until the personalized owner worker, vault, Google access and schedules have been verified. Blocking a user preserves their directory and gateway state; deletion pauses the poll gateway while it moves both personal data and tenant-scoped queue, quota, run-status and reset state to a stable transaction directory under `data/quarantine/`, then resumes service. An interrupted deletion resumes that same transaction on retry; it is deliberately not an erasure operation.
+
+The gateway accepts registered users only in one-to-one private chats and routes each update to that user's fixed loopback worker port. Worker services receive a personal `HOME`, data directory, vault and Eve session directory. The model-facing shell is disabled for every personalized worker, including the owner; server operations remain available only to someone who can log in to the host.
 
 The doctor and update-check timers stay on systemd on purpose: they're watchdogs that must keep running even if the agent process itself is wedged. `iva-memory-doctor.timer` embeds `ASSISTANT_TIMEZONE` directly, so its 05:00 schedule remains correct even when the server clock uses UTC — as do the eve schedules below (`Environment=TZ` in `iva.service`). Setting the server's own system timezone to match is therefore optional, not required for anything in this doc to work correctly:
 

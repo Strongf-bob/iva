@@ -2,6 +2,8 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { classifyAgentListeners } from "../lib/listener-security.ts";
 import { readMemoryMaintenanceReport } from "../lib/memory-maintenance.ts";
+import { readUserRegistrySync } from "../lib/user-registry.ts";
+import { workerServiceName } from "../lib/worker-units.ts";
 import type { createCliRuntime } from "./runtime.ts";
 import type { createCliSystemd } from "./systemd.ts";
 
@@ -49,8 +51,13 @@ export function createDoctorCommand(
     readEnv,
     dataDirAbs,
   } = runtime;
-  const { ensureAssistantBearer, writeUnits, activateUnits, migrateEnv } =
-    systemdLifecycle;
+  const {
+    ensureAssistantBearer,
+    writeUnits,
+    activateUnits,
+    migrateEnv,
+    managedServices,
+  } = systemdLifecycle;
   const now = dependencies.now ?? Date.now;
   const sleep =
     dependencies.sleep ??
@@ -69,6 +76,7 @@ export function createDoctorCommand(
     const bearerChanged = ensureAssistantBearer();
     if (bearerChanged) fixN++;
     const env = readEnv();
+    const resolvedDataDir = dataDirAbs(env);
 
     // 1. Node ≥24
     const major = parseInt(nodeVersion.split(".")[0], 10);
@@ -103,7 +111,7 @@ export function createDoctorCommand(
       const missing = required.filter((key) => !(env[key] || "").trim());
       if (
         provider === "codex" &&
-        !existsSync(join(dataDirAbs(env), "codex-auth.json"))
+        !existsSync(join(resolvedDataDir, "codex-auth.json"))
       )
         missing.push("OpenAI sign-in (iva login)");
       if (!missing.length) {
@@ -206,7 +214,8 @@ export function createDoctorCommand(
     }
 
     // 5. Services active
-    for (const service of SERVICES) {
+    const services = managedServices?.() ?? SERVICES;
+    for (const service of services) {
       if (systemd.isEnabled(service) && systemd.isActive(service)) {
         ok(`${service} enabled and active`);
         okN++;
@@ -226,10 +235,23 @@ export function createDoctorCommand(
     // A newly generated bearer is read only at process start. Without this restart,
     // doctor would fix the file while leaving the live Eve process unable to accept it.
     if (bearerChanged) {
-      warn("iva.service needs one restart to load the new internal bearer");
+      const eveServices = services.filter(
+        (service) => service !== "iva-telegram-poll.service",
+      );
+      const legacyOnly =
+        eveServices.length === 1 && eveServices[0] === "iva.service";
+      warn(
+        legacyOnly
+          ? "iva.service needs one restart to load the new internal bearer"
+          : "Iva workers need one restart to load the new internal bearer",
+      );
       try {
-        systemd.restart(["iva.service"]);
-        ok("iva.service loaded the internal bearer");
+        systemd.restart(eveServices);
+        ok(
+          legacyOnly
+            ? "iva.service loaded the internal bearer"
+            : "Iva workers loaded the internal bearer",
+        );
         fixN++;
       } catch (error) {
         bad((error as { message: string }).message);
@@ -238,45 +260,63 @@ export function createDoctorCommand(
     }
     // A refreshed unit does not move an already-running old process off 0.0.0.0.
     // Detect the actual socket and restart once so doctor repairs that upgrade state too.
-    const port = Number((readEnv().IVA_PORT || DEFAULT_PORT).trim());
-    const inspectListener = () => {
+    const inspectListener = (port: number) => {
       const result = cap("ss", ["-H", "-ltn", "sport", "=", `:${port}`]);
       return result.code === 0
         ? classifyAgentListeners(result.out, port)
         : "unknown";
     };
-    let listener = inspectListener();
-    if (listener === "exposed") {
-      warn(
-        `iva.service is exposed beyond loopback on port ${port} - restarting securely`,
-      );
-      try {
-        systemd.restart(["iva.service"]);
-        for (let attempt = 0; attempt < 30; attempt++) {
-          await sleep(500);
-          listener = inspectListener();
-          if (listener === "loopback") break;
-        }
-        if (listener === "loopback") {
-          ok(`iva.service bound to loopback:${port}`);
-          fixN++;
-        } else {
-          bad(`iva.service still exposed on port ${port}`);
+    const registry = readUserRegistrySync(join(resolvedDataDir, "control"));
+    const workers = registry.users
+      .filter((user) => user.status === "active")
+      .map((user) => ({
+        label: workerServiceName(user.id),
+        service: workerServiceName(user.id),
+        port: user.port,
+      }));
+    const listenerTargets = workers.length
+      ? workers
+      : [
+          {
+            label: "iva.service",
+            service: "iva.service",
+            port: Number((readEnv().IVA_PORT || DEFAULT_PORT).trim()),
+          },
+        ];
+    for (const target of listenerTargets) {
+      let listener = inspectListener(target.port);
+      if (listener === "exposed") {
+        warn(
+          `${target.label} is exposed beyond loopback on port ${target.port} - restarting securely`,
+        );
+        try {
+          systemd.restart([target.service]);
+          for (let attempt = 0; attempt < 30; attempt++) {
+            await sleep(500);
+            listener = inspectListener(target.port);
+            if (listener === "loopback") break;
+          }
+          if (listener === "loopback") {
+            ok(`${target.label} bound to loopback:${target.port}`);
+            fixN++;
+          } else {
+            bad(`${target.label} still exposed on port ${target.port}`);
+            badN++;
+          }
+        } catch (error) {
+          bad((error as { message: string }).message);
           badN++;
         }
-      } catch (error) {
-        bad((error as { message: string }).message);
-        badN++;
+      } else if (listener === "loopback") {
+        ok(`${target.label} bound to loopback:${target.port}`);
+        okN++;
+      } else if (listener === "absent") {
+        warn(`no listener found on port ${target.port}`);
+        warnN++;
+      } else {
+        warn("could not inspect listener addresses (ss unavailable)");
+        warnN++;
       }
-    } else if (listener === "loopback") {
-      ok(`iva.service bound to loopback:${port}`);
-      okN++;
-    } else if (listener === "absent") {
-      warn(`no listener found on port ${port}`);
-      warnN++;
-    } else {
-      warn("could not inspect listener addresses (ss unavailable)");
-      warnN++;
     }
 
     // Background timers enabled
@@ -331,7 +371,7 @@ export function createDoctorCommand(
     let rollupStatus: unknown = null;
     try {
       rollupStatus = JSON.parse(
-        readFileSync(join(dataDirAbs(env), "rollup-status.json"), "utf8"),
+        readFileSync(join(resolvedDataDir, "rollup-status.json"), "utf8"),
       );
     } catch {
       // No rollup-status.json yet (fresh install, or nothing has fired yet) — not an error.

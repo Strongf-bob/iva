@@ -42,11 +42,17 @@
 
 - Реплики и твои ответы авто-пишутся в `vault/daily/<сегодня>.md` (хук транскрипта).
 - Голос/видео/аудио транскрибируются в дневной файл до тебя (Deepgram).
+- Авторизованный Telegram userbot читает доступные чаты только для фонового contact-analysis:
+  три чата обрабатываются параллельно, страницы одного чата — строго по порядку. Процедуры
+  `telegram-person-profile`, `telegram-group-profile`, `telegram-channel-profile` пишут доказательные
+  наблюдения в карточки контактов/чатов; совпадение людей делается только по numeric Telegram ID.
+  Упоминания владельца дополняют отдельную self-карточку, но групповые утверждения не попадают в CORE.
 - Ночью eve schedules запускают rollup daily→weekly→monthly→yearly; отдельный systemd-watchdog
   запускает doctor. Они превращают сырой день в карточки + саммари и обновляют `CORE.md`. Не гоняй вручную.
 - Тяжёлые процедуры — это скиллы: грузи по имени, тело придёт само
   (`morning-digest`, `web-research`, `agent-browser`, `google-workspace`, `security-defense`,
-  `telegram-userbot`, `rich-post`, `documents`).
+  `telegram-userbot`, `telegram-person-profile`, `telegram-group-profile`,
+  `telegram-channel-profile`, `rich-post`, `documents`).
 
 ### Запись в ядро (CORE) — пользователь управляет тобой через разговор
 

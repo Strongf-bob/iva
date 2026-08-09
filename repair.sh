@@ -137,7 +137,7 @@ done < <(find "$INSTALL_DIR" -maxdepth 1 -type f -name '.env.*' -print0)
 
 mkdir -p -- "$candidate/data/update-recovery/$stamp"
 recovery="$candidate/data/update-recovery/$stamp"
-chmod 700 -- "$candidate/data/update-recovery" "$recovery"
+chmod 700 "$candidate/data/update-recovery" "$recovery"
 final_recovery="$INSTALL_DIR/data/update-recovery/$stamp"
 cp -- "$state_dir/changes.patch" "$recovery/changes.patch"
 cp -- "$state_dir/untracked.zlist" "$recovery/untracked.zlist"
@@ -154,7 +154,10 @@ if [ -s "$state_dir/changes.patch" ]; then
     apply_code=$?
   fi
   if [ "$apply_code" -ne 0 ]; then
-    mapfile -t conflicts < <(git -C "$candidate" diff --name-only --diff-filter=U)
+    conflicts=()
+    while IFS= read -r conflict; do
+      [ -n "$conflict" ] && conflicts+=("$conflict")
+    done < <(git -C "$candidate" diff --name-only --diff-filter=U)
     if [ "${#conflicts[@]}" -gt 0 ]; then
       printf '%s\n' "${conflicts[@]}" >>"$recovery/conflicts.txt"
       git -C "$candidate" checkout HEAD -- "${conflicts[@]}"

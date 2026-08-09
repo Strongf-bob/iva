@@ -52,6 +52,32 @@ process.env.TELEGRAM_COLLECT_QUIET_MS ??= "0";
 process.env.AGENT_LANGUAGE = "en";
 
 mkdirSync(dataDir, { recursive: true });
+mkdirSync(join(dataDir, "control"), { recursive: true });
+writeFileSync(
+  join(dataDir, "control", "users.json"),
+  JSON.stringify({
+    schema: "iva-users/v1",
+    revision: 1,
+    users: [
+      {
+        id: "42",
+        role: "owner",
+        status: "active",
+        port: 8800,
+        limits: {
+          concurrentTurns: 1,
+          requestsPerHour: 30,
+          requestsPerDay: 100,
+          llmTokensPerDay: 500000,
+          audioSecondsPerDay: 1800,
+          attachmentBytes: 20971520,
+          storageBytes: 1073741824,
+        },
+        createdAt: "2026-08-07T00:00:00.000Z",
+      },
+    ],
+  }),
+);
 const offsetFile = join(dataDir, "telegram-offset.json");
 const queueFile = join(dataDir, "telegram-queue.json");
 const resultFile = join(dataDir, "queue-harness-result.json");
@@ -62,7 +88,10 @@ let queueDirSyncSuccesses = 0;
 
 const statusModulePath = "#lib/run-status.ts";
 const status = (await import(statusModulePath)) as RunStatusModule;
-const privateKey = "1:";
+const { releaseUserTurn } = await import("../lib/user-quota.ts");
+const { parseTelegramUserId } = await import("../lib/user-registry.ts");
+const quotaUserId = parseTelegramUserId("42")!;
+const privateKey = "42:";
 const groupKey = "-100:";
 const topicKey = "-100:7";
 
@@ -179,7 +208,7 @@ if (fault !== "none") {
 const privateUpdate = (
   updateId: number,
   text: string,
-  chatId = 1,
+  chatId = 42,
 ): MessageUpdate => ({
   update_id: updateId,
   message: {
@@ -246,6 +275,15 @@ const requestedOffsets: number[] = [];
 let getUpdatesCalls = 0;
 let directAcceptanceAttempts = 0;
 let statusBeforeRetry: ChatStatus | null = null;
+
+async function finishPrivateTurn(): Promise<void> {
+  await releaseUserTurn(join(dataDir, "control"), quotaUserId);
+  status.setChatStatus(privateKey, {
+    status: "idle",
+    sessionId: null,
+    turnId: null,
+  });
+}
 
 const jsonResponse = (payload: unknown, statusCode = 200) => ({
   ok: statusCode >= 200 && statusCode < 300,
@@ -320,7 +358,10 @@ if (mode === "fair-drain") {
 
 const fetchHarness = async (url: unknown, options: FetchOptions = {}) => {
   const target = String(url);
-  if (target.startsWith("http://iva-red.invalid/")) {
+  if (
+    target.startsWith("http://iva-red.invalid/") ||
+    target.startsWith("http://127.0.0.1:8800/")
+  ) {
     const deliveryRoute = new URL(target).pathname;
     deliveryRoutes.push(deliveryRoute);
     const delivery = JSON.parse(options.body ?? "{}") as unknown as Update;
@@ -447,18 +488,10 @@ const fetchHarness = async (url: unknown, options: FetchOptions = {}) => {
         });
       }
       if (getUpdatesCalls === 2) {
-        status.setChatStatus(privateKey, {
-          status: "idle",
-          sessionId: null,
-          turnId: null,
-        });
+        await finishPrivateTurn();
       }
       if (getUpdatesCalls > 2 && status.isRunning(privateKey)) {
-        status.setChatStatus(privateKey, {
-          status: "idle",
-          sessionId: null,
-          turnId: null,
-        });
+        await finishPrivateTurn();
       }
       if (getUpdatesCalls >= 6) finish();
       return jsonResponse({ ok: true, result: [] });
@@ -477,11 +510,7 @@ const fetchHarness = async (url: unknown, options: FetchOptions = {}) => {
         getUpdatesCalls === 3 ||
         (getUpdatesCalls > 3 && status.isRunning(privateKey))
       ) {
-        status.setChatStatus(privateKey, {
-          status: "idle",
-          sessionId: null,
-          turnId: null,
-        });
+        await finishPrivateTurn();
       }
       if (getUpdatesCalls >= 5) finish();
       return jsonResponse({ ok: true, result: [] });
@@ -497,11 +526,7 @@ const fetchHarness = async (url: unknown, options: FetchOptions = {}) => {
     }
     if (mode === "restart-drain") {
       if (status.isRunning(privateKey)) {
-        status.setChatStatus(privateKey, {
-          status: "idle",
-          sessionId: null,
-          turnId: null,
-        });
+        await finishPrivateTurn();
       }
       if (getUpdatesCalls >= 6) finish();
       return jsonResponse({ ok: true, result: [] });

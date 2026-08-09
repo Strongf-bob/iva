@@ -21,6 +21,9 @@ with a `SKILL.md` plus supporting files. Iva loads both your custom skills and t
 - 📮 **google-workspace.md** — one CLI surface covering Gmail, Calendar, Drive, Sheets, Docs and Tasks.
 - 📄 **documents.md** — local PDF, DOCX and XLSX extraction, one-file answers and optional library import.
 - 📡 **telegram-userbot/** — a guarded personal-account workflow with a separate safety reference.
+- 👤 **telegram-person-profile/**, **telegram-group-profile/** and **telegram-channel-profile/** —
+  structured, evidence-backed extraction procedures selected by the read-only contact-analysis
+  coordinator. Keep their shared Zod contract and reducer validation aligned when extending them.
 - 🎨 **rich-post/** — a directory skill for rich Telegram posts with supporting references.
 
 ⚠️ Your skills go in `data/custom/agent/skills/` and nowhere else - never in a `.claude/` directory
@@ -112,4 +115,4 @@ One gotcha — Iva runs eve **0.29.5**:
 
 - 🩹 **patch-package** — `patches/eve+0.29.5.patch` makes deterministic model-call errors (invalid prompt, unknown tool) fail fast instead of parking a poisoned session; upstream still classifies them as recoverable in 0.29.5. If you bump Eve, regenerate the patch (re-apply the edit to `node_modules/eve/dist/src/harness/model-call-error.js`, then `npx patch-package eve`) or drop it only after the targeted classification test passes against upstream.
 
-The Eve 0.11.4 schedule crash (`eve dev` dying when a schedule handler imported another authored module) is fixed since 0.27.8. Iva now ships five `agent/schedules/*.ts` handlers: four memory rollups and the opt-in digest. On a VPS they run in the `iva.service` process; the two remaining systemd timers are watchdogs for doctor and update-check ([deploy.md](./deploy.md)).
+The Eve 0.11.4 schedule crash (`eve dev` dying when a schedule handler imported another authored module) is fixed since 0.27.8. Iva now ships six `agent/schedules/*.ts` handlers: four memory rollups, the opt-in digest and the 15-minute read-only Telegram contact sync. On a VPS they run in the `iva.service` process; the two remaining systemd timers are watchdogs for doctor and update-check ([deploy.md](./deploy.md)). Keep schedule tests outside `agent/schedules/`: Eve discovers every TypeScript file in that directory as a production handler.

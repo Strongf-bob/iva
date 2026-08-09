@@ -11,14 +11,26 @@ export interface SchedulePaths {
 }
 
 export function resolvePaths(): SchedulePaths {
-  const root = process.cwd();
+  const cwd = process.cwd();
+  const appRootRaw = process.env.ASSISTANT_APP_DIR;
+  const root = appRootRaw
+    ? isAbsolute(appRootRaw)
+      ? appRootRaw
+      : join(cwd, appRootRaw)
+    : cwd;
   const raw = process.env.ASSISTANT_DATA_DIR ?? "data";
-  const dataDir = isAbsolute(raw) ? raw : join(root, raw);
+  const dataDir = isAbsolute(raw) ? raw : join(cwd, raw);
+  const personalRootRaw = process.env.ASSISTANT_PERSONAL_ROOT;
+  const lockRoot = personalRootRaw
+    ? isAbsolute(personalRootRaw)
+      ? personalRootRaw
+      : join(cwd, personalRootRaw)
+    : root;
   return {
     root,
     dataDir,
     statusPath: join(dataDir, "rollup-status.json"),
-    memoryLockPath: join(root, ".memory.lock"),
+    memoryLockPath: join(lockRoot, ".memory.lock"),
   };
 }
 
@@ -36,4 +48,28 @@ export function memoryRollupJob(period: MemoryPeriod) {
     lockPath: memoryLockPath,
     statusPath,
   };
+}
+
+export function contactAnalysisJob() {
+  const { root, statusPath } = resolvePaths();
+  return {
+    name: "telegram-contact-sync",
+    argv: ["scripts/contact-analysis.ts", "sync"],
+    root,
+    nodeBin: process.execPath,
+    lockPath: join(root, ".contact-analysis.lock"),
+    statusPath,
+    timeoutMs: 24 * 60 * 60 * 1000,
+    guardMs: 10 * 60 * 1000,
+    env: {
+      ...process.env,
+      IVA_CONTACT_ANALYSIS_LOCK_HELD: "1",
+    },
+  };
+}
+
+export function contactAnalysisEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env.ASSISTANT_MULTI_USER !== "1" || env.ASSISTANT_ROLE === "owner";
 }

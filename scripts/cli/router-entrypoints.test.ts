@@ -39,6 +39,7 @@ void test("no arguments and every help alias preserve one exact successful respo
     "start / stop",
     "usage",
     "userbot",
+    "users",
     "logs",
     "uninstall",
     "version",

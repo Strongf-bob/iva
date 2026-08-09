@@ -1,10 +1,16 @@
 import { wrapLanguageModel, type LanguageModelMiddleware } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import {
   CODEX_BASE_URL,
   codexAuthHeaders,
 } from "../scripts/lib/codex-oauth.ts";
 import { EFFORTS } from "../scripts/lib/model-catalog.ts";
+import { readUserQuota } from "../scripts/lib/user-quota.ts";
+import {
+  parseTelegramUserId,
+  readUserRegistry,
+} from "../scripts/lib/user-registry.ts";
 
 type WrappableModel = Parameters<typeof wrapLanguageModel>[0]["model"];
 
@@ -210,4 +216,52 @@ const stripReasoningMiddleware: LanguageModelMiddleware = {
 /** Оборачивает текстовую модель так, чтобы reasoning не попадал в реплеемую историю. */
 export function withReasoningStripped(model: WrappableModel): WrappableModel {
   return wrapLanguageModel({ model, middleware: stripReasoningMiddleware });
+}
+
+const userQuotaMiddleware: LanguageModelMiddleware = {
+  async transformParams({ params }) {
+    if (process.env.ASSISTANT_MULTI_USER !== "1") return params;
+    const controlDir = process.env.IVA_USER_CONTROL_DIR;
+    const userId = parseTelegramUserId(process.env.ASSISTANT_USER_ID);
+    if (!controlDir || !userId)
+      throw new Error(
+        "personal model call is missing its fixed quota identity",
+      );
+    const registry = await readUserRegistry(controlDir);
+    const user = registry.users.find(
+      (candidate) => candidate.id === userId && candidate.status === "active",
+    );
+    if (!user) throw new Error("personal model user is not active");
+    const quota = await readUserQuota(controlDir, userId);
+    const remaining = user.limits.llmTokensPerDay - quota.tokensDay;
+    if (remaining <= 0) throw new Error("daily model token quota exhausted");
+    return {
+      ...params,
+      // Exact input usage is known only after the provider returns. Bound the only
+      // controllable part of this call, then the usage hook closes the gate before
+      // any later step/turn once provider-reported total usage reaches the ceiling.
+      maxOutputTokens: Math.max(
+        1,
+        Math.min(params.maxOutputTokens ?? remaining, remaining),
+      ),
+    };
+  },
+};
+
+export function withUserQuota(model: WrappableModel): WrappableModel {
+  return wrapLanguageModel({ model, middleware: userQuotaMiddleware });
+}
+
+/** Creates the configured text model for both the root agent and background analysis. */
+export function createTextModel(modelName = providerConfig.textModel) {
+  const base =
+    providerName === "codex"
+      ? makeCodexModel(modelName)
+      : createOpenAICompatible({
+          name: `iva-${providerName}`,
+          baseURL: providerConfig.baseURL,
+          apiKey: providerConfig.apiKey,
+          includeUsage: true,
+        })(modelName);
+  return withReasoningStripped(base);
 }

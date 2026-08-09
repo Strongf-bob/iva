@@ -5,8 +5,8 @@
 # Установка вручную: см. комментарии в deploy/iva-memory-daily.service.
 [Unit]
 Description=Iva Telegram polling bridge (getUpdates → local webhook)
-After=network-online.target iva.service
-Wants=iva.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 # Everything these units create (vault, transcripts, data/) must not be world-readable.

@@ -20,6 +20,8 @@
 
 Iva is a self-hosted Telegram AI assistant with layered memory that turns your messages into an Obsidian-compatible vault. You talk, it files: voice notes, photos, forwarded posts and decisions become plain-markdown cards it actually remembers. Everything runs on your own server, with your keys and your data.
 
+One installation can also serve up to 10 mutually untrusted people through private chats with the same bot. Each person gets a separate worker, vault, history, settings, schedules, Google account, usage ledger and limits; the server owner pays the shared model and transcription providers. Multi-user mode has no shared chats, shared spaces or Telegram admin access. See [configuration](docs/configuration.md#isolated-multi-user-mode).
+
 **One command installs it:**
 
 ```bash
@@ -62,6 +64,9 @@ The bridge long-polls Telegram, so no public HTTPS, domain or webhook is needed.
 - **Google Workspace** — Gmail, Calendar, Drive, Sheets, Docs and Tasks from chat via the `gws` CLI; installed for you, with a guided key setup right in the conversation.
 - **Skills & MCP** — drop one file to add a procedure or connect an MCP server; keys stay in `.env`.
 - **Personal Telegram — userbot (beta)** — read and search your _own_ account, not just the bot; connect by phone and Telegram code in a private menu, no terminal. This fork's production deployment enforces a server-side read-only tool allowlist. Rough and buggy — opt-in, **at your own risk**. [Details](docs/userbot.md).
+- **Telegram contact graph (read-only)** — with read-only userbot tools enabled, full accessible text
+  history incrementally builds evidence-backed people, group, project and owner cards. Three chats run
+  in parallel; numeric Telegram IDs link the same person across DMs and groups.
 - **Safe to forward** — forwarded text, captions and voice transcripts pass an injection screen before the model reads them. A flagged message or transcript reaches the model tagged as data rather than as an instruction; for media captions the screen runs but the tag does not travel with it yet.
 - **Token accounting** — every model step is logged; `/usage` reports it for free.
 
@@ -85,7 +90,7 @@ Full architecture and search internals: [docs/memory.md](docs/memory.md).
 
 ## A secretary inside Telegram
 
-<img src="assets/iva-userbot.webp" alt="Your secretary inside Telegram: the userbot reads group chats from your own account and collects summaries through a server-enforced read-only registry" width="100%">
+<img src="assets/iva-userbot.webp" alt="Your secretary inside Telegram: the userbot reads group chats from your own account, collects summaries and surfaces messages that need you through a server-enforced read-only boundary" width="100%">
 
 The bot is half of Telegram. The other half is your personal account: connect the userbot (beta, opt-in) and Iva works from it like a secretary — reads the group chats you never keep up with, folds them into summaries, and catches the messages that actually need you.
 
@@ -93,6 +98,9 @@ The bot is half of Telegram. The other half is your personal account: connect th
 - **Private onboarding in chat** — open `/menu`, enter your phone in a delete-before-processing step, and submit the Telegram code with a masked keypad. No terminal and no login secret is sent to the model.
 - **Production read-only boundary** — the MCP server registers only an explicit allowlist of read/search tools plus a read-only login status probe. Sending, editing, deleting, joining, inviting, reacting, and exporting invite links are absent regardless of what the model asks for.
 - **Isolated session** — production runs the proxy as an internal-only sidecar with a private session volume, no published port, a read-only root filesystem, and an explicit on/off marker.
+- **A contact graph that resumes** — the first read-only import walks full text history, then a
+  15-minute schedule continues from durable per-chat cursors. Every extracted observation links back
+  to its source message; voice and video-note contents are not analyzed here.
 
 > [!WARNING]
 > Automating a personal account is against Telegram's ToS and can get the account limited or banned. The userbot is opt-in, beta, and used at your own risk — reading is far safer than sending. Details: [docs/userbot.md](docs/userbot.md).
@@ -161,7 +169,15 @@ Default model is deepseek-v4-flash, 131k context. On Go it runs about $9/mo all-
 ## What's New
 
 <details>
-<summary><b>v0.3.13 · 06.08.2026 — expand the latest releases</b></summary>
+<summary><b>v0.3.14 · 09.08.2026 — expand the latest releases</b></summary>
+
+### 09.08.2026
+
+#### v0.3.14
+
+- The "Working…" indicator with its Stop button now always disappears once the reply arrives — replying to one of Iva's messages while she was still busy used to leave the previous indicator stuck in the chat forever.
+- Crashed and parked turns clean up after themselves now: an orphaned indicator is deleted instead of waiting for a manual cleanup.
+- All five status loaders switched to animated emoji (typing dots for a working turn), and a dirty install no longer rolls back a healthy update — local changes are kept as a recovery bundle.
 
 ### 06.08.2026
 
@@ -185,20 +201,6 @@ Default model is deepseek-v4-flash, 131k context. On Go it runs about $9/mo all-
 - New `documents` skill — send a PDF, DOCX or XLSX and Iva reads it and answers on its content; on request it files the document into your vault library, searchable by meaning.
 - Nightly memory and the Telegram queue are hardened against rare failures: a corrupted service file or an unlucky restart no longer loses a night of memory or your queued messages.
 - File-processing errors never leak service details into the chat anymore.
-
-### 04.08.2026
-
-#### v0.3.10
-
-- Nightly memory now runs inside Iva itself (eve schedules) — four systemd timers removed automatically, nothing to do on your side.
-- If the server was down at rollup time, the missed run now catches up on the next start.
-- Optional morning digest on a schedule — off by default, enable with `digestSchedule.enabled` in `data/settings.json`.
-
-#### v0.3.9
-
-- The eve engine is updated (0.29.5) — more reliable turn cancellation and message delivery around restarts.
-- /new truly clears the context — no more "cleared" replies while the old history quietly continues.
-- /usage now shows the real context size of the last turn instead of a doubled sum.
 
 </details>
 

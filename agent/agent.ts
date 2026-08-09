@@ -1,32 +1,15 @@
 import { defineAgent } from "eve";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 // Провайдер и его модели — единый источник в provider.ts (тот же конфиг у agent/vision.ts).
 // codex = подписка ChatGPT (Responses API + OAuth); ollama/opencode = OpenAI-совместимый chat.
 import {
   compatibleThinkingEffort,
   providerConfig as cfg,
-  providerName,
-  withReasoningStripped,
-  makeCodexModel,
+  createTextModel,
+  withUserQuota,
 } from "./provider.js";
 
-// Codex-подписка говорит на Responses API — отдельная модель-фабрика (@ai-sdk/openai).
-// Остальные провайдеры — OpenAI-совместимый chat/completions через openai-compatible.
-const textModel =
-  providerName === "codex"
-    ? makeCodexModel()
-    : createOpenAICompatible({
-        name: `iva-${providerName}`,
-        baseURL: cfg.baseURL,
-        apiKey: cfg.apiKey,
-        // Без этого стрим OpenAI-совместимых провайдеров НЕ несёт usage (нет stream_options:
-        // {include_usage:true}) → событие step.completed приходит без поля usage, и учёт токенов
-        // (agent/hooks/usage.ts) пуст. Включаем, чтобы провайдер отдавал расход в финальном чанке.
-        includeUsage: true,
-      })(cfg.textModel);
-
 export default defineAgent({
-  model: withReasoningStripped(textModel),
+  model: withUserQuota(createTextModel()),
   // eve maps this provider-agnostic setting to reasoning_effort for the
   // OpenAI-compatible Ollama Cloud and OpenCode Go endpoints.
   reasoning: compatibleThinkingEffort,

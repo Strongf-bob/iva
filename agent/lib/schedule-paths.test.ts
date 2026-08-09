@@ -27,6 +27,8 @@ function temporaryDirectory(t: TestContext): string {
 function probe(options: {
   readonly cwd: string;
   readonly dataDir?: string;
+  readonly appDir?: string;
+  readonly personalRoot?: string;
   readonly period?: MemoryPeriod;
 }): unknown {
   const env: NodeJS.ProcessEnv = {
@@ -35,12 +37,17 @@ function probe(options: {
   };
   delete env.ASSISTANT_DATA_DIR;
   delete env.SCHEDULE_PATHS_PERIOD;
+  delete env.ASSISTANT_APP_DIR;
+  delete env.ASSISTANT_PERSONAL_ROOT;
   if (options.dataDir !== undefined) {
     env.ASSISTANT_DATA_DIR = options.dataDir;
   }
   if (options.period !== undefined) {
     env.SCHEDULE_PATHS_PERIOD = options.period;
   }
+  if (options.appDir !== undefined) env.ASSISTANT_APP_DIR = options.appDir;
+  if (options.personalRoot !== undefined)
+    env.ASSISTANT_PERSONAL_ROOT = options.personalRoot;
 
   const stdout = execFileSync(
     process.execPath,
@@ -103,4 +110,29 @@ await test("memoryRollupJob returns the exact command contract for every period"
       statusPath: join(root, "schedule-data", "rollup-status.json"),
     });
   }
+});
+
+await test("multi-user schedules run shared scripts with personal state and lock paths", (t) => {
+  const runtime = temporaryDirectory(t);
+  const app = temporaryDirectory(t);
+  const personal = temporaryDirectory(t);
+  const data = join(personal, "runtime", "data");
+
+  assert.deepEqual(
+    probe({
+      cwd: runtime,
+      appDir: app,
+      personalRoot: personal,
+      dataDir: data,
+      period: "daily",
+    }),
+    {
+      name: "memory-daily",
+      argv: ["scripts/memory/rollup.ts", "daily"],
+      root: app,
+      nodeBin: process.execPath,
+      lockPath: join(personal, ".memory.lock"),
+      statusPath: join(data, "rollup-status.json"),
+    },
+  );
 });

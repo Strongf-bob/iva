@@ -60,11 +60,12 @@ export default defineInstrumentation({
     // Never let this block or fail server startup: wrap synchronously, and treat the
     // whole async chain below as fire-and-forget with its own catch.
     try {
-      const root = process.cwd();
+      const runtimeRoot = process.cwd();
+      const root = process.env.ASSISTANT_APP_DIR || runtimeRoot;
       const dataDirRaw = process.env.ASSISTANT_DATA_DIR ?? "data";
       const dataDir = dataDirRaw.startsWith("/")
         ? dataDirRaw
-        : join(root, dataDirRaw);
+        : join(runtimeRoot, dataDirRaw);
       // Always loopback, deliberately NOT derived from ASSISTANT_HOST: the listener is
       // bound to 127.0.0.1 by iva.service (`eve start --host 127.0.0.1`) regardless of
       // what ASSISTANT_HOST says, and probeEveHealth only accepts loopback hostnames. A
