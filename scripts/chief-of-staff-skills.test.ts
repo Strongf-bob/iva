@@ -46,3 +46,19 @@ test("daily attention skill is bounded, evidence-backed and read-only", () => {
   assert.match(skill.body, /do not create, modify, or send/iu);
 });
 
+test("relationship briefing preserves identity ambiguity and evidence", () => {
+  const skill = readSkill("relationship-briefing");
+
+  assert.equal(skill.frontmatter.name, "relationship-briefing");
+  assert.match(skill.frontmatter.description, /^Use when /u);
+  assert.match(skill.body, /`memory_search`/u);
+  assert.match(skill.body, /`read_file`/u);
+  assert.match(skill.body, /candidate|candidate|candidates|candidates/iu);
+  assert.match(skill.body, /(?:three|3) linked supporting cards/iu);
+  assert.match(skill.body, /(?:five|5) talking points/iu);
+  assert.match(skill.body, /EXTRACTED/u);
+  assert.match(skill.body, /INFERRED/u);
+  assert.match(skill.body, /vault-relative/u);
+  assert.match(skill.body, /telegram:message/u);
+  assert.match(skill.body, /do not create, modify, or send/iu);
+});
