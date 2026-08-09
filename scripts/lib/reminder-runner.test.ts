@@ -245,3 +245,41 @@ void test("registry authorization is revalidated after reservation and before I/
   assert.equal(report.delivered, 0);
   assert.equal((await getReminder(data, created.job.id))?.state, "active");
 });
+
+void test("post-delivery recurrence failure is durable and never replays", async () => {
+  const data = await dataDir();
+  const created = await createReminder(
+    data,
+    {
+      idempotencyKey: "recurrence-failure-1",
+      message: "Deliver once",
+      timezone: "UTC",
+      schedule: { kind: "cron", expression: "0 8 * * *" },
+    },
+    { now: () => Date.parse("2026-08-09T07:00:00.000Z") },
+  );
+  let deliveries = 0;
+  const options = {
+    users: [{ id: "101", status: "active" as const, dataDir: data }],
+    now: () => Date.parse("2026-08-09T08:00:00.000Z"),
+    nextOccurrence: () => {
+      throw new Error("injected recurrence failure");
+    },
+    deliver: () => {
+      deliveries += 1;
+      return Promise.resolve({ ok: true, error: "" });
+    },
+  };
+
+  const first = await runReminderTick(options);
+  const second = await runReminderTick(options);
+
+  assert.equal(deliveries, 1);
+  assert.equal(first.delivered, 1);
+  assert.equal(first.userFailures, 1);
+  assert.equal(second.delivered, 0);
+  const job = await getReminder(data, created.job.id);
+  assert.equal(job?.state, "cancelled");
+  assert.equal(job?.nextRunAt, null);
+  assert.match(job?.lastError ?? "", /recurrence disabled/u);
+});

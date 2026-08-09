@@ -11,7 +11,9 @@ import {
 import { nextCronOccurrence } from "./reminder-cron.ts";
 import {
   REMINDER_SCHEMA,
+  ReminderCreateInputSchema,
   parseReminderCreateInput,
+  validateReminderSchedule,
   type ReminderCreateInput,
   type ReminderJob,
   type ReminderStore,
@@ -19,23 +21,17 @@ import {
 
 const ReminderJobSchema: z.ZodType<ReminderJob> = z.strictObject({
   id: z.uuid(),
-  idempotencyKey: z.string(),
-  message: z.string(),
-  timezone: z.string(),
-  schedule: z.discriminatedUnion("kind", [
-    z.strictObject({ kind: z.literal("once"), at: z.string() }),
-    z.strictObject({ kind: z.literal("cron"), expression: z.string() }),
-  ]),
+  ...ReminderCreateInputSchema.shape,
   state: z.enum(["active", "delivering", "completed", "cancelled"]),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-  nextRunAt: z.number().finite().nullable(),
-  occurrenceAt: z.number().finite().nullable(),
-  leaseUntil: z.number().finite().nullable(),
-  lastAttemptAt: z.number().finite().nullable(),
-  lastDeliveredAt: z.number().finite().nullable(),
+  createdAt: z.iso.datetime({ offset: true }),
+  updatedAt: z.iso.datetime({ offset: true }),
+  nextRunAt: z.number().finite().nonnegative().nullable(),
+  occurrenceAt: z.number().finite().nonnegative().nullable(),
+  leaseUntil: z.number().finite().nonnegative().nullable(),
+  lastAttemptAt: z.number().finite().nonnegative().nullable(),
+  lastDeliveredAt: z.number().finite().nonnegative().nullable(),
   failureCount: z.number().int().nonnegative(),
-  retryAt: z.number().finite().nullable(),
+  retryAt: z.number().finite().nonnegative().nullable(),
   lastError: z.string().max(1000).nullable(),
 });
 
@@ -55,6 +51,48 @@ function parseStore(value: unknown): ReminderStore {
   const parsed = StoreSchema.safeParse(value);
   if (!parsed.success) {
     throw new Error(`invalid reminder store: ${z.prettifyError(parsed.error)}`);
+  }
+  const ids = new Set<string>();
+  const idempotencyKeys = new Set<string>();
+  for (const job of parsed.data.jobs) {
+    validateReminderSchedule(job);
+    if (ids.has(job.id) || idempotencyKeys.has(job.idempotencyKey)) {
+      throw new Error("invalid reminder store: duplicate reminder identity");
+    }
+    ids.add(job.id);
+    idempotencyKeys.add(job.idempotencyKey);
+
+    const inactive = job.state === "completed" || job.state === "cancelled";
+    const activeValid =
+      job.state === "active" &&
+      job.nextRunAt !== null &&
+      (job.occurrenceAt === null || job.occurrenceAt === job.nextRunAt) &&
+      job.leaseUntil === null;
+    const deliveringValid =
+      job.state === "delivering" &&
+      job.nextRunAt !== null &&
+      job.occurrenceAt === job.nextRunAt &&
+      job.leaseUntil !== null;
+    const inactiveValid =
+      inactive &&
+      job.nextRunAt === null &&
+      job.occurrenceAt === null &&
+      job.leaseUntil === null &&
+      job.retryAt === null;
+    if (!activeValid && !deliveringValid && !inactiveValid) {
+      throw new Error(
+        `invalid reminder store: state invariants failed for reminder ${job.id}`,
+      );
+    }
+    if (
+      job.schedule.kind === "once" &&
+      !inactive &&
+      job.nextRunAt !== Date.parse(job.schedule.at)
+    ) {
+      throw new Error(
+        `invalid reminder store: schedule invariants failed for reminder ${job.id}`,
+      );
+    }
   }
   return parsed.data;
 }
@@ -96,6 +134,7 @@ export async function mutateReminderStore<T>(
     const result = mutate(store);
     if (JSON.stringify(store) !== before) {
       store.revision += 1;
+      parseStore(store);
       await saveJsonAtomic(file, store);
     }
     return result;
@@ -175,6 +214,7 @@ export async function cancelReminder(
     job.nextRunAt = null;
     job.retryAt = null;
     job.leaseUntil = null;
+    job.occurrenceAt = null;
     job.updatedAt = new Date().toISOString();
     return job;
   });

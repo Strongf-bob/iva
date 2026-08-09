@@ -18,12 +18,20 @@ const DATA_DIR_RAW = process.env.ASSISTANT_DATA_DIR ?? "data";
 const DATA_DIR = DATA_DIR_RAW.startsWith("/")
   ? DATA_DIR_RAW
   : join(process.cwd(), DATA_DIR_RAW);
-const SETTINGS_FILE = join(DATA_DIR, "settings.json");
+
+function settingsPath(dataDir = DATA_DIR): string {
+  const resolved = dataDir.startsWith("/")
+    ? dataDir
+    : join(process.cwd(), dataDir);
+  return join(resolved, "settings.json");
+}
 
 // {} при отсутствии/битом файле — вызывающий код всегда получает объект.
-export function readSettings(): Settings {
+export function readSettings(dataDir = DATA_DIR): Settings {
   try {
-    const parsed: unknown = JSON.parse(readFileSync(SETTINGS_FILE, "utf8"));
+    const parsed: unknown = JSON.parse(
+      readFileSync(settingsPath(dataDir), "utf8"),
+    );
     return typeof parsed === "object" && parsed !== null
       ? (parsed as Settings)
       : {};
@@ -34,12 +42,13 @@ export function readSettings(): Settings {
 
 // Частичное обновление: patch мержится поверх текущего, null-поля удаляют ключ.
 // Возвращает получившийся объект. Запись атомарна (tmp+rename).
-export function writeSettings(patch: Settings): Settings {
-  const next = { ...readSettings(), ...patch };
+export function writeSettings(patch: Settings, dataDir = DATA_DIR): Settings {
+  const next = { ...readSettings(dataDir), ...patch };
   for (const k of Object.keys(next)) if (next[k] === null) delete next[k];
-  mkdirSync(DATA_DIR, { recursive: true });
-  const tmp = `${SETTINGS_FILE}.tmp`;
+  const file = settingsPath(dataDir);
+  mkdirSync(dataDir, { recursive: true });
+  const tmp = `${file}.tmp`;
   writeFileSync(tmp, JSON.stringify(next), "utf8");
-  renameSync(tmp, SETTINGS_FILE);
+  renameSync(tmp, file);
   return next;
 }

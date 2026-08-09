@@ -56,21 +56,29 @@ export type ReminderStore = {
   jobs: ReminderJob[];
 };
 
+export function validateReminderSchedule(
+  input: Pick<ReminderCreateInput, "schedule" | "timezone">,
+  referenceMs = Date.now(),
+): void {
+  if (!validateTimeZone(input.timezone)) {
+    throw new Error("reminder timezone is invalid");
+  }
+  if (input.schedule.kind === "cron") {
+    parseCronExpression(input.schedule.expression);
+    nextCronOccurrence(input.schedule.expression, input.timezone, referenceMs);
+  }
+}
+
 export function parseReminderCreateInput(
   value: unknown,
   now = Date.now(),
 ): ReminderCreateInput {
   const parsed = ReminderCreateInputSchema.parse(value);
-  if (!validateTimeZone(parsed.timezone)) {
-    throw new Error("reminder timezone is invalid");
-  }
+  validateReminderSchedule(parsed, now);
   if (parsed.schedule.kind === "once") {
     if (Date.parse(parsed.schedule.at) <= now) {
       throw new Error("one-off reminder must be in the future");
     }
-  } else {
-    parseCronExpression(parsed.schedule.expression);
-    nextCronOccurrence(parsed.schedule.expression, parsed.timezone, now);
   }
   return parsed;
 }

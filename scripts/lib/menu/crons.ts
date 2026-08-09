@@ -70,12 +70,12 @@ function formatLastSuccess(entry: RollupEntry | undefined, T: Translate) {
     .replace(/\.\d{3}Z$/, "Z");
 }
 
-function digestEnabled() {
+function digestEnabled(dataDir: string) {
   // readSettings() resolves data/settings.json from ASSISTANT_DATA_DIR/cwd itself (see
   // agent/lib/settings.ts) — same file agent/schedules/digest.ts reads at fire time,
   // so this always reflects the toggle digest.ts itself would see on its next tick.
   try {
-    const settings = readSettings() as {
+    const settings = readSettings(dataDir) as {
       digestSchedule?: { enabled?: boolean };
     };
     return settings.digestSchedule?.enabled === true;
@@ -86,7 +86,7 @@ function digestEnabled() {
 
 function schedulesBlock(dataDir: string, T: Translate) {
   const status = loadRollupStatus(dataDir);
-  const digestOn = digestEnabled();
+  const digestOn = digestEnabled(dataDir);
   const lines = EVE_SCHEDULES.map((s) => {
     // digest fires off by default (agent/schedules/digest.ts) — "never" would be
     // indistinguishable from "enabled but hasn't run yet"; say so explicitly instead.

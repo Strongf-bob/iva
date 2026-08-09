@@ -22,6 +22,11 @@ export type ReminderTickReport = {
 };
 
 type ReservedReminder = { job: ReminderJob; recovered: boolean };
+type NextOccurrence = (
+  expression: string,
+  timezone: string,
+  afterMs: number,
+) => number;
 
 function retryDelay(failureCount: number): number {
   return Math.min(
@@ -64,15 +69,16 @@ function nextRecurringRun(
   job: ReminderJob,
   occurrenceAt: number,
   now: number,
+  nextOccurrence: NextOccurrence,
 ): number {
   if (job.schedule.kind !== "cron")
     throw new Error("reminder is not recurring");
   let next = occurrenceAt;
   for (let skipped = 0; skipped < 1000; skipped += 1) {
-    next = nextCronOccurrence(job.schedule.expression, job.timezone, next);
+    next = nextOccurrence(job.schedule.expression, job.timezone, next);
     if (next > now) return next;
   }
-  return nextCronOccurrence(job.schedule.expression, job.timezone, now);
+  return nextOccurrence(job.schedule.expression, job.timezone, now);
 }
 
 async function finishDelivery(
@@ -80,15 +86,16 @@ async function finishDelivery(
   reserved: ReminderJob,
   result: ReminderDeliveryResult,
   now: number,
-): Promise<void> {
-  await mutateReminderStore(dataDir, (store) => {
+  nextOccurrence: NextOccurrence,
+): Promise<{ recurrenceDisabled: boolean }> {
+  return mutateReminderStore(dataDir, (store) => {
     const job = store.jobs.find((candidate) => candidate.id === reserved.id);
     if (
       !job ||
       job.state !== "delivering" ||
       job.occurrenceAt !== reserved.occurrenceAt
     ) {
-      return;
+      return { recurrenceDisabled: false };
     }
     job.leaseUntil = null;
     job.updatedAt = new Date(now).toISOString();
@@ -97,7 +104,7 @@ async function finishDelivery(
       job.failureCount += 1;
       job.retryAt = now + retryDelay(job.failureCount);
       job.lastError = result.error.slice(0, MAX_ERROR_LENGTH);
-      return;
+      return { recurrenceDisabled: false };
     }
     job.lastDeliveredAt = now;
     job.lastError = null;
@@ -107,10 +114,22 @@ async function finishDelivery(
       job.state = "completed";
       job.nextRunAt = null;
     } else {
-      job.state = "active";
-      job.nextRunAt = nextRecurringRun(job, job.occurrenceAt as number, now);
+      try {
+        job.nextRunAt = nextRecurringRun(
+          job,
+          job.occurrenceAt as number,
+          now,
+          nextOccurrence,
+        );
+        job.state = "active";
+      } catch {
+        job.state = "cancelled";
+        job.nextRunAt = null;
+        job.lastError = "recurrence disabled after delivery";
+      }
     }
     job.occurrenceAt = null;
+    return { recurrenceDisabled: job.state === "cancelled" };
   });
 }
 
@@ -141,6 +160,7 @@ export async function runReminderTick({
   authorize,
   now = () => Date.now(),
   leaseMs = DEFAULT_LEASE_MS,
+  nextOccurrence = nextCronOccurrence,
   log = () => {},
 }: {
   users: readonly ReminderUser[];
@@ -148,6 +168,7 @@ export async function runReminderTick({
   authorize?: (userId: string) => Promise<boolean>;
   now?: () => number;
   leaseMs?: number;
+  nextOccurrence?: NextOccurrence;
   log?: (...parts: unknown[]) => void;
 }): Promise<ReminderTickReport> {
   const report: ReminderTickReport = {
@@ -188,9 +209,16 @@ export async function runReminderTick({
             error: error instanceof Error ? error.message : String(error),
           };
         }
-        await finishDelivery(user.dataDir, reserved.job, result, now());
+        const finished = await finishDelivery(
+          user.dataDir,
+          reserved.job,
+          result,
+          now(),
+          nextOccurrence,
+        );
         if (result.ok) report.delivered += 1;
         else report.failed += 1;
+        if (finished.recurrenceDisabled) report.userFailures += 1;
         log(
           "reminder-scheduler:",
           reserved.job.id,

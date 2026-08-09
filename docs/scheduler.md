@@ -81,9 +81,10 @@ Callers should treat returned jobs as data snapshots. Store mutations must conti
 go through these functions so locking, validation, revision increments, and atomic
 writes remain consistent.
 
-Invalid store JSON is never replaced with an empty store and never quarantined into a
-path that the next tick ignores. The original `reminders.json` remains in place and that
-user fails closed until an operator explicitly repairs or restores it.
+Invalid store JSON, timezone or cron data, duplicate identities, and inconsistent job
+states are never replaced with an empty store or quarantined into a path that the next
+tick ignores. The original `reminders.json` remains in place and that user fails closed
+until an operator explicitly repairs or restores it.
 
 ## Operator CLI
 
@@ -122,6 +123,10 @@ acknowledgement window is the only intentional duplicate case; consumers must no
 exactly-once delivery. A recurring job that missed several slots while the stack was
 down coalesces them into one delivery, then advances to the first future occurrence.
 Each tick processes at most 20 jobs per active user to prevent a restart storm.
+If Telegram accepts a recurring occurrence but calculating its next valid run then
+fails, the scheduler durably cancels that job with `recurrence disabled after delivery`.
+It reports a user failure and does not replay the occurrence; an operator can inspect
+the inactive job before creating a corrected schedule.
 The scheduler re-reads the durable user registry after reserving each occurrence and
 immediately before Telegram I/O. If the user is no longer active, the reservation is
 returned to `active` without sending. A corrupt or inaccessible tenant store increments

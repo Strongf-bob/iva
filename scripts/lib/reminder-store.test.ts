@@ -67,6 +67,52 @@ void test("corrupt reminder data is preserved and rejected", async () => {
   assert.equal(await readFile(file, "utf8"), "{broken");
 });
 
+void test("JSON-valid stores fail closed on schedule and state invariants", async () => {
+  const dataDir = await fixture();
+  const file = reminderFile(dataDir);
+  const base = {
+    id: "00000000-0000-4000-8000-000000000001",
+    idempotencyKey: "corrupt-semantic-1",
+    message: "Never send",
+    timezone: "Not/AZone",
+    schedule: { kind: "cron", expression: "0 8 * * *" },
+    state: "active",
+    createdAt: "2026-08-09T10:00:00.000Z",
+    updatedAt: "2026-08-09T10:00:00.000Z",
+    nextRunAt: now,
+    occurrenceAt: null,
+    leaseUntil: null,
+    lastAttemptAt: null,
+    lastDeliveredAt: null,
+    failureCount: 0,
+    retryAt: null,
+    lastError: null,
+  };
+  await writeFile(
+    file,
+    JSON.stringify({ schema: "iva-reminders/v1", revision: 1, jobs: [base] }),
+  );
+  await assert.rejects(() => loadReminderStore(dataDir), /timezone/u);
+
+  await writeFile(
+    file,
+    JSON.stringify({
+      schema: "iva-reminders/v1",
+      revision: 1,
+      jobs: [
+        {
+          ...base,
+          timezone: "UTC",
+          state: "delivering",
+          occurrenceAt: null,
+          leaseUntil: null,
+        },
+      ],
+    }),
+  );
+  await assert.rejects(() => loadReminderStore(dataDir), /state invariants/u);
+});
+
 void test("concurrent creates serialize without losing jobs", async () => {
   const dataDir = await fixture();
   await Promise.all(

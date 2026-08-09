@@ -54,6 +54,14 @@ test("container timers screen lists personal reminders without host timer claims
   const personalRoot = join(globalData, "users", "101");
   const personalData = join(personalRoot, "runtime", "data");
   mkdirSync(personalData, { recursive: true });
+  writeFileSync(
+    join(globalData, "settings.json"),
+    JSON.stringify({ digestSchedule: { enabled: false } }),
+  );
+  writeFileSync(
+    join(personalData, "settings.json"),
+    JSON.stringify({ digestSchedule: { enabled: true } }),
+  );
   await createReminder(
     personalData,
     {
@@ -79,4 +87,5 @@ test("container timers screen lists personal reminders without host timer claims
   assert.match(view.text, /Private reminder/u);
   assert.match(view.text, /Personal reminders/u);
   assert.doesNotMatch(view.text, /No Iva timers found/u);
+  assert.doesNotMatch(view.text, /digest .*disabled/u);
 });
