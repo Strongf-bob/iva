@@ -30,7 +30,7 @@ RUN uv venv --python python3 /opt/iva-userbot-venv \
     services/telegram-userbot/requirements.lock \
   && npm run build
 
-FROM node:24-bookworm-slim AS runtime
+FROM node:24-trixie-slim AS runtime
 
 WORKDIR /app
 ARG GWS_VERSION=0.22.5
