@@ -1,5 +1,8 @@
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/require-await, @typescript-eslint/no-unnecessary-type-assertion -- Node's test runner owns registrations; injected async boundaries intentionally use synchronous fakes. */
 import assert from "node:assert/strict";
+import { access, chmod, mkdir, mkdtemp, open, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { runContactAnalysisCommand } from "./contact-analysis.ts";
@@ -82,10 +85,53 @@ test("sync runs under the shared pipeline lock and prints a bounded report", asy
 
   assert.equal(code, 0);
   assert.deepEqual(events, [
-    "lock:/srv/iva/.contact-analysis.lock",
+    "lock:/srv/iva/data/.contact-analysis.lock",
     "run:/srv/iva",
   ]);
   assert.deepEqual(JSON.parse(output[0]!), report);
+});
+
+test("sync stores its advisory lock in writable data outside a read-only app root", async () => {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "iva-contact-lock-"));
+  const appRoot = join(temporaryRoot, "app");
+  const dataRoot = join(temporaryRoot, "data");
+  await mkdir(appRoot);
+  await chmod(appRoot, 0o500);
+  try {
+    const code = await runContactAnalysisCommand(["sync"], {
+      env: {
+        TELEGRAM_EXPOSED_TOOLS: "read-only",
+        ASSISTANT_DATA_DIR: dataRoot,
+      },
+      root: appRoot,
+      writeOutput: () => {},
+      withLockImpl: async (lockRoot, operation) => {
+        await mkdir(lockRoot, { recursive: true, mode: 0o700 });
+        const handle = await open(
+          join(lockRoot, ".contact-analysis.lock"),
+          "a",
+        );
+        await handle.close();
+        return operation();
+      },
+      runContactAnalysisImpl: async () => ({
+        completedChats: 0,
+        pendingChats: 0,
+        blockedChats: 0,
+        failedChats: 0,
+        processedMessages: 0,
+        unsupportedMedia: 0,
+        skippedMessages: 0,
+        generatedQuestions: 0,
+      }),
+    });
+
+    assert.equal(code, 0);
+    await access(join(dataRoot, ".contact-analysis.lock"));
+  } finally {
+    await chmod(appRoot, 0o700);
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
 });
 
 test("multi-user owner keeps personal checkpoints but reads the shared userbot token", async () => {
