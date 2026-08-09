@@ -1,0 +1,48 @@
+/* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
+
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+const ROOT = fileURLToPath(new URL("../", import.meta.url));
+
+type Skill = {
+  frontmatter: Record<string, string>;
+  body: string;
+};
+
+function readSkill(name: string): Skill {
+  const path = fileURLToPath(
+    new URL(`../agent/skills/${name}.md`, import.meta.url),
+  );
+  const source = readFileSync(path, "utf8");
+  const match = /^---\n([\s\S]*?)\n---\n([\s\S]+)$/u.exec(source);
+  assert.ok(match, `${name} must have YAML frontmatter and a body`);
+  const frontmatter: Record<string, string> = {};
+  for (const line of match[1].split("\n")) {
+    const separator = line.indexOf(":");
+    if (separator < 1) continue;
+    frontmatter[line.slice(0, separator).trim()] = line
+      .slice(separator + 1)
+      .trim();
+  }
+  return { frontmatter, body: match[2] };
+}
+
+test("daily attention skill is bounded, evidence-backed and read-only", () => {
+  const skill = readSkill("chief-of-staff-today");
+
+  assert.equal(skill.frontmatter.name, "chief-of-staff-today");
+  assert.match(skill.frontmatter.description, /^Use when /u);
+  assert.match(skill.body, /`tasks`/u);
+  assert.match(skill.body, /`memory_search`/u);
+  assert.match(skill.body, /`read_file`/u);
+  assert.match(skill.body, /EXTRACTED/u);
+  assert.match(skill.body, /INFERRED/u);
+  assert.match(skill.body, /superseded/u);
+  assert.match(skill.body, /vault-relative/u);
+  assert.match(skill.body, /(?:seven|7) action bullets/iu);
+  assert.match(skill.body, /do not create, modify, or send/iu);
+});
+
