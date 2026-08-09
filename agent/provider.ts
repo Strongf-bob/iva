@@ -1,5 +1,6 @@
 import { wrapLanguageModel, type LanguageModelMiddleware } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import {
   CODEX_BASE_URL,
   codexAuthHeaders,
@@ -249,4 +250,18 @@ const userQuotaMiddleware: LanguageModelMiddleware = {
 
 export function withUserQuota(model: WrappableModel): WrappableModel {
   return wrapLanguageModel({ model, middleware: userQuotaMiddleware });
+}
+
+/** Creates the configured text model for both the root agent and background analysis. */
+export function createTextModel(modelName = providerConfig.textModel) {
+  const base =
+    providerName === "codex"
+      ? makeCodexModel(modelName)
+      : createOpenAICompatible({
+          name: `iva-${providerName}`,
+          baseURL: providerConfig.baseURL,
+          apiKey: providerConfig.apiKey,
+          includeUsage: true,
+        })(modelName);
+  return withReasoningStripped(base);
 }

@@ -1,6 +1,6 @@
 # Deploy
 
-Iva runs on one VPS as a Telegram gateway, one Eve worker per active isolated user, two systemd watchdog timers, and five in-process Eve schedules per worker. A legacy single-user installation keeps `iva.service` until the owner migration is run. `install.sh` sets the base installation up ([install](./install.md)); this page is what's actually running and how to operate it.
+Iva runs on one VPS as a Telegram gateway, one Eve worker per active isolated user, two systemd watchdog timers, and six in-process Eve schedules per worker. A legacy single-user installation keeps `iva.service` until the owner migration is run. `install.sh` sets the base installation up ([install](./install.md)); this page is what's actually running and how to operate it.
 
 ## Transport: long polling
 
