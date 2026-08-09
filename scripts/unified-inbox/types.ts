@@ -357,6 +357,12 @@ export const InboxReportItemSchema = z.strictObject({
 });
 export type InboxReportItem = z.infer<typeof InboxReportItemSchema>;
 
+export const InboxReportMeetingSchema = MeetingBriefSchema.extend({
+  title: z.string().min(1).max(500),
+  locators: z.array(z.string().min(1).max(500)).min(1).max(100),
+});
+export type InboxReportMeeting = z.infer<typeof InboxReportMeetingSchema>;
+
 export const InboxReportSchema = z.strictObject({
   schemaVersion: z.literal(1),
   generatedAt: TimestampSchema,
@@ -365,7 +371,7 @@ export const InboxReportSchema = z.strictObject({
     needsReply: z.array(InboxReportItemSchema).max(100),
     informational: z.array(InboxReportItemSchema).max(100),
   }),
-  meetings: z.array(MeetingBriefSchema).max(100),
+  meetings: z.array(InboxReportMeetingSchema).max(100),
   draftProposals: z.array(GmailDraftProposalSchema).max(100),
   informationalCount: z.int().nonnegative(),
   ignorableCount: z.int().nonnegative(),
