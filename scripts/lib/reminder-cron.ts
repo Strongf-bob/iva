@@ -134,20 +134,6 @@ function formattedParts(
   );
 }
 
-export function cronMatchesOccurrence(
-  expression: string,
-  timezone: string,
-  atMs: number,
-): boolean {
-  if (!Number.isFinite(atMs) || atMs % 60_000 !== 0) return false;
-  const zone = validateTimeZone(timezone);
-  if (!zone) throw new Error("reminder timezone is invalid");
-  return matches(
-    parseCronExpression(expression),
-    formattedParts(formatterFor(zone), atMs),
-  );
-}
-
 export function nextCronOccurrence(
   expression: string,
   timezone: string,

@@ -8,7 +8,7 @@ import {
   releaseLock,
   saveJsonAtomic,
 } from "../../agent/lib/json-store.ts";
-import { cronMatchesOccurrence, nextCronOccurrence } from "./reminder-cron.ts";
+import { nextCronOccurrence } from "./reminder-cron.ts";
 import {
   REMINDER_SCHEMA,
   ReminderCreateInputSchema,
@@ -190,11 +190,12 @@ function parseStore(value: unknown): ReminderStore {
       job.schedule.kind === "cron" &&
       !inactive &&
       (job.nextRunAt === null ||
-        !cronMatchesOccurrence(
-          job.schedule.expression,
-          job.timezone,
-          job.nextRunAt,
-        ))
+        job.nextRunAt !==
+          nextCronOccurrence(
+            job.schedule.expression,
+            job.timezone,
+            job.lastDeliveredAt ?? createdAt,
+          ))
     ) {
       throw new Error(
         `invalid reminder store: schedule invariants failed for reminder ${job.id}`,
