@@ -124,6 +124,7 @@ services:
       TELEGRAM_PROXY_HOST: ${TELEGRAM_USERBOT_PROXY_HOST:-}
       TELEGRAM_PROXY_PORT: ${TELEGRAM_USERBOT_PROXY_PORT:-}
       TELEGRAM_PROXY_RDNS: ${TELEGRAM_USERBOT_PROXY_RDNS:-true}
+      TELEGRAM_USERBOT_BOT_API_PROXY: ${TELEGRAM_USERBOT_BOT_API_PROXY:-}
       TELEGRAM_USERBOT_ALLOW_INERT: ${TELEGRAM_USERBOT_ALLOW_INERT:-0}
     # Older rollback images predate the sidecar. Keep their placeholder alive so
     # the core bot can recover; only compatible images start the session owner.
