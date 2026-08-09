@@ -188,6 +188,17 @@ void test("a late weekly version does not redeliver an already delivered Monday 
   assert.equal(value.calls.deliveries[1]?.body, "weekly prepared report");
 });
 
+void test("an expired failed Monday bundle falls back to the still-live weekly review", async (t) => {
+  const value = harness(t);
+  await run(value, ms("2026-08-10T02:15:00.000Z"));
+  value.failNextDelivery(new ProviderFailure("retryable", "telegram-503"));
+  await run(value, ms("2026-08-10T05:00:00.000Z"));
+
+  await run(value, ms("2026-08-10T17:00:00.001Z"));
+  assert.equal(value.calls.deliveries.length, 2);
+  assert.equal(value.calls.deliveries[1]?.body, "weekly prepared report");
+});
+
 void test("a restart cannot redeliver a completed report", async (t) => {
   const value = harness(t);
   await run(value, ms("2026-08-11T02:00:00.000Z"));

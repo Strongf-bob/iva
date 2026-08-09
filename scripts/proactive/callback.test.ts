@@ -7,7 +7,7 @@ import test from "node:test";
 import { handleProactiveCommitmentCallback } from "./callback.ts";
 import { ProactiveStore } from "./store.ts";
 
-function fixture(t: test.TestContext) {
+function fixture(t: test.TestContext, expiresAt = 10_000) {
   const dataDir = mkdtempSync(join(tmpdir(), "iva-proactive-callback-"));
   chmodSync(dataDir, 0o700);
   const store = ProactiveStore.open(dataDir);
@@ -23,6 +23,7 @@ function fixture(t: test.TestContext) {
     ],
     tokenSecret: "s".repeat(32),
     nowMs: 1_000,
+    expiresAt,
   });
   store.close();
   t.after(() => {});
@@ -42,6 +43,7 @@ function fixture(t: test.TestContext) {
     answers,
     tenant,
     callback,
+    now: () => 1_500,
     answer: (text: string) => {
       answers.push(text);
       return Promise.resolve();
@@ -56,6 +58,7 @@ void test("non-proactive callback is left to the next bridge handler", async (t)
       callback: { ...value.callback, data: "iva_menu:r" },
       tenant: value.tenant,
       answer: value.answer,
+      now: value.now,
     }),
     false,
   );
@@ -69,6 +72,7 @@ void test("matching owner in a private chat can confirm once", async (t) => {
       callback: value.callback,
       tenant: value.tenant,
       answer: value.answer,
+      now: value.now,
     }),
     true,
   );
@@ -78,6 +82,7 @@ void test("matching owner in a private chat can confirm once", async (t) => {
     callback: value.callback,
     tenant: value.tenant,
     answer: value.answer,
+    now: value.now,
   });
   assert.match(value.answers[1] ?? "", /already|уже/iu);
 });
@@ -91,9 +96,24 @@ void test("dismiss is terminal and never creates confirmed task work", async (t)
     },
     tenant: value.tenant,
     answer: value.answer,
+    now: value.now,
   });
   const store = ProactiveStore.open(value.tenant.dataDir);
   assert.equal(store.claimConfirmedCommitment(2_000), null);
+  store.close();
+});
+
+void test("an expired owner callback is generically unavailable", async (t) => {
+  const value = fixture(t, 1_400);
+  await handleProactiveCommitmentCallback({
+    callback: value.callback,
+    tenant: value.tenant,
+    answer: value.answer,
+    now: value.now,
+  });
+  assert.match(value.answers[0] ?? "", /unavailable|недоступно/iu);
+  const store = ProactiveStore.open(value.tenant.dataDir);
+  assert.equal(store.claimConfirmedCommitment(1_600), null);
   store.close();
 });
 

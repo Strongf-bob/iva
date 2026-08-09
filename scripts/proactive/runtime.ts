@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { existsSync, lstatSync, readFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { isAbsolute, join, sep } from "node:path";
 
 import { Client } from "eve/client";
 import { z } from "zod";
@@ -24,13 +24,38 @@ import {
 const snapshotSchema = z.array(normalizedItemSchema).max(500);
 const CALLBACK_DATA = /^iva_commitment:[cd]:[A-Za-z0-9_-]{43}$/u;
 const MAX_GWS_OUTPUT = 1_000_000;
+const MAX_GWS_TASK_PAGES = 20;
 
 type GwsResult = { readonly exitCode: number; readonly stdout: string };
 type GwsExec = (args: readonly string[]) => Promise<GwsResult>;
 
-function fixedSnapshot(path: string) {
+function isInside(base: string, target: string): boolean {
+  return target === base || target.startsWith(`${base}${sep}`);
+}
+
+function safeSnapshotPath(dataDir: string, filename: string): string {
+  if (lstatSync(dataDir).isSymbolicLink()) {
+    throw new ProviderFailure("terminal", "snapshot-symbolic-link");
+  }
+  const base = realpathSync(dataDir);
+  let current = base;
+  for (const segment of ["proactive-reviews", "sources", filename]) {
+    current = join(current, segment);
+    if (!existsSync(current)) continue;
+    if (lstatSync(current).isSymbolicLink()) {
+      throw new ProviderFailure("terminal", "snapshot-symbolic-link");
+    }
+    if (!isInside(base, realpathSync(current))) {
+      throw new ProviderFailure("terminal", "snapshot-path-escape");
+    }
+  }
+  return current;
+}
+
+function fixedSnapshot(dataDir: string, filename: string) {
   return () => {
     try {
+      const path = safeSnapshotPath(dataDir, filename);
       if (!existsSync(path)) return Promise.resolve([]);
       if (lstatSync(path).isSymbolicLink()) {
         return Promise.reject(
@@ -55,16 +80,15 @@ export function createSnapshotProviders(dataDir: string): {
   readonly calendar: CalendarProvider;
   readonly tasks: Pick<TasksProvider, "listTasks">;
 } {
-  const root = join(dataDir, "proactive-reviews", "sources");
   return {
-    inbox: { listInbox: fixedSnapshot(join(root, "unified-inbox.json")) },
+    inbox: { listInbox: fixedSnapshot(dataDir, "unified-inbox.json") },
     crm: {
-      listRelationshipUpdates: fixedSnapshot(join(root, "crm.json")),
+      listRelationshipUpdates: fixedSnapshot(dataDir, "crm.json"),
     },
     calendar: {
-      listCalendarItems: fixedSnapshot(join(root, "calendar.json")),
+      listCalendarItems: fixedSnapshot(dataDir, "calendar.json"),
     },
-    tasks: { listTasks: fixedSnapshot(join(root, "tasks.json")) },
+    tasks: { listTasks: fixedSnapshot(dataDir, "tasks.json") },
   };
 }
 
@@ -118,32 +142,49 @@ export function createGwsTasksProvider(input: {
     listTasks: input.listTasks,
     async createConfirmedCommitment({ suggestion, idempotencyKey }) {
       const marker = `[iva-idempotency:${idempotencyKey}]`;
-      const listed = await input.exec([
-        "tasks",
-        "tasks",
-        "list",
-        "--params",
-        JSON.stringify({
-          tasklist: "@default",
-          showCompleted: true,
-          showHidden: true,
-          maxResults: 100,
-        }),
-      ]);
-      if (listed.exitCode !== 0) {
-        throw new ProviderFailure("retryable", `gws-list-${listed.exitCode}`);
+      let pageToken: string | undefined;
+      const seenTokens = new Set<string>();
+      for (let page = 0; page < MAX_GWS_TASK_PAGES; page += 1) {
+        const listed = await input.exec([
+          "tasks",
+          "tasks",
+          "list",
+          "--params",
+          JSON.stringify({
+            tasklist: "@default",
+            showCompleted: true,
+            showHidden: true,
+            maxResults: 100,
+            ...(pageToken ? { pageToken } : {}),
+          }),
+        ]);
+        if (listed.exitCode !== 0) {
+          throw new ProviderFailure("retryable", `gws-list-${listed.exitCode}`);
+        }
+        const parsed = parseJsonObject(listed.stdout, "invalid-gws-task-list");
+        const existing = taskItems(parsed).find((task) =>
+          typeof task.notes === "string" ? task.notes.includes(marker) : false,
+        );
+        if (existing && typeof existing.id === "string") {
+          return { receipt: `google-task:${existing.id}` };
+        }
+        const next = parsed.nextPageToken;
+        if (typeof next !== "string" || !next) {
+          pageToken = undefined;
+          break;
+        }
+        if (seenTokens.has(next)) {
+          throw new ProviderFailure("terminal", "repeated-gws-page-token");
+        }
+        seenTokens.add(next);
+        pageToken = next;
       }
-      const existing = taskItems(
-        parseJsonObject(listed.stdout, "invalid-gws-task-list"),
-      ).find((task) =>
-        typeof task.notes === "string" ? task.notes.includes(marker) : false,
-      );
-      if (existing && typeof existing.id === "string") {
-        return { receipt: `google-task:${existing.id}` };
+      if (pageToken) {
+        throw new ProviderFailure("retryable", "gws-task-page-limit");
       }
       const body = {
         title: suggestion.title,
-        notes: [suggestion.notes, ...suggestion.evidence, marker]
+        notes: [marker, suggestion.notes, ...suggestion.evidence]
           .filter(Boolean)
           .join("\n")
           .slice(0, 8_000),

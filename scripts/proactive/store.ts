@@ -247,9 +247,18 @@ export class ProactiveStore {
         task_claimed_at INTEGER,
         task_receipt TEXT,
         task_error_code TEXT,
+        expires_at INTEGER NOT NULL,
         UNIQUE (owner_id, suggestion_id)
       ) STRICT;
     `);
+    const actionColumns = [
+      ...this.database.prepare("PRAGMA table_info(commitment_actions)").all(),
+    ] as SqlRow[];
+    if (!actionColumns.some((column) => column.name === "expires_at")) {
+      this.database.exec(
+        "ALTER TABLE commitment_actions ADD COLUMN expires_at INTEGER; UPDATE commitment_actions SET expires_at = 0 WHERE expires_at IS NULL",
+      );
+    }
   }
 
   close(): void {
@@ -282,6 +291,22 @@ export class ProactiveStore {
         )
         .run(nowMs);
       return nowMs;
+    });
+  }
+
+  recoverStaleSideEffectClaims(nowMs: number): void {
+    const staleBefore = nowMs - CLAIM_STALE_MS;
+    this.transaction(() => {
+      this.database
+        .prepare(
+          "UPDATE deliveries SET state = 'ambiguous', claimed_at = NULL, last_error_code = 'stale-claim-outcome-unknown', updated_at = ? WHERE state = 'in_progress' AND claimed_at <= ?",
+        )
+        .run(nowMs, staleBefore);
+      this.database
+        .prepare(
+          "UPDATE urgent_alerts SET state = 'ambiguous', claimed_at = NULL, last_error_code = 'stale-claim-outcome-unknown' WHERE state = 'claimed' AND claimed_at <= ?",
+        )
+        .run(staleBefore);
     });
   }
 
@@ -474,13 +499,22 @@ export class ProactiveStore {
       const attempts = numberValue(current.attempts);
       const nextAttemptAt = current.next_attempt_at;
       const claimedAt = current.claimed_at;
+      if (
+        state === "in_progress" &&
+        typeof claimedAt === "number" &&
+        input.nowMs - claimedAt >= CLAIM_STALE_MS
+      ) {
+        this.database
+          .prepare(
+            "UPDATE deliveries SET state = 'ambiguous', claimed_at = NULL, last_error_code = 'stale-claim-outcome-unknown', updated_at = ? WHERE delivery_key = ? AND state = 'in_progress'",
+          )
+          .run(input.nowMs, input.deliveryKey);
+        return null;
+      }
       const reclaimable =
-        (state === "retry" &&
-          typeof nextAttemptAt === "number" &&
-          input.nowMs >= nextAttemptAt) ||
-        (state === "in_progress" &&
-          typeof claimedAt === "number" &&
-          input.nowMs - claimedAt >= CLAIM_STALE_MS);
+        state === "retry" &&
+        typeof nextAttemptAt === "number" &&
+        input.nowMs >= nextAttemptAt;
       if (!reclaimable) return null;
       const attempt = attempts + 1;
       this.database
@@ -594,14 +628,23 @@ export class ProactiveStore {
       const state = stringValue(row.state);
       const nextAttemptAt = row.next_attempt_at;
       const claimedAt = row.claimed_at;
+      if (
+        state === "claimed" &&
+        typeof claimedAt === "number" &&
+        nowMs - claimedAt >= CLAIM_STALE_MS
+      ) {
+        this.database
+          .prepare(
+            "UPDATE urgent_alerts SET state = 'ambiguous', claimed_at = NULL, last_error_code = 'stale-claim-outcome-unknown' WHERE fingerprint = ? AND state = 'claimed'",
+          )
+          .run(fingerprint);
+        return null;
+      }
       const eligible =
         state === "pending" ||
         (state === "retry" &&
           (nextAttemptAt === null ||
-            (typeof nextAttemptAt === "number" && nowMs >= nextAttemptAt))) ||
-        (state === "claimed" &&
-          typeof claimedAt === "number" &&
-          nowMs - claimedAt >= CLAIM_STALE_MS);
+            (typeof nextAttemptAt === "number" && nowMs >= nextAttemptAt)));
       if (!eligible) return null;
       const attempt = numberValue(row.attempts) + 1;
       this.database
@@ -659,6 +702,7 @@ export class ProactiveStore {
     readonly suggestions: readonly CommitmentSuggestion[];
     readonly tokenSecret: string;
     readonly nowMs: number;
+    readonly expiresAt: number;
   }): readonly { readonly suggestionId: string; readonly token: string }[] {
     if (input.tokenSecret.length < 32) {
       throw new Error("commitment action token secret is too short");
@@ -674,7 +718,7 @@ export class ProactiveStore {
         );
         this.database
           .prepare(
-            "INSERT OR IGNORE INTO commitment_actions(token_hash, owner_id, suggestion_id, suggestion_json, report_version_id, task_idempotency_key) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO commitment_actions(token_hash, owner_id, suggestion_id, suggestion_json, report_version_id, task_idempotency_key, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
           )
           .run(
             tokenHash,
@@ -683,6 +727,7 @@ export class ProactiveStore {
             JSON.stringify(suggestion),
             input.reportVersionId,
             idempotencyKey,
+            input.expiresAt,
           );
         return { suggestionId: suggestion.id, token };
       }),
@@ -694,12 +739,20 @@ export class ProactiveStore {
     return this.transaction(() => {
       const row = rowFrom(
         this.database.prepare(
-          "SELECT decision FROM commitment_actions WHERE token_hash = ? AND owner_id = ?",
+          "SELECT decision, expires_at FROM commitment_actions WHERE token_hash = ? AND owner_id = ?",
         ),
         tokenHash,
         input.ownerId,
       );
       if (!row) return { status: "rejected" };
+      if (input.nowMs > numberValue(row.expires_at)) {
+        this.database
+          .prepare(
+            "UPDATE commitment_actions SET decision = 'expired', decided_at = ? WHERE token_hash = ? AND owner_id = ? AND decision = 'pending'",
+          )
+          .run(input.nowMs, tokenHash, input.ownerId);
+        return { status: "rejected" };
+      }
       if (stringValue(row.decision) !== "pending") {
         return { status: "already-decided" };
       }

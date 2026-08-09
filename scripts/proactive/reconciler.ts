@@ -156,6 +156,7 @@ function individualCandidate(
 function deliveryCandidates(
   ownerId: string,
   store: ProactiveStore,
+  nowMs: number,
   daily: ReportPeriod,
   weekly: ReportPeriod,
   dailyVersion: StoredReportVersion | null,
@@ -163,6 +164,23 @@ function deliveryCandidates(
 ): readonly DeliveryCandidate[] {
   const dailyKey = `${ownerId}:daily:${daily.periodKey}`;
   const weeklyKey = `${ownerId}:weekly:${weekly.periodKey}`;
+  const bundleKey = `${ownerId}:bundle:${daily.periodKey}:${weekly.periodKey}`;
+  const bundleDelivery = store.delivery(bundleKey);
+  if (
+    dailyVersion &&
+    weeklyVersion &&
+    daily.dueAt === weekly.dueAt &&
+    nowMs > daily.expiresAt
+  ) {
+    if (
+      bundleDelivery?.state === "ambiguous" ||
+      bundleDelivery?.state === "delivered" ||
+      bundleDelivery?.state === "in_progress"
+    ) {
+      return [];
+    }
+    return [individualCandidate(ownerId, weeklyVersion, weekly)];
+  }
   const individualDeliveryStarted =
     store.delivery(dailyKey) !== null || store.delivery(weeklyKey) !== null;
   if (
@@ -173,7 +191,7 @@ function deliveryCandidates(
   ) {
     return [
       {
-        key: `${ownerId}:bundle:${daily.periodKey}:${weekly.periodKey}`,
+        key: bundleKey,
         versions: [dailyVersion, weeklyVersion],
         dueAt: daily.dueAt,
         expiresAt: daily.expiresAt,
@@ -215,6 +233,7 @@ async function deliverReports(
   for (const candidate of deliveryCandidates(
     input.ownerId,
     input.store,
+    input.nowMs,
     daily,
     weekly,
     dailyVersion,
@@ -237,6 +256,8 @@ async function deliverReports(
           suggestions: version.suggestions,
           tokenSecret: input.settings.tokenSecret,
           nowMs: input.nowMs,
+          expiresAt:
+            version.kind === "daily" ? daily.expiresAt : weekly.expiresAt,
         })
         .flatMap((action) => [
           {
@@ -372,6 +393,7 @@ export async function reconcileProactiveReviews(
     tasksCreated: 0,
     expired: 0,
   };
+  input.store.recoverStaleSideEffectClaims(input.nowMs);
   const periods = reviewPeriodsAt(input.nowMs);
   const recoveryBaselineAt = input.store.recoveryBaseline(input.nowMs);
   await preparePeriod(input, periods.daily, recoveryBaselineAt, result);

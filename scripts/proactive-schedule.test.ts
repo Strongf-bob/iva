@@ -43,7 +43,7 @@ void test("proactive reviews are opt-in and owner-only in multi-user mode", () =
   );
 });
 
-void test("schedule job uses personal status, a short guard and the TypeScript entrypoint", () => {
+void test("schedule job protects overlap without suppressing the next five-minute slot", () => {
   const root = realpathSync(
     mkdtempSync(join(tmpdir(), "iva-proactive-schedule-")),
   );
@@ -57,7 +57,7 @@ void test("schedule job uses personal status, a short guard and the TypeScript e
       nodeBin: process.execPath,
       statusPath: join(root, "data", "rollup-status.json"),
       timeoutMs: 4 * 60_000,
-      guardMs: 4 * 60_000,
+      guardMs: 0,
     });
   } finally {
     process.chdir(previous);

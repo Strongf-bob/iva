@@ -126,6 +126,48 @@ void test("ambiguous delivery is retained and never automatically reclaimed", (t
   store.close();
 });
 
+void test("a stale side-effect claim becomes ambiguous instead of being resent", (t) => {
+  const dataDir = root(t);
+  let store = ProactiveStore.open(dataDir);
+  const claim = {
+    deliveryKey: "owner:daily:crash-window",
+    versionIds: [8],
+    dueAt: 1_000,
+    expiresAt: 2_000_000,
+    nowMs: 1_000,
+  } as const;
+  assert.equal(store.claimDelivery(claim)?.attempt, 1);
+  store.upsertAlert(
+    {
+      fingerprint: "stale-alert-claim",
+      severity: "critical",
+      title: "Critical",
+      body: "Check now",
+      evidence: ["source:alert"],
+    },
+    1_000,
+  );
+  assert.equal(
+    store.claimAlertDelivery("stale-alert-claim", 1_000)?.attempt,
+    1,
+  );
+  store.close();
+
+  store = ProactiveStore.open(dataDir);
+  store.recoverStaleSideEffectClaims(1_000 + 15 * 60_000);
+  assert.equal(
+    store.claimDelivery({ ...claim, nowMs: 1_000 + 15 * 60_000 }),
+    null,
+  );
+  assert.equal(store.delivery(claim.deliveryKey)?.state, "ambiguous");
+  assert.equal(
+    store.claimAlertDelivery("stale-alert-claim", 1_000 + 15 * 60_000),
+    null,
+  );
+  assert.deepEqual(store.pendingAlerts(), []);
+  store.close();
+});
+
 void test("commitment tokens are stored only as hashes and task execution is idempotent", (t) => {
   const dataDir = root(t);
   let store = ProactiveStore.open(dataDir);
@@ -135,6 +177,7 @@ void test("commitment tokens are stored only as hashes and task execution is ide
     suggestions: [suggestion],
     tokenSecret: "s".repeat(32),
     nowMs: 1_000,
+    expiresAt: 2_000,
   });
   assert.match(action.token, /^[A-Za-z0-9_-]{32,64}$/u);
   const databaseBytes = readFileSync(
@@ -183,6 +226,29 @@ void test("commitment tokens are stored only as hashes and task execution is ide
   store.close();
 });
 
+void test("an expired commitment action cannot authorize a Google Task", (t) => {
+  const store = ProactiveStore.open(root(t));
+  const [action] = store.createCommitmentActions({
+    ownerId: "101",
+    reportVersionId: 9,
+    suggestions: [suggestion],
+    tokenSecret: "s".repeat(32),
+    nowMs: 1_000,
+    expiresAt: 1_500,
+  });
+  assert.equal(
+    store.decideCommitment({
+      token: action.token,
+      ownerId: "101",
+      decision: "confirmed",
+      nowMs: 1_501,
+    }).status,
+    "rejected",
+  );
+  assert.equal(store.claimConfirmedCommitment(1_600), null);
+  store.close();
+});
+
 void test("dismissed commitments never become task work", (t) => {
   const store = ProactiveStore.open(root(t));
   const [action] = store.createCommitmentActions({
@@ -191,6 +257,7 @@ void test("dismissed commitments never become task work", (t) => {
     suggestions: [suggestion],
     tokenSecret: "s".repeat(32),
     nowMs: 1_000,
+    expiresAt: 2_000,
   });
   store.decideCommitment({
     token: action.token,

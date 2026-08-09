@@ -98,6 +98,6 @@ export function proactiveReviewsJob() {
     nodeBin: process.execPath,
     statusPath,
     timeoutMs: 4 * 60_000,
-    guardMs: 4 * 60_000,
+    guardMs: 0,
   };
 }
