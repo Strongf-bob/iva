@@ -147,9 +147,10 @@ async def message_window_payload(
     ):
         payload = _message_payload(message)
         latest_message_id = max(latest_message_id, payload["id"])
-        size = len(
-            json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        serialized = json.dumps(
+            payload, ensure_ascii=False, separators=(",", ":")
         )
+        size = len(serialized.encode("utf-16-le")) // 2
         if size > max_chars - used:
             break
         selected.append(payload)

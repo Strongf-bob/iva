@@ -160,6 +160,33 @@ class AnalysisExportTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["latestMessageId"], 15)
         self.assertEqual(payload["skippedMessages"], 3)
 
+    async def test_message_window_uses_javascript_utf16_character_units(self):
+        client = FakeClient()
+        client.messages = [
+            FakeMessage(message_id, "😀" * 1000) for message_id in range(11, 16)
+        ]
+        newest_sizes = [
+            len(
+                json.dumps(
+                    _message_payload(message),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-16-le")
+            )
+            // 2
+            for message in client.messages[-2:]
+        ]
+
+        payload = await message_window_payload(
+            client,
+            chat_id=-1001,
+            after_id=10,
+            max_chars=sum(newest_sizes),
+        )
+
+        self.assertEqual([item["id"] for item in payload["messages"]], [14, 15])
+        self.assertEqual(payload["skippedMessages"], 3)
+
 
 class BoundedIntTest(unittest.TestCase):
     def test_rejects_non_integer_and_out_of_range_values(self):
