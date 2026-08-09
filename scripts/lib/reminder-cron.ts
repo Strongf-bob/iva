@@ -110,6 +110,44 @@ function matches(
   );
 }
 
+function formatterFor(zone: string): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    weekday: "short",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    hourCycle: "h23",
+  });
+}
+
+function formattedParts(
+  formatter: Intl.DateTimeFormat,
+  atMs: number,
+): Record<string, string> {
+  return Object.fromEntries(
+    formatter
+      .formatToParts(atMs)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value]),
+  );
+}
+
+export function cronMatchesOccurrence(
+  expression: string,
+  timezone: string,
+  atMs: number,
+): boolean {
+  if (!Number.isFinite(atMs) || atMs % 60_000 !== 0) return false;
+  const zone = validateTimeZone(timezone);
+  if (!zone) throw new Error("reminder timezone is invalid");
+  return matches(
+    parseCronExpression(expression),
+    formattedParts(formatterFor(zone), atMs),
+  );
+}
+
 export function nextCronOccurrence(
   expression: string,
   timezone: string,
@@ -120,27 +158,14 @@ export function nextCronOccurrence(
   const zone = validateTimeZone(timezone);
   if (!zone) throw new Error("reminder timezone is invalid");
   const parsed = parseCronExpression(expression);
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: zone,
-    weekday: "short",
-    month: "numeric",
-    day: "numeric",
-    hour: "numeric",
-    minute: "numeric",
-    hourCycle: "h23",
-  });
+  const formatter = formatterFor(zone);
   const firstMinute = Math.floor(afterMs / 60_000) * 60_000 + 60_000;
   // A valid five-field cron can wait eight years for February 29 when a
   // non-leap century intervenes. Visit only allowed wall-clock minutes so the
   // longer correctness horizon does not turn sparse schedules into a hot loop.
   const horizon = firstMinute + 8 * 366 * 24 * 60 * 60_000;
   for (let candidate = firstMinute; candidate <= horizon;) {
-    const parts = Object.fromEntries(
-      formatter
-        .formatToParts(candidate)
-        .filter((part) => part.type !== "literal")
-        .map((part) => [part.type, part.value]),
-    );
+    const parts = formattedParts(formatter, candidate);
     if (matches(parsed, parts)) return candidate;
     const minute = Number(parts.minute);
     let advance = 60;

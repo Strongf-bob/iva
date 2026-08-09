@@ -160,6 +160,43 @@ void test("retry and lease metadata cannot make a reminder run before its schedu
   await assert.rejects(() => loadReminderStore(dataDir), /lease invariants/u);
 });
 
+void test("persisted recurring nextRunAt must match the cron schedule", async () => {
+  const dataDir = await fixture();
+  const file = reminderFile(dataDir);
+  await writeFile(
+    file,
+    JSON.stringify({
+      schema: "iva-reminders/v1",
+      revision: 1,
+      jobs: [
+        {
+          id: "00000000-0000-4000-8000-000000000003",
+          idempotencyKey: "corrupt-cron-time-1",
+          message: "Never off schedule",
+          timezone: "UTC",
+          schedule: { kind: "cron", expression: "0 8 * * *" },
+          state: "active",
+          createdAt: "2026-08-09T06:00:00.000Z",
+          updatedAt: "2026-08-09T06:00:00.000Z",
+          nextRunAt: Date.parse("2026-08-09T07:23:00.000Z"),
+          occurrenceAt: null,
+          leaseUntil: null,
+          lastAttemptAt: null,
+          lastDeliveredAt: null,
+          failureCount: 0,
+          retryAt: null,
+          lastError: null,
+        },
+      ],
+    }),
+  );
+
+  await assert.rejects(
+    () => loadReminderStore(dataDir),
+    /schedule invariants/u,
+  );
+});
+
 void test("concurrent creates serialize without losing jobs", async () => {
   const dataDir = await fixture();
   await Promise.all(
