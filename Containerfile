@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim AS deps
+FROM node:24-trixie-slim AS deps
 
 WORKDIR /app
 
@@ -30,7 +30,7 @@ RUN uv venv --python python3 /opt/iva-userbot-venv \
     services/telegram-userbot/requirements.lock \
   && npm run build
 
-FROM node:24-bookworm-slim AS runtime
+FROM deps AS runtime
 
 WORKDIR /app
 ARG GWS_VERSION=0.22.5
@@ -40,18 +40,7 @@ LABEL org.opencontainers.image.source="https://github.com/Strongf-bob/iva"
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-    bash \
-    ca-certificates \
-    curl \
-    ffmpeg \
-    git \
-    gh \
-    pandoc \
-    poppler-utils \
-    python3 \
-    python3-pip \
     util-linux \
-  && python3 -m pip install --break-system-packages --no-cache-dir uv \
   && npm install --global "@googleworkspace/cli@${GWS_VERSION}" \
   && test "$(gws --version | sed -n '1p')" = "gws ${GWS_VERSION}" \
   && rm -rf /var/lib/apt/lists/*

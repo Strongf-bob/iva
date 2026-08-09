@@ -160,6 +160,6 @@ void test("production image includes flock for bounded memory maintenance", asyn
     "utf8",
   );
   const runtime =
-    containerfile.split("FROM node:24-bookworm-slim AS runtime")[1] ?? "";
+    containerfile.split("FROM deps AS runtime")[1] ?? "";
   assert.match(runtime, /\n {4}util-linux \\\n/u);
 });
