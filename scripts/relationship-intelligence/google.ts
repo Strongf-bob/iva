@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 
 import { childEnv, gwsBin } from "../lib/menu/gws-auth.ts";
+import { acquireLock, releaseLock } from "../../agent/lib/json-store.ts";
 
 import {
   loadRegistry,
@@ -114,58 +115,129 @@ export async function confirmGoogleTask({
 }): Promise<{ taskListId: string; taskId: string; createdAt: string }> {
   if (role !== "owner")
     throw new Error("only the owner may confirm Google Tasks");
-  let item = findItem((await loadRegistry(paths)).commitments, id);
-  if (item.googleTask) return item.googleTask;
-  if (
-    !item.confirmation ||
-    item.confirmation.phraseHash !== hash(phrase) ||
-    Date.parse(item.confirmation.expiresAt) < Date.parse(now)
-  )
-    throw new Error("exact unexpired confirmation is required");
-  const listed = parseJson(
-    await run([
-      "tasks",
-      "tasks",
-      "list",
-      "--params",
-      JSON.stringify({ tasklist: "@default", showCompleted: false }),
-    ]),
-  ) as { items?: Array<{ id?: string; notes?: string }> };
-  const marker = `[${item.id}]`;
-  let taskId = listed.items?.find((candidate) =>
-    candidate.notes?.includes(marker),
-  )?.id;
-  if (!taskId) {
-    const created = parseJson(
-      await run([
-        "tasks",
-        "tasks",
-        "insert",
-        "--params",
-        JSON.stringify({ tasklist: "@default" }),
-        "--json",
-        JSON.stringify({
-          title: item.text,
-          notes: `${marker}\nEvidence: ${item.evidence.map((e) => e.sourceId).join(", ")}`,
-          ...(item.dueAt ? { due: item.dueAt } : {}),
-        }),
-      ]),
-    ) as { id?: unknown };
-    if (typeof created.id !== "string" || !created.id)
-      throw new Error("Google Task response has no id");
-    taskId = created.id;
+  const token = await acquireLock(`${paths.lock}.${id}.google-task`);
+  try {
+    let item = findItem((await loadRegistry(paths)).commitments, id);
+    if (item.googleTask) return item.googleTask;
+    if (
+      !item.confirmation ||
+      item.confirmation.phraseHash !== hash(phrase) ||
+      Date.parse(item.confirmation.expiresAt) < Date.parse(now)
+    )
+      throw new Error("exact unexpired confirmation is required");
+    const marker = `[${item.id}]`;
+    let pageToken: string | undefined;
+    let taskId: string | undefined;
+    for (let page = 0; page < 100 && !taskId; page += 1) {
+      const listed = parseJson(
+        await run([
+          "tasks",
+          "tasks",
+          "list",
+          "--params",
+          JSON.stringify({
+            tasklist: "@default",
+            showCompleted: false,
+            ...(pageToken ? { pageToken } : {}),
+          }),
+        ]),
+      ) as {
+        items?: Array<{ id?: string; notes?: string }>;
+        nextPageToken?: unknown;
+      };
+      taskId = listed.items?.find((candidate) =>
+        candidate.notes?.includes(marker),
+      )?.id;
+      pageToken =
+        typeof listed.nextPageToken === "string" && listed.nextPageToken
+          ? listed.nextPageToken
+          : undefined;
+      if (!pageToken) break;
+    }
+    if (!taskId) {
+      const created = parseJson(
+        await run([
+          "tasks",
+          "tasks",
+          "insert",
+          "--params",
+          JSON.stringify({ tasklist: "@default" }),
+          "--json",
+          JSON.stringify({
+            title: item.text,
+            notes: `${marker}\nEvidence: ${item.evidence.map((e) => e.sourceId).join(", ")}`,
+            ...(item.dueAt ? { due: item.dueAt } : {}),
+          }),
+        ]),
+      ) as { id?: unknown };
+      if (typeof created.id !== "string" || !created.id)
+        throw new Error("Google Task response has no id");
+      taskId = created.id;
+    }
+    const receipt = { taskListId: "@default", taskId, createdAt: now };
+    await mutateRegistry(paths, (registry) => {
+      const current = findItem(registry.commitments, id);
+      if (current.googleTask) return false;
+      current.googleTask = receipt;
+      current.confirmation = null;
+      current.status = "confirmed_task";
+      current.updatedAt = now;
+    });
+    item = findItem((await loadRegistry(paths)).commitments, id);
+    return item.googleTask!;
+  } finally {
+    releaseLock(`${paths.lock}.${id}.google-task`, token);
   }
-  const receipt = { taskListId: "@default", taskId, createdAt: now };
-  await mutateRegistry(paths, (registry) => {
-    const current = findItem(registry.commitments, id);
-    if (current.googleTask) return false;
-    current.googleTask = receipt;
-    current.confirmation = null;
-    current.status = "confirmed_task";
-    current.updatedAt = now;
-  });
-  item = findItem((await loadRegistry(paths)).commitments, id);
-  return item.googleTask!;
+}
+
+export async function confirmGoogleTaskFromOwnerMessage({
+  paths,
+  text,
+  senderUserId,
+  chatId,
+  chatType,
+  ownerUserId,
+  role,
+  now = new Date().toISOString(),
+  run,
+}: {
+  paths: RelationshipPaths;
+  text: string;
+  senderUserId: string;
+  chatId: string;
+  chatType: string;
+  ownerUserId: string | undefined;
+  role: string | undefined;
+  now?: string;
+  run: GoogleRunner;
+}): Promise<
+  | { handled: false }
+  | {
+      handled: true;
+      receipt: { taskListId: string; taskId: string; createdAt: string };
+    }
+> {
+  const match = /^CREATE TASK (RI-[a-f0-9]{16}) ([A-Z0-9]{6})$/u.exec(text);
+  if (
+    !match ||
+    role !== "owner" ||
+    chatType !== "private" ||
+    !ownerUserId ||
+    senderUserId !== ownerUserId ||
+    chatId !== ownerUserId
+  )
+    return { handled: false };
+  return {
+    handled: true,
+    receipt: await confirmGoogleTask({
+      paths,
+      id: match[1],
+      phrase: text,
+      role,
+      now,
+      run,
+    }),
+  };
 }
 
 function encodeMessage(input: {

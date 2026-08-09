@@ -90,6 +90,10 @@ function normalizeText(value: string): string {
   return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
 }
 
+export function commitmentObservationKey(text: string): string {
+  return normalizeText(text);
+}
+
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (value !== null && typeof value === "object") {

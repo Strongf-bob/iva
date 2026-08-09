@@ -72,3 +72,40 @@ void test("Google policy blocks sending, task bypasses, deletion, and attendees"
     ["tasks", "tasks", "list", "--params", '{"tasklist":"@default"}'],
   );
 });
+
+void test("Google policy rejects alternate mutation and permission paths", () => {
+  for (const args of [
+    [
+      "gmail",
+      "users",
+      "messages",
+      "modify",
+      "--json",
+      '{"addLabelIds":["TRASH"]}',
+    ],
+    ["drive", "files", "update", "--json", '{"trashed":true}'],
+    ["calendar", "acl", "insert", "--json", '{"role":"writer"}'],
+    ["calendar", "events", "patch", "--json", '{"summary":"changed"}'],
+    ["workflow", "run", "--json", "{}"],
+  ]) {
+    assert.throws(() => validateGoogleWorkspaceArgs(args), /not allowed/u);
+  }
+});
+
+void test("Google policy permits reads and only approved creation paths", () => {
+  for (const args of [
+    ["gmail", "users", "messages", "list", "--params", '{"userId":"me"}'],
+    ["calendar", "events", "insert", "--json", '{"summary":"Focus"}'],
+    ["drive", "files", "create", "--json", '{"name":"Notes"}'],
+    ["docs", "documents", "create", "--json", '{"title":"Notes"}'],
+    [
+      "sheets",
+      "spreadsheets",
+      "create",
+      "--json",
+      '{"properties":{"title":"Plan"}}',
+    ],
+  ]) {
+    assert.doesNotThrow(() => validateGoogleWorkspaceArgs(args));
+  }
+});

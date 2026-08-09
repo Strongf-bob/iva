@@ -15,7 +15,6 @@ const SERVICES = [
   "sheets",
   "docs",
   "tasks",
-  "workflow",
 ] as const;
 const SAFE_FLAGS = new Set([
   "--to",
@@ -44,51 +43,77 @@ export function validateGoogleWorkspaceArgs(args: readonly string[]): string[] {
     throw new Error("Google Workspace service is not allowed");
   }
   const service = args[0];
-  const command = args.slice(1).filter((arg) => !arg.startsWith("--"));
-  const forbidden = new Set([
-    "+send",
-    "+reply",
-    "send",
-    "delete",
-    "trash",
-    "untrash",
-    "batchDelete",
-    "batchModify",
-    "emptyTrash",
-  ]);
-  if (command.some((part) => forbidden.has(part))) {
-    throw new Error(`${service} mutation is not allowed`);
+  const firstFlag = args.findIndex(
+    (arg, index) => index > 0 && arg.startsWith("--"),
+  );
+  const command = args.slice(1, firstFlag < 0 ? args.length : firstFlag);
+  const signature = command.join(" ");
+  const method = command.at(-1) ?? "";
+  const readMethods = new Set(["get", "list"]);
+  const allowed = (() => {
+    if (service === "gmail")
+      return signature === "+triage" || readMethods.has(method);
+    if (service === "calendar")
+      return (
+        signature === "+agenda" ||
+        signature === "+insert" ||
+        readMethods.has(method) ||
+        (command.at(-2) === "events" && method === "insert")
+      );
+    if (service === "tasks") return readMethods.has(method);
+    if (service === "drive")
+      return (
+        command[0] === "+upload" ||
+        readMethods.has(method) ||
+        (command.at(-2) === "files" &&
+          new Set(["create", "copy", "update"]).has(method))
+      );
+    if (service === "docs")
+      return (
+        command[0] === "+write" ||
+        readMethods.has(method) ||
+        (command.at(-2) === "documents" &&
+          new Set(["create", "batchUpdate"]).has(method))
+      );
+    if (service === "sheets")
+      return (
+        new Set(["+read", "+append"]).has(command[0]) ||
+        readMethods.has(method) ||
+        new Set(["create", "batchUpdate", "append", "update"]).has(method)
+      );
+    return false;
+  })();
+  if (!allowed) throw new Error(`${service} operation is not allowed`);
+  if (service === "drive" && command.includes("permissions")) {
+    if (!readMethods.has(method))
+      throw new Error("Google Drive permission mutation is not allowed");
   }
-  if (service === "tasks") {
-    const method = args[2];
-    if (!new Set(["list", "get"]).has(method)) {
-      throw new Error("Google Tasks mutation is not allowed");
+  const jsonIndex = args.indexOf("--json");
+  let payload: unknown;
+  if (jsonIndex >= 0) {
+    try {
+      payload = JSON.parse(args[jsonIndex + 1] ?? "");
+    } catch {
+      throw new Error(`${service} --json must be valid JSON`);
+    }
+  }
+  if (service === "calendar" && jsonIndex >= 0) {
+    if (
+      typeof payload === "object" &&
+      payload !== null &&
+      Object.prototype.hasOwnProperty.call(payload, "attendees")
+    ) {
+      throw new Error("Calendar attendees are not allowed");
     }
   }
   if (
     service === "drive" &&
-    args[1] === "permissions" &&
-    !new Set(["list", "get"]).has(args[2])
+    jsonIndex >= 0 &&
+    typeof payload === "object" &&
+    payload !== null &&
+    Object.prototype.hasOwnProperty.call(payload, "trashed")
   ) {
-    throw new Error("Google Drive permission mutation is not allowed");
-  }
-  if (service === "calendar") {
-    const jsonIndex = args.indexOf("--json");
-    if (jsonIndex >= 0) {
-      let payload: unknown;
-      try {
-        payload = JSON.parse(args[jsonIndex + 1] ?? "");
-      } catch {
-        throw new Error("calendar --json must be valid JSON");
-      }
-      if (
-        typeof payload === "object" &&
-        payload !== null &&
-        Object.prototype.hasOwnProperty.call(payload, "attendees")
-      ) {
-        throw new Error("Calendar attendees are not allowed");
-      }
-    }
+    throw new Error("Google Drive trash mutation is not allowed");
   }
   const checked: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
@@ -114,7 +139,7 @@ export function validateGoogleWorkspaceArgs(args: readonly string[]): string[] {
 export default defineTool({
   description:
     "Выполнить одну команду Google Workspace через персонально авторизованный gws без shell. " +
-    "Передай argv без слова gws. Поддерживаются Gmail, Calendar, Drive, Sheets, Docs, Tasks и workflow.",
+    "Передай argv без слова gws. Поддерживаются Gmail, Calendar, Drive, Sheets, Docs и Tasks.",
   inputSchema: z.object({
     args: z.array(z.string().min(1).max(20_000)).min(2).max(32),
   }),

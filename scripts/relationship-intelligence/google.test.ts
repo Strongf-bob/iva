@@ -7,6 +7,7 @@ import test from "node:test";
 
 import {
   confirmGoogleTask,
+  confirmGoogleTaskFromOwnerMessage,
   createGmailDraft,
   prepareTaskConfirmation,
 } from "./google.ts";
@@ -93,6 +94,87 @@ test("Google Task requires an exact unexpired owner confirmation and is idempote
   });
   assert.equal(again.taskId, "task-1");
   assert.equal(calls.length, 2);
+});
+
+test("concurrent confirmations create one task and scan all result pages", async () => {
+  const paths = await setup();
+  const prepared = await prepareTaskConfirmation({
+    paths,
+    id: "RI-aaaaaaaaaaaaaaaa",
+    role: "owner",
+    now: NOW,
+    nonce: "ABCD12",
+  });
+  let inserts = 0;
+  const run = async (args: readonly string[]) => {
+    if (args.includes("list")) {
+      const params = JSON.parse(args[args.indexOf("--params") + 1]) as {
+        pageToken?: string;
+      };
+      return params.pageToken
+        ? { stdout: '{"items":[]}', exitCode: 0 }
+        : { stdout: '{"items":[],"nextPageToken":"next"}', exitCode: 0 };
+    }
+    inserts += 1;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return { stdout: '{"id":"task-1"}', exitCode: 0 };
+  };
+  const receipts = await Promise.all([
+    confirmGoogleTask({
+      paths,
+      id: prepared.id,
+      phrase: prepared.phrase,
+      role: "owner",
+      now: NOW,
+      run,
+    }),
+    confirmGoogleTask({
+      paths,
+      id: prepared.id,
+      phrase: prepared.phrase,
+      role: "owner",
+      now: NOW,
+      run,
+    }),
+  ]);
+  assert.equal(inserts, 1);
+  assert.deepEqual(
+    receipts.map((receipt) => receipt.taskId),
+    ["task-1", "task-1"],
+  );
+});
+
+test("task confirmation is accepted only as a fresh private owner message", async () => {
+  const paths = await setup();
+  const prepared = await prepareTaskConfirmation({
+    paths,
+    id: "RI-aaaaaaaaaaaaaaaa",
+    role: "owner",
+    now: NOW,
+    nonce: "ABCD12",
+  });
+  const base = {
+    paths,
+    text: prepared.phrase,
+    senderUserId: "7",
+    chatId: "7",
+    chatType: "private" as const,
+    ownerUserId: "7",
+    role: "owner",
+    now: NOW,
+    run: async (args: readonly string[]) =>
+      args.includes("list")
+        ? { stdout: '{"items":[]}', exitCode: 0 }
+        : { stdout: '{"id":"task-1"}', exitCode: 0 },
+  };
+  assert.equal(
+    (await confirmGoogleTaskFromOwnerMessage({ ...base, senderUserId: "8" }))
+      .handled,
+    false,
+  );
+  const result = await confirmGoogleTaskFromOwnerMessage(base);
+  assert.equal(result.handled, true);
+  assert.equal(result.receipt?.taskId, "task-1");
 });
 
 test("Gmail adapter creates a draft and exposes no send path", async () => {

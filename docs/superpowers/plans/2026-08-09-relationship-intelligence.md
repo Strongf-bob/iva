@@ -273,7 +273,8 @@ Extend the read-only contact pipeline with strict birthday, meaningful-contact, 
 **Interfaces:**
 
 - Produces `renderRelationshipCrm({ vault, registry, now }): Promise<{ writtenFiles: string[] }>`.
-- Tool actions initially expose `list`, `get`, `prepare_google_task`, `confirm_google_task`, `dismiss`; mutation implementations land in Task 4.
+- Model tool actions expose `list`, `get`, `prepare_google_task`, and owner-only `dismiss`.
+  Confirmation is consumed by trusted Telegram channel plumbing from a fresh exact owner message.
 
 **DoD:** Cards show birthday, meaningful contact, promises, overdue and forgotten follow-ups; rendering is deterministic and preserves handwritten content.
 
@@ -347,7 +348,7 @@ The tool schema accepts recipient, subject, and body, builds RFC 2822 bytes, bas
 
 Cover owner-only prepare, exact phrase, wrong/expired phrase, stored-content derivation, pending state on API failure, successful receipt, existing Google task marker reuse, and repeated confirmation returning the same receipt.
 
-- [ ] **Step 5: Implement prepare/confirm through the relationship tool**
+- [ ] **Step 5: Implement prepare through the relationship tool and confirmation through trusted Telegram channel plumbing**
 
 Persist only a hash of the challenge, use a 15-minute expiry, derive Google title/notes/due date from the stored record, list `@default` for `[RI-...]` before insert, and save the receipt atomically.
 

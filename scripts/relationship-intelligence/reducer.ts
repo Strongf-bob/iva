@@ -5,6 +5,7 @@ import {
 import { mutateRegistry, type RelationshipPaths } from "./store.ts";
 import {
   commitmentId,
+  commitmentObservationKey,
   type ContactActivity,
   type RelationshipEvidence,
 } from "./types.ts";
@@ -86,15 +87,21 @@ export async function reduceRelationshipObservations({
         text: observation.value,
         evidence,
       };
-      const id = commitmentId(draft);
-      if (!registry.commitments.some((item) => item.id === id)) {
-        registry.commitments.push({
+      const direction =
+        observation.predicate === "follow_up"
+          ? "owner_to_contact"
+          : (observation.relationship?.direction ?? "unknown");
+      let item = registry.commitments.find(
+        (candidate) =>
+          commitmentObservationKey(candidate.text) ===
+          commitmentObservationKey(observation.value!),
+      );
+      if (!item) {
+        const id = commitmentId(draft);
+        item = {
           id,
           text: observation.value,
-          direction:
-            observation.predicate === "follow_up"
-              ? "owner_to_contact"
-              : (observation.relationship?.direction ?? "unknown"),
+          direction,
           contactIds,
           dueAt: observation.relationship?.dueAt ?? null,
           status: "pending_suggestion",
@@ -103,13 +110,34 @@ export async function reduceRelationshipObservations({
           updatedAt: now,
           googleTask: null,
           confirmation: null,
-        });
+        };
+        registry.commitments.push(item);
+      } else {
+        item.contactIds = [
+          ...new Set([...item.contactIds, ...contactIds]),
+        ].sort();
+        const evidenceKeys = new Set(
+          item.evidence.map(
+            (entry) => `${entry.source}:${entry.sourceId}:${entry.observedAt}`,
+          ),
+        );
+        for (const entry of evidence) {
+          const key = `${entry.source}:${entry.sourceId}:${entry.observedAt}`;
+          if (!evidenceKeys.has(key)) item.evidence.push(entry);
+        }
+        item.evidence.sort((a, b) => a.observedAt.localeCompare(b.observedAt));
+        if (item.direction === "unknown") item.direction = direction;
+        else if (direction !== "unknown" && item.direction !== direction)
+          item.direction = "mutual";
+        if (observation.relationship?.dueAt)
+          item.dueAt = observation.relationship.dueAt;
+        item.updatedAt = now;
       }
       if (
         observation.predicate === "follow_up" &&
-        !contact.followUps.includes(id)
+        !contact.followUps.includes(item.id)
       ) {
-        contact.followUps.push(id);
+        contact.followUps.push(item.id);
       }
     }
     return JSON.stringify(registry) !== before;

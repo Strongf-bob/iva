@@ -4,7 +4,11 @@ import { runScheduledJob } from "../../scripts/lib/schedule-runner.ts";
 export default defineSchedule({
   cron: "45 7 * * 1",
   run({ waitUntil }) {
-    if (process.env.ASSISTANT_ROLE !== "owner") return;
+    if (
+      process.env.ASSISTANT_MULTI_USER === "1" &&
+      process.env.ASSISTANT_ROLE !== "owner"
+    )
+      return;
     const { root, statusPath } = resolvePaths();
     waitUntil(
       runScheduledJob({

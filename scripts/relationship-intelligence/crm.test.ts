@@ -70,5 +70,11 @@ test("CRM renders relationship status while preserving handwritten content", asy
   assert.match(card, /Handwritten note\./u);
   assert.match(card, /Birthday: --08-17/u);
   assert.match(card, /Send report.*overdue/u);
+  assert.match(card, /direction: owner_to_contact/u);
+  assert.match(card, /evidence: telegram:message:44:3/u);
+  assert.match(overview, /## Upcoming birthdays/u);
+  assert.match(overview, /## Overdue promises/u);
+  assert.match(overview, /## Pending suggestions/u);
+  assert.match(overview, /## Forgotten follow-ups/u);
   assert.match(overview, /RI-aaaaaaaaaaaaaaaa.*Send report/u);
 });

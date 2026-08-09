@@ -119,6 +119,22 @@ test("relationship observations carry only predicate-specific metadata", () => {
     }).success,
     true,
   );
+  for (const invalid of [
+    { value: "--02-31", confidence: "EXTRACTED" },
+    { value: "--05-17", confidence: "INFERRED" },
+    { value: "2025-02-29", confidence: "EXTRACTED" },
+  ]) {
+    assert.equal(
+      ObservationSchema.safeParse({
+        ...base,
+        kind: "fact",
+        predicate: "birthday",
+        relationship: undefined,
+        ...invalid,
+      }).success,
+      false,
+    );
+  }
 });
 
 test("material observations require bounded value or object and evidence", () => {

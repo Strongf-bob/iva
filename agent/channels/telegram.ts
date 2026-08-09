@@ -75,6 +75,12 @@ import {
 import { pathToFileURL } from "node:url";
 import { releaseUserTurn } from "../../scripts/lib/user-quota.ts";
 import { parseTelegramUserId } from "../../scripts/lib/user-registry.ts";
+import { notificationChat } from "../../scripts/lib/notification-chat.ts";
+import {
+  confirmGoogleTaskFromOwnerMessage,
+  runGoogleCommand,
+} from "../../scripts/relationship-intelligence/google.ts";
+import { relationshipPaths } from "../../scripts/relationship-intelligence/store.ts";
 
 // Токен (TELEGRAM_BOT_TOKEN) и секрет вебхука (TELEGRAM_WEBHOOK_SECRET_TOKEN)
 // читаются из окружения автоматически.
@@ -1136,6 +1142,46 @@ const telegram = telegramChannel({
         }
       }
       return null; // дропаем апдейт
+    }
+
+    // A Google Task confirmation is a trusted channel action, not a model tool call.
+    // Only a new exact private-chat message from the resolved owner reaches the adapter.
+    if (
+      /^CREATE TASK RI-[a-f0-9]{16} [A-Z0-9]{6}$/u.test(message.text.trim())
+    ) {
+      const multiUser = process.env.ASSISTANT_MULTI_USER === "1";
+      const ownerUserId = multiUser
+        ? process.env.ASSISTANT_USER_ID
+        : notificationChat();
+      try {
+        const confirmation = await confirmGoogleTaskFromOwnerMessage({
+          paths: relationshipPaths(),
+          text: message.text.trim(),
+          senderUserId: userId,
+          chatId: message.chat.id,
+          chatType: message.chat.type,
+          ownerUserId,
+          role: multiUser ? process.env.ASSISTANT_ROLE : "owner",
+          run: runGoogleCommand,
+        });
+        if (confirmation.handled) {
+          await ctx.telegram.sendMessage(
+            tr(
+              `Google Task created: ${confirmation.receipt.taskId}`,
+              `Задача Google создана: ${confirmation.receipt.taskId}`,
+            ),
+          );
+          return null;
+        }
+      } catch {
+        await ctx.telegram.sendMessage(
+          tr(
+            "Google Task was not created: the confirmation is invalid or expired.",
+            "Задача Google не создана: подтверждение неверно или устарело.",
+          ),
+        );
+        return null;
+      }
     }
 
     const raw: TelegramRawMessage = message.raw;

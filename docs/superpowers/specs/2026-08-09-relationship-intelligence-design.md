@@ -1,7 +1,8 @@
 # Relationship Intelligence Design
 
-**Date:** 2026-08-09  
-**Branch:** `strongf/relationship-intelligence`  
+**Date:** 2026-08-09
+
+**Branch:** `strongf/relationship-intelligence`
 **Status:** approved design, awaiting written-spec review
 
 ## Completion contract
@@ -252,8 +253,8 @@ untrusted source material.
 
 The generic `google_workspace` validator is tightened so the narrow adapters cannot be bypassed:
 
-- Gmail allows reading and draft create/update only; send, reply-send, trash, and delete are
-  rejected before process execution.
+- Gmail allows reading through the generic tool and draft creation only through `gmail_draft`;
+  send, message modification, trash, and delete are rejected before process execution.
 - Calendar allows read operations and event creation. Event JSON containing `attendees` is rejected.
 - Tasks is read-only through the generic tool. Task creation is available only through the
   commitment confirmation adapter.
@@ -270,12 +271,13 @@ The narrow commitment adapter exposes:
 1. `list_pending` and `get`, which are read-only;
 2. `prepare_google_task`, which records a short-lived confirmation challenge and returns the exact
    phrase the owner must send;
-3. `confirm_google_task`, which accepts only the exact phrase for that commitment, within the
-   expiry window, and only in an owner worker;
+3. the trusted Telegram channel consumes only a new exact private owner message matching the
+   challenge, within the expiry window; the model-facing tool has no confirmation action;
 4. `dismiss`, which changes only internal state.
 
-The skill may call `prepare_google_task` when asked, but calls `confirm_google_task` only when the
-latest owner message exactly repeats the challenge. The adapter derives the task title, notes,
+The skill may call `prepare_google_task` when asked, then waits for the owner to send the exact
+challenge as a new private message. The trusted channel derives identity and raw text before model
+dispatch. The adapter derives the task title, notes,
 evidence, and due date from the stored commitment; the model cannot supply arbitrary task content.
 It inserts into `@default` through the Tasks API, records the returned ID, and becomes idempotent.
 Before inserting, it lists open tasks and reuses a task carrying the same immutable commitment ID

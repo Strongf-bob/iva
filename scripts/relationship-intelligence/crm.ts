@@ -14,11 +14,10 @@ const END = "<!-- iva:relationship-crm:end -->";
 function safe(value: string): string {
   return value
     .replace(/\p{Cc}+/gu, " ")
-    .replace(/<!--/gu, "&lt;!--")
-    .replace(/-->/gu, "--&gt;")
-    .replaceAll("[", " ")
-    .replaceAll("]", " ")
-    .replaceAll("|", " ")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replace(/([\\`*_{}[\]()#|])/gu, "\\$1")
     .replace(/\s+/gu, " ")
     .trim();
 }
@@ -60,14 +59,14 @@ function contactRegion(
       ]
         .filter(Boolean)
         .join(", ");
-      return `- \`${item.id}\` ${safe(item.text)} (${labels}; evidence: ${item.evidence.map((e) => `\`${safe(e.sourceId)}\``).join(", ")})`;
+      return `- ${safe(item.id)} ${safe(item.text)} (${labels}; direction: ${item.direction}; evidence: ${item.evidence.map((e) => safe(e.sourceId)).join(", ")})`;
     });
   return [
     START,
     "## Relationship CRM",
     "",
-    `- Birthday: ${activity?.birthday?.value ?? "unknown"}`,
-    `- Last meaningful contact: ${activity?.lastMeaningfulContactAt ?? "unknown"}`,
+    `- Birthday: ${activity?.birthday?.value ?? "unknown"}${activity?.birthday ? ` (evidence: ${safe(activity.birthday.evidence.sourceId)})` : ""}`,
+    `- Last meaningful contact: ${activity?.lastMeaningfulContactAt ?? "unknown"}${activity?.meaningfulContactEvidence ? ` (evidence: ${safe(activity.meaningfulContactEvidence.sourceId)})` : ""}`,
     "",
     "### Open promises and follow-ups",
     ...(lines.length ? lines : ["- None."]),
@@ -120,17 +119,67 @@ export async function renderRelationshipCrm({
     const original = existsSync(overview)
       ? readFileSync(overview, "utf8")
       : "# Relationship CRM\n";
-    const rows = registry.commitments
+    const open = registry.commitments
       .filter((item) => !["completed", "dismissed"].includes(item.status))
-      .sort((a, b) => a.id.localeCompare(b.id))
-      .map((item) => `- \`${item.id}\` ${safe(item.text)} (${item.status})`);
+      .sort((a, b) => a.id.localeCompare(b.id));
+    const row = (item: (typeof open)[number]) => {
+      const contact = item.contactIds[0]
+        ? registry.contacts[item.contactIds[0]]
+        : undefined;
+      const state = classifyCommitment(
+        item,
+        now,
+        contact?.lastMeaningfulContactAt ?? null,
+      );
+      return `- ${safe(item.id)} ${safe(item.text)} (${item.status}; direction: ${item.direction}; evidence: ${item.evidence.map((entry) => safe(entry.sourceId)).join(", ")}; overdue: ${state.overdue}; forgotten: ${state.forgotten})`;
+    };
+    const birthdays = Object.entries(registry.contacts)
+      .filter(([, contact]) => contact.birthday !== null)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(
+        ([id, contact]) =>
+          `- ${safe(id)}: ${contact.birthday!.value} (evidence: ${safe(contact.birthday!.evidence.sourceId)})`,
+      );
+    const overdue = open.filter((item) => {
+      const contact = item.contactIds[0]
+        ? registry.contacts[item.contactIds[0]]
+        : undefined;
+      return classifyCommitment(
+        item,
+        now,
+        contact?.lastMeaningfulContactAt ?? null,
+      ).overdue;
+    });
+    const forgotten = open.filter((item) => {
+      const contact = item.contactIds[0]
+        ? registry.contacts[item.contactIds[0]]
+        : undefined;
+      return classifyCommitment(
+        item,
+        now,
+        contact?.lastMeaningfulContactAt ?? null,
+      ).forgotten;
+    });
+    const pending = open.filter((item) => item.status === "pending_suggestion");
     const next = replaceRegion(
       original,
       [
         START,
-        "## Current commitments",
+        "## Upcoming birthdays",
         "",
-        ...(rows.length ? rows : ["- None."]),
+        ...(birthdays.length ? birthdays : ["- None."]),
+        "",
+        "## Overdue promises",
+        "",
+        ...(overdue.length ? overdue.map(row) : ["- None."]),
+        "",
+        "## Pending suggestions",
+        "",
+        ...(pending.length ? pending.map(row) : ["- None."]),
+        "",
+        "## Forgotten follow-ups",
+        "",
+        ...(forgotten.length ? forgotten.map(row) : ["- None."]),
         END,
       ].join("\n"),
     );

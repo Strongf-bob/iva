@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { reduceRelationshipObservations } from "./reducer.ts";
-import { loadRegistry, relationshipPaths } from "./store.ts";
+import { loadRegistry, mutateRegistry, relationshipPaths } from "./store.ts";
 import type { Observation } from "../contact-analysis/types.ts";
 
 const observedAt = "2026-08-09T10:00:00Z";
@@ -74,4 +74,48 @@ test("Telegram observations become pending commitments and contact activity", as
     registry.contacts["telegram:user:44"].lastMeaningfulContactAt,
     observedAt,
   );
+});
+
+test("later observations enrich one commitment without reviving terminal items", async () => {
+  const root = await mkdtemp(join(tmpdir(), "iva-relationship-reducer-"));
+  const paths = relationshipPaths(root, "data");
+  await reduceRelationshipObservations({
+    paths,
+    ownerUserId: 7,
+    observations: [observation({})],
+    now: observedAt,
+  });
+  await mutateRegistry(paths, (registry) => {
+    registry.commitments[0].status = "dismissed";
+  });
+  await reduceRelationshipObservations({
+    paths,
+    ownerUserId: 7,
+    observations: [
+      observation({
+        subjectId: "telegram:user:55",
+        evidence: [
+          {
+            chatId: 55,
+            messageId: 10,
+            timestamp: "2026-08-10T10:00:00Z",
+          },
+        ],
+        relationship: {
+          direction: "owner_to_contact",
+          dueAt: "2026-08-15T10:00:00Z",
+        },
+      }),
+    ],
+    now: "2026-08-10T10:00:00Z",
+  });
+  const registry = await loadRegistry(paths);
+  assert.equal(registry.commitments.length, 1);
+  assert.equal(registry.commitments[0].status, "dismissed");
+  assert.deepEqual(registry.commitments[0].contactIds.sort(), [
+    "telegram:user:44",
+    "telegram:user:55",
+  ]);
+  assert.equal(registry.commitments[0].evidence.length, 2);
+  assert.equal(registry.commitments[0].dueAt, "2026-08-15T10:00:00Z");
 });

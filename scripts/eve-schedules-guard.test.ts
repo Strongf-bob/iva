@@ -27,7 +27,7 @@ test("deploy/ contains none of the 8 retired iva-memory-{daily,weekly,monthly,ye
   assert.ok(files.includes("iva-memory-doctor.timer"));
 });
 
-test("agent/schedules/ contains exactly the 6 expected eve schedules", () => {
+test("agent/schedules/ contains exactly the 10 expected eve schedules", () => {
   const files = readdirSync(join(ROOT, "agent/schedules")).filter(
     (f) => f.endsWith(".ts") || f.endsWith(".md"),
   );
@@ -39,6 +39,10 @@ test("agent/schedules/ contains exactly the 6 expected eve schedules", () => {
       "memory-monthly.ts",
       "memory-weekly.ts",
       "memory-yearly.ts",
+      "relationship-daily-deliver.ts",
+      "relationship-daily-prepare.ts",
+      "relationship-weekly-deliver.ts",
+      "relationship-weekly-prepare.ts",
       "telegram-contact-sync.ts",
     ].sort(),
   );
