@@ -50,6 +50,7 @@ RUN apt-get update \
     poppler-utils \
     python3 \
     python3-pip \
+    util-linux \
   && python3 -m pip install --break-system-packages --no-cache-dir uv \
   && npm install --global "@googleworkspace/cli@${GWS_VERSION}" \
   && test "$(gws --version | sed -n '1p')" = "gws ${GWS_VERSION}" \

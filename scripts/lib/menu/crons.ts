@@ -11,6 +11,8 @@ import { readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { readSettings } from "#lib/settings.ts";
+import { listReminders } from "../reminder-store.ts";
+import { isContainerRuntime } from "../container-maintenance.ts";
 
 const PER_PAGE = 8;
 const CACHE_TTL_MS = 60_000;
@@ -18,9 +20,9 @@ type Button = { text: string; callback_data: string };
 type Timer = { unit: string; next: string };
 type Translate = (english: string, russian: string) => string;
 type RollupEntry = { lastSuccessAt?: unknown };
-type MenuState = { page: number };
+type MenuState = { page: number; personalRoot?: string };
 type MenuContext = {
-  deps: { dataDir: string };
+  deps: { dataDir: string; runtime?: "container" | "host" };
   tr: Translate;
   btn: (text: string, callbackData: string) => Button;
   backRow: (screen: string) => Button[];
@@ -162,6 +164,29 @@ export default {
   parent: "r",
   async render(st: MenuState, ctx: MenuContext) {
     const T = ctx.tr;
+    if (isContainerRuntime(ctx.deps.runtime ?? process.env.IVA_RUNTIME)) {
+      const personalData = st.personalRoot
+        ? join(st.personalRoot, "runtime", "data")
+        : null;
+      const reminders = personalData
+        ? await listReminders(personalData).catch(() => [])
+        : [];
+      const lines = reminders.slice(0, PER_PAGE).map((job) => {
+        const next =
+          job.nextRunAt === null
+            ? T("not scheduled", "не запланировано")
+            : new Date(job.nextRunAt).toISOString().replace(/\.000Z$/u, "Z");
+        return `• ${job.message} → ${next}`;
+      });
+      const body = lines.length
+        ? lines.join("\n")
+        : T("No active reminders.", "Активных напоминаний нет.");
+      const dataDir = personalData ?? ctx.deps.dataDir;
+      return {
+        text: `${T("⏰ Personal reminders", "⏰ Личные напоминания")}\n\n${body}\n\n${T(`Tasks in queue: ${openTaskCount(dataDir)}`, `Задач в очереди: ${openTaskCount(dataDir)}`)}\n\n${schedulesBlock(dataDir, T)}`,
+        rows: [ctx.backRow("r")],
+      };
+    }
     const timers = await loadTimers();
     const taskCount = openTaskCount(ctx.deps.dataDir);
     const taskLine = T(

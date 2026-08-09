@@ -1,11 +1,16 @@
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/require-await -- Node's test runner owns registrations and test doubles return promises. */
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-type StatusState = { chatId: number; userId: string; screen: string };
+type StatusState = {
+  chatId: number;
+  userId: string;
+  screen: string;
+  personalRoot?: string;
+};
 type View = { text: string; rows: unknown[][] };
 type StatusScreen = {
   render: (state: StatusState, context: StatusContext) => Promise<View>;
@@ -15,6 +20,7 @@ type StatusContext = {
     root: string;
     envPath: string;
     dataDir: string;
+    runtime?: "container" | "host";
     probeUserbotHealth: (options: {
       root: string;
       port: string;
@@ -123,4 +129,47 @@ test("status does not edit an expired menu after the asynchronous probe settles"
   pending.resolve({ state: "ready" });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(edits, 0);
+});
+
+test("container status reads Google and scheduler state from the selected user", async () => {
+  const { root, envPath } = await fixture();
+  const personalRoot = join(root, "data", "users", "101");
+  await Promise.all([
+    mkdir(join(root, "data", "control"), { recursive: true }),
+    mkdir(join(personalRoot, ".config", "gws"), { recursive: true }),
+  ]);
+  await Promise.all([
+    writeFile(
+      join(root, "data", "control", "reminder-scheduler-status.json"),
+      JSON.stringify({ updatedAt: Date.now() }),
+    ),
+    writeFile(join(personalRoot, ".config", "gws", "client_secret.json"), "{}"),
+  ]);
+  const state: StatusState = {
+    chatId: 101,
+    userId: "101",
+    screen: "st",
+    personalRoot,
+  };
+  const context: StatusContext = {
+    deps: {
+      root,
+      envPath,
+      dataDir: join(root, "data"),
+      runtime: "container",
+      probeUserbotHealth: () => Promise.resolve({ state: "ready" }),
+    },
+    flows: {
+      get: () => state,
+      screen: () => Promise.resolve(),
+    },
+    getLang: () => "en",
+    tr: (en) => en,
+    btn: (text, callbackData) => ({ text, callback_data: callbackData }),
+    backRow: () => [{ text: "Back", callback_data: "iva_menu:r:o" }],
+  };
+  const view = await status.default.render(state, context);
+  assert.match(view.text, /Runtime: container/u);
+  assert.match(view.text, /Scheduler: ready/u);
+  assert.match(view.text, /Google: configured/u);
 });
