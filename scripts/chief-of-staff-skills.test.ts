@@ -62,3 +62,22 @@ test("relationship briefing preserves identity ambiguity and evidence", () => {
   assert.match(skill.body, /telegram:message/u);
   assert.match(skill.body, /do not create, modify, or send/iu);
 });
+
+test("weekly review is honest about coverage and tracks decision arcs", () => {
+  const skill = readSkill("weekly-review");
+
+  assert.equal(skill.frontmatter.name, "weekly-review");
+  assert.match(skill.frontmatter.description, /^Use when /u);
+  assert.match(skill.body, /`tasks`/u);
+  assert.match(skill.body, /`glob`/u);
+  assert.match(skill.body, /`memory_search`/u);
+  assert.match(skill.body, /(?:seven|7) available daily summaries/iu);
+  assert.match(skill.body, /(?:one|1)[-–](?:two|2)|1–2/iu);
+  assert.match(skill.body, /STABLE/u);
+  assert.match(skill.body, /NEW/u);
+  assert.match(skill.body, /CONFLICTING/u);
+  assert.match(skill.body, /CHANGED/u);
+  assert.match(skill.body, /(?:three|3) next-week priorities/iu);
+  assert.match(skill.body, /vault-relative/u);
+  assert.match(skill.body, /do not create, modify, or send/iu);
+});
