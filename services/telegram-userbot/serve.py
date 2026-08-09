@@ -174,6 +174,9 @@ def main() -> None:
 
         app = mcp.streamable_http_app()
         app.add_route("/healthz", health, methods=["GET"])
+        from analysis_export import register_analysis_routes
+
+        register_analysis_routes(app, client)
         # add_middleware stacks outermost-last: BearerAuth runs first (reject before
         # we bother reconnecting), then EnsureConnected.
         app.add_middleware(EnsureConnectedMiddleware)

@@ -1,5 +1,6 @@
 import { wrapLanguageModel, type LanguageModelMiddleware } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import {
   CODEX_BASE_URL,
   codexAuthHeaders,
@@ -210,4 +211,18 @@ const stripReasoningMiddleware: LanguageModelMiddleware = {
 /** Оборачивает текстовую модель так, чтобы reasoning не попадал в реплеемую историю. */
 export function withReasoningStripped(model: WrappableModel): WrappableModel {
   return wrapLanguageModel({ model, middleware: stripReasoningMiddleware });
+}
+
+/** Creates the configured text model for both the root agent and background analysis. */
+export function createTextModel(modelName = providerConfig.textModel) {
+  const base =
+    providerName === "codex"
+      ? makeCodexModel(modelName)
+      : createOpenAICompatible({
+          name: `iva-${providerName}`,
+          baseURL: providerConfig.baseURL,
+          apiKey: providerConfig.apiKey,
+          includeUsage: true,
+        })(modelName);
+  return withReasoningStripped(base);
 }

@@ -69,6 +69,31 @@ state/reason values; bearer tokens and transport errors are not returned.
 - The proxy bearer lives in `data/telegram-userbot.token` (0600), read at runtime by both the
   proxy and iva — so the agent can provision the proxy mid-chat without restarting iva.
 
+## Automatic contact graph
+
+When the personal account becomes authorized, Iva starts a full read-only import of every accessible
+private chat, group and channel. It processes at most three chats in parallel; pages inside one chat
+remain chronological. Each successfully reduced page advances an account-scoped cursor, so the
+15-minute schedule performs incremental syncs and safely resumes an interrupted first import.
+
+The pipeline creates Markdown contact, chat and project cards in the normal vault. A numeric Telegram
+user ID is the identity key, so the same person in a direct message and several groups links to one
+card. Every material observation keeps message-level provenance and confidence. Mentions and claims
+about the account owner build the owner's contact card too, but group-derived claims never update
+`CORE.md` automatically. Voice messages and video notes are counted and marked as unsupported media;
+their contents are not interpreted by this pipeline.
+
+Contact analysis is available only with `TELEGRAM_EXPOSED_TOOLS=read-only`. The agent normally runs
+these commands for you, but they are useful for diagnosis:
+
+```bash
+node --env-file-if-exists=.env scripts/contact-analysis.ts sync
+node --env-file-if-exists=.env scripts/contact-analysis.ts status --json
+```
+
+`status` reads local checkpoints only; it does not call Telegram or a model. Runtime state lives under
+`data/contact-analysis/` and never stores message bodies.
+
 ## How it works
 
 - **One session owner.** Exactly one process may own a Telethon session; a second opener
@@ -79,5 +104,8 @@ state/reason values; bearer tokens and transport errors are not returned.
 - **Enforced anti-ban.** `guardrails.py` wraps the outbound methods (`send_message`,
   `send_file`, `forward_messages`) with FloodWait compliance, randomized pacing, and a
   circuit-breaker (3 FloodWaits in 24h → sending pauses).
+- **Bounded analysis export.** Three bearer-protected, GET-only loopback routes expose normalized
+  account, dialog and chronological-message pages to the contact pipeline without opening a second
+  Telethon client.
 - Built on [chigwell/telegram-mcp](https://github.com/chigwell/telegram-mcp) `v3.2.0`
   (116 tools), pinned in `services/telegram-userbot/requirements.txt`.

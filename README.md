@@ -62,6 +62,9 @@ The bridge long-polls Telegram, so no public HTTPS, domain or webhook is needed.
 - **Google Workspace** — Gmail, Calendar, Drive, Sheets, Docs and Tasks from chat via the `gws` CLI; installed for you, with a guided key setup right in the conversation.
 - **Skills & MCP** — drop one file to add a procedure or connect an MCP server; keys stay in `.env`.
 - **Personal Telegram — userbot (beta)** — read and send from your _own_ account, not just the bot; connect by chat (QR, no terminal). Rough and buggy — opt-in, **at your own risk**. A server-side anti-ban guardrail (FloodWait compliance + randomized pacing + circuit-breaker) is enforced, not just advised. [Details](docs/userbot.md).
+- **Telegram contact graph (read-only)** — with read-only userbot tools enabled, full accessible text
+  history incrementally builds evidence-backed people, group, project and owner cards. Three chats run
+  in parallel; numeric Telegram IDs link the same person across DMs and groups.
 - **Safe to forward** — forwarded text, captions and voice transcripts pass an injection screen before the model reads them. A flagged message or transcript reaches the model tagged as data rather than as an instruction; for media captions the screen runs but the tag does not travel with it yet.
 - **Token accounting** — every model step is logged; `/usage` reports it for free.
 
@@ -90,6 +93,9 @@ Full architecture and search internals: [docs/memory.md](docs/memory.md).
 The bot is half of Telegram. The other half is your personal account: connect the userbot (beta, opt-in) and Iva works from it like a secretary — reads the group chats you never keep up with, folds them into summaries, catches the messages that actually need you, and replies as you.
 
 - **All of Telegram** — groups, channels, unreads, search and the full history of your personal account.
+- **A contact graph that resumes** — the first read-only import walks full text history, then a
+  15-minute schedule continues from durable per-chat cursors. Every extracted observation links back
+  to its source message; voice and video-note contents are not analyzed here.
 - **Onboarding in chat** — tell the bot to connect your Telegram, scan a QR. No terminal.
 - **Anti-ban guardrail on the server** — FloodWait compliance, a randomized delay after every send, and a circuit-breaker that pauses sending after three FloodWaits in 24 hours. It is enforced in the proxy rather than asked for in a prompt, and it wraps the three outbound calls that actually get accounts flagged: messages, files, forwards. Joins, invites, contact imports and reactions are not wrapped — those limits live in the skill file, which is a prompt.
 - **Read-only mode** — one `.env` switch and Iva can read and search but physically cannot send.

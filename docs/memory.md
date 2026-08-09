@@ -16,6 +16,21 @@ _Iva_ means _willow_, and the memory is shaped like one:
 
 CORE.md rides in every system prompt; everything else comes in per question through ranked search. A weekly summary costs about 1/35th of its seven raw days, so recall stays cheap as the vault grows.
 
+## Telegram contact graph
+
+An authorized personal Telegram account can populate the same Markdown graph in read-only mode. Iva
+imports full accessible text history with three chats in parallel and strictly chronological pages
+inside each chat, then resumes from per-account committed cursors every 15 minutes. Private chats,
+groups and channels use separate extraction skills, while one deterministic reducer writes shared
+cards.
+
+People are keyed only by numeric Telegram user ID. This links one person across direct and group
+conversations without merging similar names. Contact, group and project cards receive reciprocal
+wikilinks; observations retain confidence plus exact chat/message/timestamp provenance. Claims about
+the owner remain attributed to their speaker and never flow into `CORE.md` automatically. The reducer
+owns only the block between `iva:telegram-graph` markers, preserving hand-written card content around
+it. Voice and video-note bodies are not analyzed by this pipeline.
+
 ## Nightly rollup
 
 One script, four in-process eve schedules, configured local time. `scripts/memory/rollup.ts` drives the running agent through `eve/client`:
@@ -74,7 +89,7 @@ vault/
 └── .graph/          # machine-owned graph + scan results
 ```
 
-The vault is pure data: the maintenance code and the processing prompts live in the Iva repo (`scripts/autograph/`, `scripts/memory/instructions/`), so an update ships them to every install at once. Vaults created before 0.3.3 also carry a legacy `.claude/` folder — dead weight, no longer read, safe to keep or delete.
+The vault is pure data: the maintenance code and the processing prompts live in the Iva repo (`scripts/autograph/`, `scripts/memory/instructions/`, `scripts/contact-analysis/`), so an update ships them to every install at once. Vaults created before 0.3.3 also carry a legacy `.claude/` folder — dead weight, no longer read, safe to keep or delete.
 
 Everything is plain markdown. Cards, summaries and CORE.md are safe to edit by hand — `enforce` re-canonicalizes the frontmatter the next night. Leave `MOC.md` and `.graph/` alone (both are regenerated) and treat `daily/` as an append-only log. To browse, open the vault folder in [Obsidian](https://obsidian.md): wikilinks, backlinks and the graph view work as-is.
 

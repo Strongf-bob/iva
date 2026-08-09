@@ -1,6 +1,6 @@
 # Deploy
 
-Iva runs on one VPS as two systemd user services, two systemd watchdog timers, and five in-process eve schedules. `install.sh` sets all of it up ([install](./install.md)); this page is what's actually running and how to operate it.
+Iva runs on one VPS as two systemd user services, two systemd watchdog timers, and six in-process eve schedules. `install.sh` sets all of it up ([install](./install.md)); this page is what's actually running and how to operate it.
 
 ## Transport: long polling
 
