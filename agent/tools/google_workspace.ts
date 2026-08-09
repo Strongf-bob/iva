@@ -54,27 +54,6 @@ const CREATE_OPERATIONS = new Set([
   "docs documents batchUpdate",
 ]);
 const READ_METHODS = new Set(["get", "list", "search"]);
-const DESTRUCTIVE_BATCH_REQUESTS = new Set([
-  "deleteBanding",
-  "deleteConditionalFormatRule",
-  "deleteContentRange",
-  "deleteDataSource",
-  "deleteDeveloperMetadata",
-  "deleteDimension",
-  "deleteDimensionGroup",
-  "deleteDuplicates",
-  "deleteEmbeddedObject",
-  "deleteFilterView",
-  "deleteFooter",
-  "deleteHeader",
-  "deleteNamedRange",
-  "deletePositionedObject",
-  "deleteProtectedRange",
-  "deleteRange",
-  "deleteSheet",
-  "deleteTab",
-  "removeDimensionGroup",
-]);
 const MAX_OUTPUT = 24_000;
 const personalHome = () =>
   resolveGoogleHome({
@@ -89,7 +68,7 @@ function containsDestructiveBatchRequest(value: unknown): boolean {
   if (typeof value !== "object" || value === null) return false;
   return Object.entries(value).some(
     ([key, nested]) =>
-      DESTRUCTIVE_BATCH_REQUESTS.has(key) ||
+      /^(?:delete|remove)/u.test(key) ||
       containsDestructiveBatchRequest(nested),
   );
 }

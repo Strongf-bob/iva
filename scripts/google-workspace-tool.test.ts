@@ -171,6 +171,20 @@ void test("Docs and Sheets batch updates reject destructive requests", () => {
       "--json",
       '{"requests":[{"deleteContentRange":{"range":{"startIndex":1,"endIndex":3}}}]}',
     ],
+    [
+      "docs",
+      "documents",
+      "batchUpdate",
+      "--json",
+      '{"requests":[{"deleteTableRow":{"tableCellLocation":{"tableStartLocation":{"index":1},"rowIndex":0,"columnIndex":0}}}]}',
+    ],
+    [
+      "docs",
+      "documents",
+      "batchUpdate",
+      "--json",
+      '{"requests":[{"deleteTableColumn":{"tableCellLocation":{"tableStartLocation":{"index":1},"rowIndex":0,"columnIndex":0}}}]}',
+    ],
   ]) {
     assert.throws(
       () => validateGoogleWorkspaceArgs(args),

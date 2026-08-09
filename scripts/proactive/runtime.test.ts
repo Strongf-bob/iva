@@ -16,6 +16,7 @@ import {
   createSnapshotProviders,
   createTelegramBotProvider,
   parseComposedReportJson,
+  resolveProactiveOwnerId,
 } from "./runtime.ts";
 
 function dataRoot(): string {
@@ -147,17 +148,19 @@ void test("Telegram provider enforces the owner recipient and emits action marku
   });
 });
 
-void test("runtime never promotes a digest destination to owner identity", () => {
+void test("legacy runtime resolves exactly one owner and ignores digest redirection", () => {
+  const env = {
+    ASSISTANT_DATA_DIR: dataRoot(),
+    ASSISTANT_PERSONAL_ROOT: dataRoot(),
+    TELEGRAM_BOT_TOKEN: "bot",
+    TELEGRAM_ALLOWED_USER_IDS: "101",
+    TELEGRAM_DIGEST_CHAT_ID: "202",
+  };
+  assert.equal(resolveProactiveOwnerId(env), "101");
+  assert.doesNotThrow(() => createRuntimeProviders(env));
   assert.throws(
-    () =>
-      createRuntimeProviders({
-        ASSISTANT_DATA_DIR: dataRoot(),
-        ASSISTANT_PERSONAL_ROOT: dataRoot(),
-        TELEGRAM_BOT_TOKEN: "bot",
-        TELEGRAM_ALLOWED_USER_IDS: "101",
-        TELEGRAM_DIGEST_CHAT_ID: "202",
-      }),
-    /owner private chat/u,
+    () => resolveProactiveOwnerId({ TELEGRAM_ALLOWED_USER_IDS: "101,202" }),
+    /owner id is missing/u,
   );
 });
 

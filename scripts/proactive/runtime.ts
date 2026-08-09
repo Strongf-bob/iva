@@ -362,10 +362,11 @@ function eveSend(env: NodeJS.ProcessEnv): (prompt: string) => Promise<string> {
 
 export function createRuntimeProviders(
   env: NodeJS.ProcessEnv = process.env,
+  resolvedOwnerId = resolveProactiveOwnerId(env),
 ): ProactiveProviders {
   const dataDir = dataDirectory(env);
   const snapshots = createSnapshotProviders(dataDir);
-  const ownerId = String(env.ASSISTANT_USER_ID ?? "").trim();
+  const ownerId = resolvedOwnerId;
   const chatId = ownerId;
   const homeDir = resolveGoogleHome({
     personalRoot: env.ASSISTANT_PERSONAL_ROOT,
@@ -387,4 +388,31 @@ export function createRuntimeProviders(
       chatId,
     }),
   };
+}
+
+export function resolveProactiveOwnerId(
+  env: NodeJS.ProcessEnv,
+  routedOwnerId?: string,
+): string {
+  const assigned = String(env.ASSISTANT_USER_ID ?? "").trim();
+  if (assigned) {
+    if (!/^\d+$/u.test(assigned))
+      throw new Error("proactive owner id is missing");
+    return assigned;
+  }
+  if (env.ASSISTANT_MULTI_USER === "1") {
+    throw new Error("proactive owner id is missing");
+  }
+  const routed = String(routedOwnerId ?? "").trim();
+  if (routed) {
+    if (!/^\d+$/u.test(routed))
+      throw new Error("proactive owner id is missing");
+    return routed;
+  }
+  const allowed = String(env.TELEGRAM_ALLOWED_USER_IDS ?? "")
+    .split(/[,\s]+/u)
+    .map((value) => value.trim())
+    .filter((value) => /^\d+$/u.test(value));
+  if (allowed.length !== 1) throw new Error("proactive owner id is missing");
+  return allowed[0];
 }
