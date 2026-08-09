@@ -23,6 +23,9 @@ interface StreamObjectInput {
   schema: typeof AnalysisBatchSchema;
   system: string;
   prompt: string;
+  abortSignal: AbortSignal;
+  maxOutputTokens: number;
+  maxRetries: number;
 }
 
 interface StreamObjectResultLike {
@@ -34,9 +37,12 @@ type StreamObjectImpl = (input: StreamObjectInput) => StreamObjectResultLike;
 export interface AnalyzeStructuredDependencies {
   model?: LanguageModel;
   streamObjectImpl?: StreamObjectImpl;
+  timeoutMs?: number;
 }
 
 const runStreamObject: StreamObjectImpl = (input) => streamObject(input);
+const DEFAULT_MODEL_TIMEOUT_MS = 5 * 60_000;
+const MAX_OUTPUT_TOKENS = 16_384;
 
 export async function analyzeStructured(
   input: ModelAnalysisInput,
@@ -48,6 +54,16 @@ export async function analyzeStructured(
   );
   const model = dependencies.model ?? createTextModel();
   const run = dependencies.streamObjectImpl ?? runStreamObject;
+  const timeoutMs = dependencies.timeoutMs ?? DEFAULT_MODEL_TIMEOUT_MS;
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < 1 ||
+    timeoutMs > 15 * 60_000
+  ) {
+    throw new TypeError(
+      "contact analysis model timeout must be an integer from 1 to 900000",
+    );
+  }
   const prompt = JSON.stringify({
     ownerUserId: input.ownerUserId,
     dialog,
@@ -60,6 +76,9 @@ export async function analyzeStructured(
     schema: AnalysisBatchSchema,
     system: input.skillText,
     prompt,
+    abortSignal: AbortSignal.timeout(timeoutMs),
+    maxOutputTokens: MAX_OUTPUT_TOKENS,
+    maxRetries: 0,
   });
 
   return AnalysisBatchSchema.parse(await result.object);
