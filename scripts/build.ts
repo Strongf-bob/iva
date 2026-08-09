@@ -5,6 +5,7 @@ import {
   lstatSync,
   mkdtempSync,
   mkdirSync,
+  realpathSync,
   readdirSync,
   renameSync,
   rmSync,
@@ -198,5 +199,9 @@ export function buildWithCustomLayer(): void {
   }
 }
 
-if (resolve(process.argv[1] ?? "") === resolve(fileURLToPath(import.meta.url)))
+if (
+  process.argv[1] &&
+  realpathSync(resolve(process.argv[1])) ===
+    realpathSync(resolve(fileURLToPath(import.meta.url)))
+)
   buildWithCustomLayer();
