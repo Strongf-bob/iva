@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/require-await -- Node owns test registration; async doubles preserve the I/O boundary. */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   controlCallbackAllowed,
   controlCommandAllowed,
@@ -39,6 +41,19 @@ test("ordinary user callback gate admits personal Google and Timers routes", () 
     assert.equal(controlCallbackAllowed(callback, "user"), false, callback);
     assert.equal(controlCallbackAllowed(callback, "owner"), true, callback);
   }
+});
+
+test("commitment callbacks are consumed before model-facing callback routes", () => {
+  const source = readFileSync(
+    fileURLToPath(new URL("./control.ts", import.meta.url)),
+    "utf8",
+  );
+  const proactive = source.indexOf("handleProactiveCommitmentCallback({");
+  const update = source.indexOf('callback.data.startsWith("iva_update:")');
+  const menu = source.indexOf('callback.data.startsWith("iva_menu:")');
+  assert.ok(proactive > 0);
+  assert.ok(proactive < update);
+  assert.ok(proactive < menu);
 });
 
 test("secret document capture deletes before download and never reaches Eve", async () => {

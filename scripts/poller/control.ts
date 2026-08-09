@@ -53,6 +53,7 @@ import {
   workerRoutes,
   type WorkerRoutes,
 } from "./tenant-routing.ts";
+import { handleProactiveCommitmentCallback } from "../proactive/callback.ts";
 
 type ControlCallbackQuery = TelegramCallbackQuery & { data: string };
 type PendingFlow = {
@@ -351,6 +352,17 @@ async function handleControl(
   const cq = update.callback_query;
   if (cq && hasCallbackData(cq)) {
     const callback = cq;
+    const proactiveHandled = await handleProactiveCommitmentCallback({
+      callback,
+      tenant,
+      answer: async (text) => {
+        await controlTg("answerCallbackQuery", {
+          callback_query_id: callback.id,
+          text,
+        }).catch(() => ({ ok: false }));
+      },
+    });
+    if (proactiveHandled) return true;
     const tenantMenuState = tenant
       ? getWizard(callback.message?.chat?.id, tenant.user.id)
       : null;

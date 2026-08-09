@@ -2,7 +2,7 @@
 // «имя → следующий запуск», плюс счётчик задач из data/tasks.json, плюс блок расписаний
 // внутри самой Ивы (agent/schedules/*.ts — Nitro scheduled tasks, не systemd) из
 // data/rollup-status.json (scripts/lib/schedule-runner.ts). Пагинация systemd-списка по 8;
-// блок расписаний Ивы всегда ровно 5 строк — не пагинируется.
+// блок расписаний Ивы остаётся коротким и не пагинируется.
 //
 // execFile ограничен таймаутом 1.5с и кэшируется на 60с — единственный getUpdates-цикл
 // моста нельзя блокировать дольше (список таймеров редко висит, одной ограниченной пробы
@@ -39,6 +39,7 @@ const EVE_SCHEDULES = [
   { name: "memory-monthly", cron: "20 4 1 * *" },
   { name: "memory-yearly", cron: "25 4 1 1 *" },
   { name: "digest", cron: "0 8 * * *" },
+  { name: "proactive-reviews", cron: "*/5 * * * *" },
 ];
 
 function loadRollupStatus(dataDir: string): Record<string, RollupEntry> {
@@ -84,13 +85,28 @@ function digestEnabled(dataDir: string) {
   }
 }
 
+function proactiveEnabled(dataDir: string) {
+  try {
+    const settings = readSettings(dataDir) as {
+      proactiveReviews?: { enabled?: boolean };
+    };
+    return settings.proactiveReviews?.enabled === true;
+  } catch {
+    return false;
+  }
+}
+
 function schedulesBlock(dataDir: string, T: Translate) {
   const status = loadRollupStatus(dataDir);
   const digestOn = digestEnabled(dataDir);
+  const proactiveOn = proactiveEnabled(dataDir);
   const lines = EVE_SCHEDULES.map((s) => {
     // digest fires off by default (agent/schedules/digest.ts) — "never" would be
     // indistinguishable from "enabled but hasn't run yet"; say so explicitly instead.
     if (s.name === "digest" && !digestOn) {
+      return `• ${s.name} (${s.cron}) → ${T("disabled", "выключен")}`;
+    }
+    if (s.name === "proactive-reviews" && !proactiveOn) {
       return `• ${s.name} (${s.cron}) → ${T("disabled", "выключен")}`;
     }
     return `• ${s.name} (${s.cron}) → ${formatLastSuccess(status[s.name], T)}`;
