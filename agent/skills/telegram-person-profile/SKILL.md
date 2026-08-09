@@ -34,6 +34,11 @@ name, nickname or writing style.
 6. Update the summary with durable context needed by the next chronological chunk, then output the
    schema object.
 
+For relationship intelligence, emit `birthday` only when the date is explicitly stated (`YYYY-MM-DD`
+or `--MM-DD`), `meaningful_contact` only for a substantive interaction supported by the current
+chunk, and `follow_up` for an explicit next step. Every `commitment` must include relationship
+metadata with direction and an explicit due timestamp or `null`. Never infer a birthday from age.
+
 ## Safety Boundaries
 
 - Do not infer sensitive traits such as health, ethnicity, religion, politics, sexuality, precise

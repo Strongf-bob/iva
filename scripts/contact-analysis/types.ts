@@ -43,6 +43,9 @@ export const ObservationPredicateSchema = z.enum([
   "works_on",
   "communication_style",
   "commitment",
+  "birthday",
+  "meaningful_contact",
+  "follow_up",
   "preference",
   "owner_mention",
   "external_owner_claim",
@@ -69,6 +72,17 @@ export const ObservationSchema = z
     evidence: z.array(EvidenceSchema).min(1).max(32),
     validFrom: z.iso.datetime({ offset: true }).optional(),
     validUntil: z.iso.datetime({ offset: true }).optional(),
+    relationship: z
+      .strictObject({
+        direction: z.enum([
+          "owner_to_contact",
+          "contact_to_owner",
+          "mutual",
+          "unknown",
+        ]),
+        dueAt: z.iso.datetime({ offset: true }).nullable(),
+      })
+      .optional(),
   })
   .superRefine((observation, context) => {
     if (
@@ -89,6 +103,27 @@ export const ObservationSchema = z
         code: "custom",
         message: "external_owner_claim requires assertedById",
         path: ["assertedById"],
+      });
+    }
+    if (
+      (observation.predicate === "commitment") !==
+      (observation.relationship !== undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "relationship metadata is required only for commitments",
+        path: ["relationship"],
+      });
+    }
+    if (
+      observation.predicate === "birthday" &&
+      (observation.value === undefined ||
+        !/^(?:\d{4}-|--)\d{2}-\d{2}$/u.test(observation.value))
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "birthday must be an explicit ISO or yearless date",
+        path: ["value"],
       });
     }
   });

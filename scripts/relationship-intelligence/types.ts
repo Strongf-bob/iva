@@ -59,7 +59,7 @@ export type Commitment = z.infer<typeof CommitmentSchema>;
 export const ContactActivitySchema = z.strictObject({
   birthday: z
     .strictObject({
-      value: z.string().regex(/^(?:\d{4}|--)-\d{2}-\d{2}$/u),
+      value: z.string().regex(/^(?:\d{4}-|--)\d{2}-\d{2}$/u),
       evidence: RelationshipEvidenceSchema,
     })
     .nullable(),

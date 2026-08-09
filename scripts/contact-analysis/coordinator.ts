@@ -1,5 +1,8 @@
 import { ZodError } from "zod";
 
+import { reduceRelationshipObservations } from "../relationship-intelligence/reducer.ts";
+import { relationshipPaths } from "../relationship-intelligence/store.ts";
+
 import { analyzePage, type AnalyzePageInput } from "./analyzer.ts";
 import {
   reduceBatch,
@@ -101,6 +104,7 @@ export interface RunContactAnalysisOptions {
   concurrency?: number;
   analyzePageImpl?: (input: AnalyzePageInput) => Promise<AnalysisPage>;
   reduceBatchImpl?: (input: ReduceBatchInput) => Promise<ReduceResult>;
+  reduceRelationshipImpl?: typeof reduceRelationshipObservations;
   sleepImpl?: (milliseconds: number) => Promise<void>;
 }
 
@@ -231,6 +235,7 @@ export async function runContactAnalysis({
   concurrency = 3,
   analyzePageImpl = analyzePage,
   reduceBatchImpl = reduceBatch,
+  reduceRelationshipImpl = reduceRelationshipObservations,
   sleepImpl = (milliseconds) =>
     new Promise((resolve) => setTimeout(resolve, milliseconds)),
 }: RunContactAnalysisOptions = {}): Promise<ContactAnalysisReport> {
@@ -263,8 +268,17 @@ export async function runContactAnalysis({
   await persist();
 
   let reducerChain = Promise.resolve();
+  const relationshipStatePaths = relationshipPaths(root, dataDir);
   const enqueueReduction = (input: ReduceBatchInput) => {
-    const pending = reducerChain.then(() => reduceBatchImpl(input));
+    const pending = reducerChain.then(async () => {
+      const result = await reduceBatchImpl(input);
+      await reduceRelationshipImpl({
+        paths: relationshipStatePaths,
+        ownerUserId: input.ownerUserId,
+        observations: input.batch.observations,
+      });
+      return result;
+    });
     reducerChain = pending.then(
       () => undefined,
       () => undefined,
