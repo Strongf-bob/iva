@@ -2,6 +2,7 @@ import { TELEGRAM_ACCEPTANCE_ROUTE } from "#lib/telegram-acceptance.ts";
 
 import type { TelegramQueueUpdate } from "../lib/telegram-queue.ts";
 import {
+  isLegacyOwnerRoute,
   parseTelegramUserId,
   type TelegramUserId,
   type UserRecord,
@@ -50,10 +51,24 @@ export function resolveTenant(
 
 export function workerRoutes(user: Pick<UserRecord, "port">): WorkerRoutes {
   const base = `http://127.0.0.1:${user.port}`;
+  return routesFromBase(base);
+}
+
+function routesFromBase(rawBase: string): WorkerRoutes {
+  const base = rawBase.replace(/\/$/u, "");
   const webhook = `${base}/eve/v1/telegram`;
   return {
     webhook,
     acceptance: `${base}${TELEGRAM_ACCEPTANCE_ROUTE}`,
     reset: `${webhook}/reset`,
   };
+}
+
+export function routesForTenant(
+  user: UserRecord,
+  legacyBase: string,
+): WorkerRoutes {
+  return isLegacyOwnerRoute(user)
+    ? routesFromBase(legacyBase)
+    : workerRoutes(user);
 }

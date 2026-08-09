@@ -213,6 +213,10 @@ void test("production Compose requires an immutable image and narrow mounts", ()
   assert.match(deployScript, /rootless/u);
   assert.match(deployScript, /ps -q telegram-userbot/u);
   assert.match(deployScript, /telegram-userbot.*running 0/su);
+  assert.match(
+    deployScript,
+    /docker exec "\$poller_id" node scripts\/production\/routing-health\.ts/u,
+  );
   assert.match(deployScript, /userbot_session_ok/u);
   assert.match(deployScript, /cat \/app\/data\/telegram-userbot\.token/u);
   assert.match(

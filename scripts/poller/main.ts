@@ -12,6 +12,7 @@ import {
 } from "../lib/telegram-collect.ts";
 import { alreadyDelivered } from "../lib/offset-store.ts";
 import { requestTelegramReset } from "../lib/telegram-reset.ts";
+import { reconcileTelegramOwnerRoute } from "../lib/owner-routing.ts";
 import {
   isReplyToBot,
   invalidTelegramUpdatesDiagnostic,
@@ -35,7 +36,16 @@ import {
   reserveUserTurn,
   type QuotaDenialReason,
 } from "../lib/user-quota.ts";
-import { CONTROL_DIR, DATA_DIR, SECRET, TOKEN, log, sleep } from "./config.ts";
+import {
+  ALLOWED,
+  CONTROL_DIR,
+  DATA_DIR,
+  HOST,
+  SECRET,
+  TOKEN,
+  log,
+  sleep,
+} from "./config.ts";
 import { tg } from "./transport.ts";
 import { fastForwardOffset, loadOffset, saveOffset } from "./offset.ts";
 import * as queue from "./queue.ts";
@@ -45,7 +55,7 @@ import * as control from "./control.ts";
 import * as wizards from "./wizards.ts";
 import {
   resolveTenant,
-  workerRoutes,
+  routesForTenant,
   type WorkerRoutes,
 } from "./tenant-routing.ts";
 
@@ -102,7 +112,7 @@ async function requestTenantReset({
   );
   if (!user) throw new Error(`reset tenant ${userId} is not active`);
   return requestTelegramReset({
-    url: workerRoutes(user).reset,
+    url: routesForTenant(user, HOST).reset,
     secret: SECRET as string,
     continuationToken,
   });
@@ -123,13 +133,14 @@ async function tenantRoutes(
   );
   if (!user) return null;
   const layout = resolveUserLayout(join(DATA_DIR, "users"), resolved.userId);
+  const legacyRoute = isLegacyOwnerRoute(user);
   return {
     userId: resolved.userId,
     user,
-    routes: workerRoutes(user),
+    routes: routesForTenant(user, HOST),
     personalRoot: layout.root,
     personalData: layout.data,
-    legacyRoute: isLegacyOwnerRoute(user),
+    legacyRoute,
   };
 }
 
@@ -247,6 +258,15 @@ export async function main() {
       "no TELEGRAM_WEBHOOK_SECRET_TOKEN — the channel won't accept updates",
     );
   log("telegram-poll start → registry-routed private user workers");
+  const ownerRouting = await reconcileTelegramOwnerRoute({
+    controlDir: CONTROL_DIR,
+    allowedUserIds: ALLOWED,
+  });
+  log(
+    ownerRouting.outcome === "created"
+      ? "owner routing: created legacy route"
+      : "owner routing: ready",
+  );
   await removeStaleUpdateJobs();
   // Upgrade the old {chatKey: string[]} queue atomically before polling. A failed
   // migration stops the bridge, so Telegram retains new updates until the old bytes
@@ -452,8 +472,8 @@ export function runEntrypoint(
   executedPath: string | undefined = process.argv[1],
 ): void {
   if (fileURLToPath(moduleUrl) !== executedPath) return;
-  void main().catch((error: unknown) => {
-    console.error("telegram-poll fatal:", error);
+  void main().catch(() => {
+    console.error("telegram-poll fatal: startup or polling failed");
     process.exit(1);
   });
 }
