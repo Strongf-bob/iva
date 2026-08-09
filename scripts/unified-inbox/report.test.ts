@@ -206,8 +206,12 @@ test("private envelope accepts only the authenticated owner target", () => {
 });
 
 test("renderer remains within the private-bot envelope bound", () => {
-  const many = Array.from({ length: 100 }, (_, index) =>
-    message(`m-${index}`, `Message ${index}`, "x".repeat(4_000)),
+  const many = Array.from({ length: 150 }, (_, index) =>
+    message(
+      `m-${index}-${"e".repeat(450)}`,
+      `Message ${index} ${"t".repeat(480)}`,
+      "x".repeat(4_000),
+    ),
   );
   const manyAnalysis = InboxAnalysisSchema.parse({
     schemaVersion: 1,
@@ -224,10 +228,79 @@ test("renderer remains within the private-bot envelope bound", () => {
     many,
     [],
     manyAnalysis,
-    [],
+    [
+      {
+        source: "gmail",
+        status: "failed",
+        collected: 0,
+        errorCode: "unified_inbox_source_failed",
+      },
+    ],
     new Date(generatedAt),
   );
   const text = renderInboxReport(report);
   assert.ok([...text].length <= 12_000);
+  assert.match(text, /⚠️ Источники/u);
+  assert.match(text, /unified_inbox_source_failed/u);
+  for (const line of text
+    .split("\n")
+    .filter((value) => value.startsWith("• Message"))) {
+    assert.match(line, /\]$/u);
+  }
+  const renderedUrgent = text
+    .split("\n")
+    .filter((value) => value.startsWith("• Message")).length;
+  const omitted = Number(/Ещё элементов: (\d+)/u.exec(text)?.[1]);
+  assert.equal(report.urgentCount, 150);
+  assert.equal(report.categories.urgent.length, 100);
+  assert.equal(renderedUrgent + omitted, report.urgentCount);
   assert.doesNotThrow(() => createPrivateInboxEnvelope(report, "7", "7"));
+});
+
+test("maximum bounded meeting always renders its identity and locator", () => {
+  const longEvent = InboxObservationSchema.parse({
+    ...event,
+    title: "M".repeat(500),
+    evidence: { ...event.evidence, locator: `Calendar ${"c".repeat(491)}` },
+  });
+  const related = InboxObservationSchema.parse({
+    ...needsReply,
+    evidence: {
+      ...needsReply.evidence,
+      locator: `Gmail ${"g".repeat(494)}`,
+    },
+  });
+  const longAnalysis = InboxAnalysisSchema.parse({
+    schemaVersion: 1,
+    decisions: [],
+    meetingBriefs: [
+      {
+        eventObservationId: longEvent.id,
+        summary: "s".repeat(2_000),
+        preparationPoints: Array.from({ length: 10 }, () => "p".repeat(500)),
+        openQuestions: Array.from({ length: 10 }, () => "q".repeat(500)),
+        evidenceIds: [longEvent.id, related.id],
+      },
+    ],
+    draftProposals: [],
+  });
+  const report = buildInboxReport(
+    [longEvent, related],
+    [
+      {
+        eventObservationId: longEvent.id,
+        participantKeys: [],
+        relatedObservationIds: [related.id],
+        relationshipContext: [],
+      },
+    ],
+    longAnalysis,
+    [],
+    new Date(generatedAt),
+  );
+  const text = renderInboxReport(report);
+
+  assert.match(text, /• M{20,}/u);
+  assert.match(text, /\[Calendar c+; Gmail g+\]/u);
+  assert.ok([...text].length <= 12_000);
 });

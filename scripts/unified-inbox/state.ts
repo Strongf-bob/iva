@@ -1,5 +1,6 @@
 import { chmod, lstat, mkdir } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { readFileSync, utimesSync } from "node:fs";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { z } from "zod";
 
@@ -29,6 +30,8 @@ import {
 const MAX_FINGERPRINTS = 10_000;
 const DEFAULT_REPORT_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
 const DEFAULT_NON_ACTIONABLE_RETENTION_MS = 14 * 24 * 60 * 60 * 1_000;
+const MAX_REPORTING_OBSERVATIONS = 500;
+const MIN_UNCLASSIFIED_REPORTING_QUOTA = 100;
 
 const SourceHealthStateSchema = z.strictObject({
   status: z.enum(["ok", "failed"]),
@@ -37,6 +40,7 @@ const SourceHealthStateSchema = z.strictObject({
   errorCode: z
     .string()
     .regex(/^[a-z0-9_]+$/u)
+    .max(200)
     .nullable(),
 });
 export type SourceHealthState = z.infer<typeof SourceHealthStateSchema>;
@@ -103,6 +107,26 @@ export interface InboxStatePaths {
   ownerDir: string;
   stateFile: string;
   lockFile: string;
+  guardPaths: string[];
+}
+
+function guardedPathComponents(base: string, target: string): string[] {
+  const relativePath = relative(base, target);
+  if (
+    relativePath === "" ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`) ||
+    isAbsolute(relativePath)
+  ) {
+    return [target];
+  }
+  const paths: string[] = [];
+  let current = base;
+  for (const component of relativePath.split(sep)) {
+    current = join(current, component);
+    paths.push(current);
+  }
+  return paths;
 }
 
 export function inboxStatePaths(
@@ -124,6 +148,7 @@ export function inboxStatePaths(
     ownerDir,
     stateFile: join(ownerDir, "state.json"),
     lockFile: join(ownerDir, "pipeline.lock"),
+    guardPaths: guardedPathComponents(resolvedRoot, dataRoot),
   };
 }
 
@@ -155,6 +180,7 @@ async function pathInfo(path: string) {
 
 async function rejectExistingSymlinks(paths: InboxStatePaths): Promise<void> {
   for (const path of [
+    ...paths.guardPaths,
     paths.dataRoot,
     paths.baseDir,
     paths.ownerDir,
@@ -266,6 +292,10 @@ export function reduceObservationPage(
     processed.add(fingerprint);
     collected += 1;
   }
+  for (const observationId of page.removedObservationIds) {
+    delete state.observations[observationId];
+    delete state.classifications[observationId];
+  }
   state.processedFingerprints = [...processed].slice(-MAX_FINGERPRINTS);
   state.sourceHealth[page.source] = {
     status: "ok",
@@ -330,13 +360,73 @@ export function selectReportingObservations(
     throw new TypeError("report window must be a safe positive integer");
   }
   const cutoff = now.getTime() - windowMs;
-  return Object.values(state.observations)
-    .filter((observation) => Date.parse(observation.occurredAt) >= cutoff)
-    .sort(
-      (left, right) =>
-        Date.parse(left.occurredAt) - Date.parse(right.occurredAt) ||
-        left.id.localeCompare(right.id),
-    );
+  const candidates = Object.values(state.observations).filter(
+    (observation) => Date.parse(observation.occurredAt) >= cutoff,
+  );
+  const newestFirst = (left: InboxObservation, right: InboxObservation) =>
+    Date.parse(right.occurredAt) - Date.parse(left.occurredAt) ||
+    left.id.localeCompare(right.id);
+  const oldestFirst = (left: InboxObservation, right: InboxObservation) =>
+    Date.parse(left.occurredAt) - Date.parse(right.occurredAt) ||
+    left.id.localeCompare(right.id);
+  const unclassified = candidates
+    .filter(
+      (observation) => state.classifications[observation.id] === undefined,
+    )
+    .sort(oldestFirst);
+  const retainedPriority = candidates
+    .filter((observation) => {
+      const category = state.classifications[observation.id];
+      return (
+        category !== undefined &&
+        (observation.source === "calendar" ||
+          category === "urgent" ||
+          category === "needs_reply")
+      );
+    })
+    .sort(newestFirst);
+  const nonActionable = candidates
+    .filter((observation) => {
+      const category = state.classifications[observation.id];
+      return (
+        category !== undefined &&
+        observation.source !== "calendar" &&
+        category !== "urgent" &&
+        category !== "needs_reply"
+      );
+    })
+    .sort(newestFirst);
+
+  const freshQuota = Math.min(
+    MIN_UNCLASSIFIED_REPORTING_QUOTA,
+    unclassified.length,
+  );
+  const retainedQuota = Math.min(
+    MAX_REPORTING_OBSERVATIONS - freshQuota,
+    retainedPriority.length,
+  );
+  return [
+    ...retainedPriority.slice(0, retainedQuota),
+    ...unclassified.slice(0, freshQuota),
+    ...unclassified.slice(freshQuota),
+    ...retainedPriority.slice(retainedQuota),
+    ...nonActionable,
+  ].slice(0, MAX_REPORTING_OBSERVATIONS);
+}
+
+export function countReportingObservations(
+  current: InboxState,
+  now = new Date(),
+  windowMs = DEFAULT_REPORT_WINDOW_MS,
+): number {
+  const state = InboxStateSchema.parse(current);
+  if (!Number.isSafeInteger(windowMs) || windowMs <= 0) {
+    throw new TypeError("report window must be a safe positive integer");
+  }
+  const cutoff = now.getTime() - windowMs;
+  return Object.values(state.observations).filter(
+    (observation) => Date.parse(observation.occurredAt) >= cutoff,
+  ).length;
 }
 
 export function recordClassifications(
@@ -370,9 +460,8 @@ export function pruneInboxState(
     state.observations,
   )) {
     const category = state.classifications[observationId];
-    const isNonActionable =
-      category === "informational" || category === "ignorable";
-    if (isNonActionable && Date.parse(observation.occurredAt) < cutoff) {
+    const isActionable = category === "urgent" || category === "needs_reply";
+    if (!isActionable && Date.parse(observation.occurredAt) < cutoff) {
       delete state.observations[observationId];
       delete state.classifications[observationId];
     }
@@ -400,12 +489,33 @@ export function recordSuccessfulReport(
 export async function withInboxLock<T>(
   paths: InboxStatePaths,
   operation: () => Promise<T> | T,
+  heartbeatMs = 5_000,
 ): Promise<T> {
+  if (!Number.isSafeInteger(heartbeatMs) || heartbeatMs <= 0) {
+    throw new TypeError("lock heartbeat must be a safe positive integer");
+  }
   await ensurePrivatePaths(paths);
   const token = await acquireLock(paths.lockFile);
+  let leaseLost = false;
+  const heartbeat = setInterval(() => {
+    try {
+      if (readFileSync(paths.lockFile, "utf8") !== token) {
+        leaseLost = true;
+        return;
+      }
+      const refreshedAt = new Date();
+      utimesSync(paths.lockFile, refreshedAt, refreshedAt);
+    } catch {
+      leaseLost = true;
+    }
+  }, heartbeatMs);
+  heartbeat.unref();
   try {
-    return await operation();
+    const result = await operation();
+    if (leaseLost) throw new Error("unified_inbox_lock_lost");
+    return result;
   } finally {
+    clearInterval(heartbeat);
     releaseLock(paths.lockFile, token);
   }
 }

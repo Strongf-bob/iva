@@ -179,3 +179,77 @@ test("relationship providers cannot invent evidence IDs", async () => {
     /unified_inbox_relationship_unknown_evidence/u,
   );
 });
+
+test("meeting preparation input stays within the analysis schema bound", async () => {
+  const events = Array.from({ length: 101 }, (_, index) =>
+    observation({
+      source: "calendar",
+      externalId: `event-${index}`,
+      occurredAt: "2026-08-09T10:00:00.000Z",
+      startsAt: "2026-08-09T10:00:00.000Z",
+      endsAt: "2026-08-09T11:00:00.000Z",
+    }),
+  );
+
+  const contexts = await buildMeetingContexts(
+    events,
+    new EmptyRelationshipContextProvider(),
+    now,
+  );
+  assert.equal(contexts.length, 100);
+});
+
+test("related meeting evidence is deterministically capped", async () => {
+  const related = Array.from({ length: 201 }, (_, index) =>
+    observation({
+      source: "gmail",
+      externalId: `related-${index}`,
+      occurredAt: "2026-08-09T07:00:00.000Z",
+      actorId: "alice@example.com",
+      actorAddress: "alice@example.com",
+    }),
+  );
+
+  const contexts = await buildMeetingContexts(
+    [calendar, ...related],
+    new EmptyRelationshipContextProvider(),
+    now,
+  );
+  assert.equal(contexts[0]?.relatedObservationIds.length, 200);
+});
+
+test("participant and relationship context arrays are capped before validation", async () => {
+  const participants = Array.from({ length: 100 }, (_, index) => ({
+    id: `participant-${index}@example.com`,
+    label: `Participant ${index}`,
+    address: `participant-${index}@example.com`,
+  }));
+  const crowdedEvent = observation({
+    source: "calendar",
+    externalId: "crowded-event",
+    occurredAt: "2026-08-09T10:00:00.000Z",
+    actorId: "organizer@example.com",
+    actorAddress: "organizer@example.com",
+    participants,
+    startsAt: "2026-08-09T10:00:00.000Z",
+    endsAt: "2026-08-09T11:00:00.000Z",
+  });
+  const relationships: RelationshipContextProvider = {
+    async lookup() {
+      return Array.from({ length: 101 }, (_, index) => ({
+        subjectId: `contact-${index}`,
+        label: `Contact ${index}`,
+        summary: "Known relationship.",
+        evidenceObservationIds: [gmail.id],
+      }));
+    },
+  };
+
+  const contexts = await buildMeetingContexts(
+    [crowdedEvent, gmail],
+    relationships,
+    now,
+  );
+  assert.equal(contexts[0]?.participantKeys.length, 100);
+  assert.equal(contexts[0]?.relationshipContext.length, 100);
+});

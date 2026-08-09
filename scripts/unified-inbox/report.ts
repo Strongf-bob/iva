@@ -17,8 +17,12 @@ import {
 } from "./types.ts";
 
 const MAX_REPORT_CODE_POINTS = 12_000;
-const MAX_RENDERED_ITEMS = 10;
-const MAX_RENDERED_INFORMATIONAL = 5;
+const SECTION_BUDGETS = {
+  urgent: 2_800,
+  reply: 3_000,
+  meetings: 3_000,
+  informational: 1_600,
+} as const;
 
 function reportItem(
   observation: InboxObservation,
@@ -43,6 +47,7 @@ export function buildInboxReport(
   rawAnalysis: InboxAnalysis,
   rawSourceHealth: readonly SourceRunHealth[],
   generatedAt = new Date(),
+  deferredObservationCount = 0,
 ): InboxReport {
   const observations = rawObservations.map((observation) =>
     InboxObservationSchema.parse(observation),
@@ -92,7 +97,13 @@ export function buildInboxReport(
       if (!meeting || event?.source !== "calendar") {
         throw new Error("unified_inbox_report_unknown_meeting");
       }
-      const locators = brief.evidenceIds.map((evidenceId) => {
+      const orderedEvidenceIds = [
+        brief.eventObservationId,
+        ...brief.evidenceIds.filter(
+          (evidenceId) => evidenceId !== brief.eventObservationId,
+        ),
+      ];
+      const locators = orderedEvidenceIds.map((evidenceId) => {
         const evidence = observationsById.get(evidenceId);
         if (!evidence) throw new Error("unified_inbox_report_unknown_evidence");
         return evidence.evidence.locator;
@@ -115,78 +126,136 @@ export function buildInboxReport(
     },
     meetings: reportMeetings.slice(0, 100),
     draftProposals: analysis.draftProposals.slice(0, 100),
+    urgentCount: urgent.length,
+    needsReplyCount: needsReply.length,
     informationalCount,
     ignorableCount,
+    deferredObservationCount,
     sourceHealth,
     partial: sourceHealth.some((health) => health.status === "failed"),
   });
 }
 
 function itemLine(item: InboxReportItem): string {
-  return `• ${item.title} — ${item.summary} [${item.locator}]`;
+  return `• ${truncateCodePoints(item.title, 160)} — ${truncateCodePoints(item.summary, 420)} [${item.locator}]`;
+}
+
+function codePointLength(value: string): number {
+  return [...value].length;
 }
 
 function renderedSection(
   heading: string,
-  items: readonly InboxReportItem[],
-  limit = MAX_RENDERED_ITEMS,
+  groups: readonly string[][],
+  budget: number,
+  totalCount = groups.length,
 ): string[] {
-  const visible = items.slice(0, limit).map(itemLine);
-  if (items.length > visible.length) {
-    visible.push(`• Ещё: ${items.length - visible.length}`);
+  if (totalCount === 0) return [heading, "• Нет", ""];
+  const lines = [heading];
+  let used = codePointLength(heading) + 1;
+  let included = 0;
+  for (const group of groups) {
+    if (group.length === 0) continue;
+    const omittedAfter = Math.max(totalCount - included - 1, 0);
+    const markerCost =
+      omittedAfter > 0
+        ? codePointLength(`• Ещё элементов: ${omittedAfter}`) + 1
+        : 0;
+    const primaryCost = codePointLength(group[0] ?? "") + 1;
+    if (used + primaryCost + markerCost > budget) break;
+    lines.push(group[0] ?? "");
+    used += primaryCost;
+    included += 1;
+    for (const optionalLine of group.slice(1)) {
+      const optionalCost = codePointLength(optionalLine) + 1;
+      if (used + optionalCost + markerCost > budget) break;
+      lines.push(optionalLine);
+      used += optionalCost;
+    }
   }
-  return [heading, ...(visible.length > 0 ? visible : ["• Нет"]), ""];
+  if (included < totalCount) {
+    lines.push(`• Ещё элементов: ${totalCount - included}`);
+  }
+  return [...lines, ""];
 }
 
 export function renderInboxReport(rawReport: InboxReport): string {
   const report = InboxReportSchema.parse(rawReport);
   const lines = ["📥 Входящие", ""];
-  lines.push(...renderedSection("🚨 Срочно", report.categories.urgent));
-  lines.push(
-    ...renderedSection("✉️ Нужен ответ", report.categories.needsReply),
-  );
-  for (const draft of report.draftProposals.slice(0, MAX_RENDERED_ITEMS)) {
-    lines.push(
-      `  Предложение ответа для ${draft.to}: ${truncateCodePoints(draft.body, 500)}`,
-    );
-  }
-  if (report.draftProposals.length > 0) lines.push("");
-
-  lines.push("📅 Встречи");
-  if (report.meetings.length === 0) lines.push("• Нет");
-  for (const meeting of report.meetings.slice(0, MAX_RENDERED_ITEMS)) {
-    lines.push(
-      `• ${meeting.title} — ${meeting.summary} [${meeting.locators.join("; ")}]`,
-    );
-    for (const point of meeting.preparationPoints.slice(0, 3)) {
-      lines.push(`  Подготовить: ${point}`);
-    }
-    for (const question of meeting.openQuestions.slice(0, 3)) {
-      lines.push(`  Вопрос: ${question}`);
-    }
-  }
-  lines.push("");
-
-  lines.push(
-    ...renderedSection(
-      "ℹ️ Информация",
-      report.categories.informational,
-      MAX_RENDERED_INFORMATIONAL,
-    ),
-  );
-  lines.push(`Игнорируемых: ${report.ignorableCount}`);
   const failures = report.sourceHealth.filter(
     (health) => health.status === "failed",
   );
   if (failures.length > 0) {
-    lines.push("", "⚠️ Источники");
+    lines.push("⚠️ Источники");
     for (const failure of failures) {
       lines.push(
         `• ${failure.source}: ${failure.errorCode ?? "unified_inbox_source_failed"}`,
       );
     }
+    lines.push("");
   }
-  return truncateCodePoints(lines.join("\n").trim(), MAX_REPORT_CODE_POINTS);
+  if (report.deferredObservationCount > 0) {
+    lines.push(
+      `Отложено до следующего отчёта: ${report.deferredObservationCount}`,
+      "",
+    );
+  }
+
+  lines.push(
+    ...renderedSection(
+      "🚨 Срочно",
+      report.categories.urgent.map((item) => [itemLine(item)]),
+      SECTION_BUDGETS.urgent,
+      report.urgentCount,
+    ),
+  );
+  const replyGroups = report.categories.needsReply.map((item) => [
+    itemLine(item),
+  ]);
+  for (const draft of report.draftProposals) {
+    replyGroups.push([
+      `  Предложение ответа для ${draft.to}: ${truncateCodePoints(draft.body, 500)}`,
+    ]);
+  }
+  lines.push(
+    ...renderedSection(
+      "✉️ Нужен ответ",
+      replyGroups,
+      SECTION_BUDGETS.reply,
+      report.needsReplyCount + report.draftProposals.length,
+    ),
+  );
+
+  const meetingGroups = report.meetings.map((meeting) => {
+    const group = [
+      `• ${truncateCodePoints(meeting.title, 160)} — ${truncateCodePoints(meeting.summary, 500)} [${meeting.locators.slice(0, 2).join("; ")}]`,
+    ];
+    for (const point of meeting.preparationPoints.slice(0, 3)) {
+      group.push(`  Подготовить: ${truncateCodePoints(point, 250)}`);
+    }
+    for (const question of meeting.openQuestions.slice(0, 3)) {
+      group.push(`  Вопрос: ${truncateCodePoints(question, 250)}`);
+    }
+    return group;
+  });
+  lines.push(
+    ...renderedSection("📅 Встречи", meetingGroups, SECTION_BUDGETS.meetings),
+  );
+
+  lines.push(
+    ...renderedSection(
+      "ℹ️ Информация",
+      report.categories.informational.map((item) => [itemLine(item)]),
+      SECTION_BUDGETS.informational,
+      report.informationalCount,
+    ),
+  );
+  lines.push(`Игнорируемых: ${report.ignorableCount}`);
+  const text = lines.join("\n").trim();
+  if (codePointLength(text) > MAX_REPORT_CODE_POINTS) {
+    throw new Error("unified_inbox_report_render_overflow");
+  }
+  return text;
 }
 
 export function createPrivateInboxEnvelope(

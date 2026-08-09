@@ -279,3 +279,178 @@ test("invented model evidence is fatal and leaves lastReport unset", async (t) =
   );
   assert.equal((await loadInboxState(paths)).lastReport, null);
 });
+
+test("classifier input is capped deterministically and reports deferred observations", async (t) => {
+  const root = await temporaryRoot(t);
+  const items = Array.from({ length: 501 }, (_, index) =>
+    observation("gmail", `bulk-${index}`),
+  );
+  const bulkSource: InboxSource = {
+    source: "gmail",
+    async *collect({ cursors }) {
+      const base = cursors.gmail?.order ?? 0;
+      yield ObservationPageSchema.parse({
+        schemaVersion: 1,
+        source: "gmail",
+        sourceAccountId: "me",
+        cursor: { key: "gmail", value: String(base + 1), order: base + 1 },
+        observations: items.slice(0, 500),
+      });
+      yield ObservationPageSchema.parse({
+        schemaVersion: 1,
+        source: "gmail",
+        sourceAccountId: "me",
+        cursor: { key: "gmail", value: String(base + 2), order: base + 2 },
+        observations: items.slice(500),
+      });
+    },
+  };
+  let analyzedIds: string[] = [];
+  const result = await runUnifiedInbox({
+    paths: inboxStatePaths(root, "data", "7"),
+    ownerId: "7",
+    targetChatId: "7",
+    now,
+    sources: [bulkSource],
+    classifier: {
+      async analyze({ observations }) {
+        analyzedIds = observations.map((item) => item.id);
+        return InboxAnalysisSchema.parse({
+          schemaVersion: 1,
+          decisions: observations.map((item) => ({
+            observationId: item.id,
+            category: "informational",
+            rationale: "Bounded batch.",
+            evidenceIds: [item.id],
+          })),
+          meetingBriefs: [],
+          draftProposals: [],
+        });
+      },
+    },
+  });
+
+  assert.equal(analyzedIds.length, 500);
+  assert.equal(result.report.deferredObservationCount, 1);
+  assert.match(result.envelope.text, /Отложено до следующего отчёта: 1/u);
+  const deferredId = items.find((item) => !analyzedIds.includes(item.id))?.id;
+  assert.ok(deferredId);
+
+  await runUnifiedInbox({
+    paths: inboxStatePaths(root, "data", "7"),
+    ownerId: "7",
+    targetChatId: "7",
+    now,
+    sources: [bulkSource],
+    classifier: {
+      async analyze({ observations }) {
+        analyzedIds = observations.map((item) => item.id);
+        return InboxAnalysisSchema.parse({
+          schemaVersion: 1,
+          decisions: observations.map((item) => ({
+            observationId: item.id,
+            category: "informational",
+            rationale: "Bounded batch.",
+            evidenceIds: [item.id],
+          })),
+          meetingBriefs: [],
+          draftProposals: [],
+        });
+      },
+    },
+  });
+  assert.ok(analyzedIds.includes(deferredId));
+});
+
+test("Calendar reconciliation receives only stored events overlapping its snapshot", async (t) => {
+  const root = await temporaryRoot(t);
+  const paths = inboxStatePaths(root, "data", "7");
+  const timedEvent = (
+    externalId: string,
+    startsAt: string,
+    endsAt: string,
+  ): InboxObservation => {
+    const identity = {
+      source: "calendar" as const,
+      sourceAccountId: "primary",
+      externalId,
+    };
+    return InboxObservationSchema.parse({
+      ...calendar,
+      ...identity,
+      id: canonicalObservationId(identity),
+      occurredAt: startsAt,
+      startsAt,
+      endsAt,
+      evidence: {
+        source: "calendar",
+        externalId,
+        timestamp: startsAt,
+        locator: `calendar ${externalId}`,
+      },
+    });
+  };
+  const historical = timedEvent(
+    "historical",
+    "2026-08-07T10:00:00.000Z",
+    "2026-08-07T11:00:00.000Z",
+  );
+  const imminent = timedEvent(
+    "imminent",
+    "2026-08-09T10:00:00.000Z",
+    "2026-08-09T11:00:00.000Z",
+  );
+  const lowerBoundary = timedEvent(
+    "lower-boundary",
+    "2026-08-08T07:00:00.000Z",
+    "2026-08-08T08:00:00.000Z",
+  );
+  const upperBoundary = timedEvent(
+    "upper-boundary",
+    "2026-08-16T08:00:00.000Z",
+    "2026-08-16T09:00:00.000Z",
+  );
+  await runUnifiedInbox({
+    paths,
+    ownerId: "7",
+    targetChatId: "7",
+    now,
+    sources: [
+      {
+        source: "calendar",
+        async *collect() {
+          yield ObservationPageSchema.parse({
+            schemaVersion: 1,
+            source: "calendar",
+            sourceAccountId: "primary",
+            cursor: { key: "calendar", value: "1", order: 1 },
+            observations: [historical, lowerBoundary, imminent, upperBoundary],
+          });
+        },
+      },
+    ],
+    classifier: fixtureClassifier(),
+  });
+
+  let knownObservationIds: string[] = [];
+  await runUnifiedInbox({
+    paths,
+    ownerId: "7",
+    targetChatId: "7",
+    now,
+    sources: [
+      {
+        source: "calendar",
+        async *collect(input) {
+          knownObservationIds = input.knownObservationIds ?? [];
+        },
+      },
+    ],
+    classifier: fixtureClassifier(),
+  });
+
+  assert.deepEqual(knownObservationIds, [imminent.id]);
+  assert.ok((await loadInboxState(paths)).observations[historical.id]);
+  assert.ok((await loadInboxState(paths)).observations[lowerBoundary.id]);
+  assert.ok((await loadInboxState(paths)).observations[upperBoundary.id]);
+});

@@ -1,12 +1,14 @@
 import { createHash } from "node:crypto";
 
 import { validateInboxAnalysis } from "./classifier.ts";
+import { calendarCollectionWindow } from "./google-source.ts";
 import {
   EmptyRelationshipContextProvider,
   buildMeetingContexts,
 } from "./meeting-prep.ts";
 import { buildInboxReport, createPrivateInboxEnvelope } from "./report.ts";
 import {
+  countReportingObservations,
   loadInboxState,
   recordClassifications,
   pruneInboxState,
@@ -106,9 +108,25 @@ export async function runUnifiedInbox({
     for (const source of sources) {
       let sourceCollected = 0;
       try {
+        const calendarWindow = calendarCollectionWindow(now);
         for await (const page of source.collect({
           cursors: state.cursors,
           now: now.toISOString(),
+          knownObservationIds:
+            source.source === "calendar"
+              ? Object.values(state.observations)
+                  .filter(
+                    (observation) =>
+                      observation.source === "calendar" &&
+                      Date.parse(observation.endsAt ?? observation.occurredAt) >
+                        calendarWindow.start &&
+                      Date.parse(
+                        observation.startsAt ?? observation.occurredAt,
+                      ) < calendarWindow.end,
+                  )
+                  .map((observation) => observation.id)
+                  .slice(0, 10_000)
+              : [],
         })) {
           const priorFingerprints = new Set(state.processedFingerprints);
           const newPageFingerprints = new Set(
@@ -116,7 +134,7 @@ export async function runUnifiedInbox({
               .map((observation) => observationFingerprint(observation))
               .filter((fingerprint) => !priorFingerprints.has(fingerprint)),
           );
-          state = reduceObservationPage(state, page, now);
+          state = pruneInboxState(reduceObservationPage(state, page, now), now);
           await saveInboxState(paths, state);
           sourceCollected += newPageFingerprints.size;
           newObservations += newPageFingerprints.size;
@@ -143,6 +161,10 @@ export async function runUnifiedInbox({
     }
 
     const observations = selectReportingObservations(state, now);
+    const deferredObservationCount = Math.max(
+      0,
+      countReportingObservations(state, now) - observations.length,
+    );
     const meetings = await buildMeetingContexts(
       observations,
       relationships,
@@ -159,6 +181,7 @@ export async function runUnifiedInbox({
       analysis,
       sourceHealth,
       now,
+      deferredObservationCount,
     );
     const envelope = createPrivateInboxEnvelope(report, ownerId, targetChatId);
     state = recordClassifications(

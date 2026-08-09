@@ -20,6 +20,18 @@ const GMAIL_FIRST_RUN_MS = 7 * 24 * 60 * 60 * 1_000;
 const CALENDAR_LOOKBACK_MS = 24 * 60 * 60 * 1_000;
 const CALENDAR_LOOKAHEAD_MS = 7 * 24 * 60 * 60 * 1_000;
 
+export function calendarCollectionWindow(now: Date): {
+  start: number;
+  end: number;
+} {
+  const nowMs = now.getTime();
+  if (!Number.isFinite(nowMs)) throw new TypeError("invalid Calendar window");
+  return {
+    start: nowMs - CALENDAR_LOOKBACK_MS,
+    end: nowMs + CALENDAR_LOOKAHEAD_MS,
+  };
+}
+
 export interface GwsResult {
   stdout: string;
   stderr: string;
@@ -157,50 +169,60 @@ const CalendarDateTimeSchema = z
   .refine(
     (value) => (value.date === undefined) !== (value.dateTime === undefined),
   );
-const CalendarEventSchema = z.strictObject({
-  kind: z.string().max(200).optional(),
-  etag: z.string().min(1).max(1_000).optional(),
-  id: z.string().min(1).max(1_000),
-  status: z.string().max(100).optional(),
-  htmlLink: z.string().url().max(2_000).optional(),
-  created: z.iso.datetime({ offset: true }).optional(),
-  updated: z.iso.datetime({ offset: true }),
-  summary: z.string().max(2_000).optional(),
-  description: z.string().max(20_000).optional(),
-  location: z.string().max(2_000).optional(),
-  colorId: z.string().max(100).optional(),
-  creator: GooglePersonSchema.optional(),
-  organizer: GooglePersonSchema.optional(),
-  start: CalendarDateTimeSchema,
-  end: CalendarDateTimeSchema,
-  endTimeUnspecified: z.boolean().optional(),
-  recurrence: z.array(z.string().max(2_000)).max(100).optional(),
-  recurringEventId: z.string().max(1_000).optional(),
-  originalStartTime: CalendarDateTimeSchema.optional(),
-  transparency: z.string().max(100).optional(),
-  visibility: z.string().max(100).optional(),
-  iCalUID: z.string().max(1_000).optional(),
-  sequence: z.int().nonnegative().optional(),
-  attendees: z.array(CalendarAttendeeSchema).max(500).optional(),
-  attendeesOmitted: z.boolean().optional(),
-  extendedProperties: z.unknown().optional(),
-  hangoutLink: z.string().url().max(2_000).optional(),
-  conferenceData: z.unknown().optional(),
-  gadget: z.unknown().optional(),
-  anyoneCanAddSelf: z.boolean().optional(),
-  guestsCanInviteOthers: z.boolean().optional(),
-  guestsCanModify: z.boolean().optional(),
-  guestsCanSeeOtherGuests: z.boolean().optional(),
-  privateCopy: z.boolean().optional(),
-  locked: z.boolean().optional(),
-  reminders: z.unknown().optional(),
-  source: z.unknown().optional(),
-  workingLocationProperties: z.unknown().optional(),
-  outOfOfficeProperties: z.unknown().optional(),
-  focusTimeProperties: z.unknown().optional(),
-  birthdayProperties: z.unknown().optional(),
-  eventType: z.string().max(100).optional(),
-});
+const CalendarEventSchema = z
+  .strictObject({
+    kind: z.string().max(200).optional(),
+    etag: z.string().min(1).max(1_000).optional(),
+    id: z.string().min(1).max(1_000),
+    status: z.string().max(100).optional(),
+    htmlLink: z.string().url().max(2_000).optional(),
+    created: z.iso.datetime({ offset: true }).optional(),
+    updated: z.iso.datetime({ offset: true }),
+    summary: z.string().max(2_000).optional(),
+    description: z.string().max(20_000).optional(),
+    location: z.string().max(2_000).optional(),
+    colorId: z.string().max(100).optional(),
+    creator: GooglePersonSchema.optional(),
+    organizer: GooglePersonSchema.optional(),
+    start: CalendarDateTimeSchema.optional(),
+    end: CalendarDateTimeSchema.optional(),
+    endTimeUnspecified: z.boolean().optional(),
+    recurrence: z.array(z.string().max(2_000)).max(100).optional(),
+    recurringEventId: z.string().max(1_000).optional(),
+    originalStartTime: CalendarDateTimeSchema.optional(),
+    transparency: z.string().max(100).optional(),
+    visibility: z.string().max(100).optional(),
+    iCalUID: z.string().max(1_000).optional(),
+    sequence: z.int().nonnegative().optional(),
+    attendees: z.array(CalendarAttendeeSchema).max(500).optional(),
+    attendeesOmitted: z.boolean().optional(),
+    extendedProperties: z.unknown().optional(),
+    hangoutLink: z.string().url().max(2_000).optional(),
+    conferenceData: z.unknown().optional(),
+    gadget: z.unknown().optional(),
+    anyoneCanAddSelf: z.boolean().optional(),
+    guestsCanInviteOthers: z.boolean().optional(),
+    guestsCanModify: z.boolean().optional(),
+    guestsCanSeeOtherGuests: z.boolean().optional(),
+    privateCopy: z.boolean().optional(),
+    locked: z.boolean().optional(),
+    reminders: z.unknown().optional(),
+    source: z.unknown().optional(),
+    workingLocationProperties: z.unknown().optional(),
+    outOfOfficeProperties: z.unknown().optional(),
+    focusTimeProperties: z.unknown().optional(),
+    birthdayProperties: z.unknown().optional(),
+    eventType: z.string().max(100).optional(),
+  })
+  .superRefine((event, context) => {
+    if (event.status !== "cancelled" && (!event.start || !event.end)) {
+      context.addIssue({
+        code: "custom",
+        message: "active Calendar event requires start and end",
+        path: ["start"],
+      });
+    }
+  });
 const CalendarListSchema = z.strictObject({
   kind: z.string().max(200).optional(),
   etag: z.string().max(1_000).optional(),
@@ -350,9 +372,11 @@ export function createGmailInboxSource({
       const queryAfterMs = prior
         ? Math.max(0, prior.order - GMAIL_OVERLAP_MS)
         : Math.max(0, nowMs - GMAIL_FIRST_RUN_MS);
+      const safeWatermark = prior?.order ?? queryAfterMs;
+      const safeValue = prior?.value ?? String(safeWatermark);
       let pageToken: string | undefined;
       const seenTokens = new Set<string>();
-      let highWatermark = prior?.order ?? 0;
+      let highWatermark = safeWatermark;
       do {
         const params = {
           userId: sourceAccountId,
@@ -395,20 +419,27 @@ export function createGmailInboxSource({
           observations.push(normalized);
           highWatermark = Math.max(highWatermark, Number(message.internalDate));
         }
-        if (observations.length > 0) {
+        const nextPageToken = list.nextPageToken;
+        const shouldAdvance =
+          nextPageToken === undefined && highWatermark > safeWatermark;
+        if (observations.length > 0 || shouldAdvance) {
+          const cursorOrder =
+            nextPageToken === undefined ? highWatermark : safeWatermark;
+          const cursorValue =
+            cursorOrder === safeWatermark ? safeValue : String(highWatermark);
           yield ObservationPageSchema.parse({
             schemaVersion: 1,
             source: "gmail",
             sourceAccountId,
             cursor: {
               key: "gmail",
-              value: String(highWatermark),
-              order: highWatermark,
+              value: cursorValue,
+              order: cursorOrder,
             },
             observations,
           });
         }
-        pageToken = list.nextPageToken;
+        pageToken = nextPageToken;
         if (pageToken) {
           if (seenTokens.has(pageToken)) {
             throw new Error("unified_inbox_google_response_invalid");
@@ -443,6 +474,9 @@ function normalizeCalendarEvent(
   sourceAccountId: string,
   event: z.infer<typeof CalendarEventSchema>,
 ): InboxObservation {
+  if (!event.start || !event.end) {
+    throw new Error("unified_inbox_google_response_invalid");
+  }
   const startsAt = calendarTimestamp(event.start);
   const endsAt = calendarTimestamp(event.end);
   const identity = {
@@ -460,8 +494,9 @@ function normalizeCalendarEvent(
     updatedAt: event.updated,
     title: truncateCodePoints(event.summary || "(untitled event)", 500),
     excerpt: truncateCodePoints(event.description || "", 4_000),
-    actor: googlePerson(event.organizer),
+    actor: event.organizer?.self ? undefined : googlePerson(event.organizer),
     participants: (event.attendees ?? [])
+      .filter((attendee) => attendee.self !== true)
       .map(googlePerson)
       .filter((party): party is InboxParty => party !== undefined)
       .slice(0, 100),
@@ -494,18 +529,21 @@ export function createCalendarInboxSource({
     async *collect(rawInput) {
       const input = CollectSourceInputSchema.parse(rawInput);
       const nowMs = Date.parse(input.now);
+      const window = calendarCollectionWindow(new Date(nowMs));
       const prior = input.cursors.calendar;
       let pageToken: string | undefined;
       const seenTokens = new Set<string>();
+      const seenObservationIds = new Set<string>();
       let highWatermark = prior?.order ?? 0;
       do {
         const params = {
           calendarId: sourceAccountId,
-          timeMin: new Date(nowMs - CALENDAR_LOOKBACK_MS).toISOString(),
-          timeMax: new Date(nowMs + CALENDAR_LOOKAHEAD_MS).toISOString(),
+          timeMin: new Date(window.start).toISOString(),
+          timeMax: new Date(window.end).toISOString(),
           singleEvents: true,
+          showDeleted: true,
           orderBy: "startTime",
-          maxResults: 2500,
+          maxResults: 500,
           ...(pageToken ? { pageToken } : {}),
         };
         const list = parseResult(
@@ -518,10 +556,28 @@ export function createCalendarInboxSource({
           ]),
           CalendarListSchema,
         );
-        const observations = (list.items ?? []).map((event) =>
-          normalizeCalendarEvent(sourceAccountId, event),
-        );
-        if (observations.length > 0) {
+        const observations = (list.items ?? [])
+          .filter((event) => event.status !== "cancelled")
+          .map((event) => normalizeCalendarEvent(sourceAccountId, event));
+        for (const event of list.items ?? []) {
+          seenObservationIds.add(
+            canonicalObservationId({
+              source: "calendar",
+              sourceAccountId,
+              externalId: event.id,
+            }),
+          );
+        }
+        const removedObservationIds = (list.items ?? [])
+          .filter((event) => event.status === "cancelled")
+          .map((event) =>
+            canonicalObservationId({
+              source: "calendar",
+              sourceAccountId,
+              externalId: event.id,
+            }),
+          );
+        if (observations.length > 0 || removedObservationIds.length > 0) {
           highWatermark = Math.max(
             highWatermark,
             ...(list.items ?? []).map((event) => Date.parse(event.updated)),
@@ -536,7 +592,35 @@ export function createCalendarInboxSource({
             sourceAccountId,
             cursor: { key: "calendar", value, order: highWatermark },
             observations,
+            removedObservationIds,
           });
+        }
+        const isFinalPage = list.nextPageToken === undefined;
+        if (isFinalPage) {
+          const missingObservationIds = input.knownObservationIds.filter(
+            (observationId) => !seenObservationIds.has(observationId),
+          );
+          for (
+            let index = 0;
+            index < missingObservationIds.length;
+            index += 500
+          ) {
+            const value =
+              prior && prior.order === highWatermark
+                ? prior.value
+                : new Date(highWatermark).toISOString();
+            yield ObservationPageSchema.parse({
+              schemaVersion: 1,
+              source: "calendar",
+              sourceAccountId,
+              cursor: { key: "calendar", value, order: highWatermark },
+              observations: [],
+              removedObservationIds: missingObservationIds.slice(
+                index,
+                index + 500,
+              ),
+            });
+          }
         }
         pageToken = list.nextPageToken;
         if (pageToken) {

@@ -183,6 +183,7 @@ export const ObservationPageSchema = z
     sourceAccountId: BoundedIdentifierSchema,
     cursor: SourceCursorSchema,
     observations: z.array(InboxObservationSchema).max(500),
+    removedObservationIds: z.array(ObservationIdSchema).max(500).default([]),
   })
   .superRefine((page, context) => {
     if (!cursorMatchesSource(page.source, page.cursor.key)) {
@@ -204,14 +205,24 @@ export const ObservationPageSchema = z
         });
       }
     }
+    for (const [index, observationId] of page.removedObservationIds.entries()) {
+      if (!observationId.startsWith(`${page.source}:`)) {
+        context.addIssue({
+          code: "custom",
+          message: "removed observation does not match page source",
+          path: ["removedObservationIds", index],
+        });
+      }
+    }
   });
 export type ObservationPage = z.infer<typeof ObservationPageSchema>;
 
 export const CollectSourceInputSchema = z.strictObject({
   cursors: z.record(z.string(), SourceCursorSchema),
   now: TimestampSchema,
+  knownObservationIds: z.array(ObservationIdSchema).max(10_000).default([]),
 });
-export type CollectSourceInput = z.infer<typeof CollectSourceInputSchema>;
+export type CollectSourceInput = z.input<typeof CollectSourceInputSchema>;
 
 export interface InboxSource {
   readonly source: InboxSourceName;
@@ -344,6 +355,7 @@ export const SourceRunHealthSchema = z.strictObject({
   errorCode: z
     .string()
     .regex(/^[a-z0-9_]+$/u)
+    .max(200)
     .nullable(),
 });
 export type SourceRunHealth = z.infer<typeof SourceRunHealthSchema>;
@@ -373,8 +385,11 @@ export const InboxReportSchema = z.strictObject({
   }),
   meetings: z.array(InboxReportMeetingSchema).max(100),
   draftProposals: z.array(GmailDraftProposalSchema).max(100),
+  urgentCount: z.int().nonnegative(),
+  needsReplyCount: z.int().nonnegative(),
   informationalCount: z.int().nonnegative(),
   ignorableCount: z.int().nonnegative(),
+  deferredObservationCount: z.int().nonnegative(),
   sourceHealth: z.array(SourceRunHealthSchema).max(3),
   partial: z.boolean(),
 });

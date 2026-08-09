@@ -9,10 +9,11 @@ import {
   type GwsResult,
   type GwsRunner,
 } from "./google-source.ts";
-import type {
-  CollectSourceInput,
-  InboxSource,
-  ObservationPage,
+import {
+  canonicalObservationId,
+  type CollectSourceInput,
+  type InboxSource,
+  type ObservationPage,
 } from "./types.ts";
 
 const now = "2026-08-09T08:00:00.000Z";
@@ -20,9 +21,15 @@ const now = "2026-08-09T08:00:00.000Z";
 async function collect(
   source: InboxSource,
   cursors: CollectSourceInput["cursors"] = {},
+  knownObservationIds: CollectSourceInput["knownObservationIds"] = [],
 ): Promise<ObservationPage[]> {
   const pages: ObservationPage[] = [];
-  for await (const page of source.collect({ cursors, now })) pages.push(page);
+  for await (const page of source.collect({
+    cursors,
+    now,
+    knownObservationIds,
+  }))
+    pages.push(page);
   return pages;
 }
 
@@ -145,10 +152,17 @@ test("Google pagination carries a monotonic watermark across older pages", async
   };
   const gmailPages = await collect(
     createGmailInboxSource({ runner: gmailRunner }),
+    {
+      gmail: {
+        key: "gmail",
+        value: "1723181300000",
+        order: 1723181300000,
+      },
+    },
   );
   assert.deepEqual(
     gmailPages.map((page) => page.cursor.order),
-    [1723181500000, 1723181500000],
+    [1723181300000, 1723181500000],
   );
 
   let calendarPage = 0;
@@ -179,6 +193,46 @@ test("Google pagination carries a monotonic watermark across older pages", async
   );
 });
 
+test("a failed later Gmail page leaves the retry-safe cursor unchanged", async () => {
+  let listPage = 0;
+  const runner: GwsRunner = async (args) => {
+    if (args[3] === "get") {
+      return jsonResult({
+        id: "m-new",
+        threadId: "thread-new",
+        internalDate: "1723181500000",
+        payload: { headers: [] },
+      });
+    }
+    listPage += 1;
+    return listPage === 1
+      ? jsonResult({
+          messages: [{ id: "m-new" }],
+          nextPageToken: "page-2",
+        })
+      : { stdout: "", stderr: "secret", exitCode: 1 };
+  };
+  const source = createGmailInboxSource({ runner });
+  const emitted: ObservationPage[] = [];
+  await assert.rejects(async () => {
+    for await (const page of source.collect({
+      cursors: {
+        gmail: {
+          key: "gmail",
+          value: "1723181300000",
+          order: 1723181300000,
+        },
+      },
+      now,
+    })) {
+      emitted.push(page);
+    }
+  }, /unified_inbox_google_command_failed/u);
+
+  assert.equal(emitted.length, 1);
+  assert.equal(emitted[0]?.cursor.order, 1723181300000);
+});
+
 test("Calendar lists a bounded window and normalizes event revisions", async () => {
   const calls: string[][] = [];
   const runner: GwsRunner = async (args) => {
@@ -203,6 +257,7 @@ test("Calendar lists a bounded window and normalizes event revisions", async () 
             {
               email: "owner@example.com",
               displayName: "Owner",
+              self: true,
               responseStatus: "accepted",
             },
           ],
@@ -232,12 +287,87 @@ test("Calendar lists a bounded window and normalizes event revisions", async () 
   assert.equal(params.calendarId, "primary");
   assert.equal(params.singleEvents, true);
   assert.equal(params.orderBy, "startTime");
+  assert.equal(params.showDeleted, true);
   assert.equal(params.timeMin, "2026-08-08T08:00:00.000Z");
   assert.equal(params.timeMax, "2026-08-16T08:00:00.000Z");
   assert.equal("updatedMin" in params, false);
   assert.equal(pages[0]?.cursor.value, "2026-08-09T07:00:00.000Z");
   assert.equal(pages[0]?.observations[0]?.startsAt, "2026-08-09T10:00:00.000Z");
   assert.equal(pages[0]?.observations[0]?.revision, '"rev-3"');
+  assert.deepEqual(pages[0]?.observations[0]?.participants, []);
+});
+
+test("cancelled Calendar events become read-only removal tombstones", async () => {
+  const pages = await collect(
+    createCalendarInboxSource({
+      runner: async () =>
+        jsonResult({
+          items: [
+            {
+              id: "event-cancelled",
+              status: "cancelled",
+              updated: "2026-08-09T07:30:00.000Z",
+            },
+          ],
+        }),
+    }),
+  );
+  const identity = {
+    source: "calendar" as const,
+    sourceAccountId: "primary",
+    externalId: "event-cancelled",
+  };
+
+  assert.deepEqual(pages[0]?.observations, []);
+  assert.deepEqual(pages[0]?.removedObservationIds, [
+    canonicalObservationId(identity),
+  ]);
+});
+
+test("Calendar snapshot removes a stored event that left the bounded window", async () => {
+  const oldIdentity = {
+    source: "calendar" as const,
+    sourceAccountId: "primary",
+    externalId: "event-rescheduled-beyond-window",
+  };
+  const oldObservationId = canonicalObservationId(oldIdentity);
+  const pages = await collect(
+    createCalendarInboxSource({
+      runner: async () => jsonResult({ items: [] }),
+    }),
+    {},
+    [oldObservationId],
+  );
+
+  assert.equal(pages.length, 1);
+  assert.deepEqual(pages[0]?.observations, []);
+  assert.deepEqual(pages[0]?.removedObservationIds, [oldObservationId]);
+});
+
+test("Calendar snapshot emits missing tombstones in bounded pages", async () => {
+  const knownObservationIds = Array.from({ length: 501 }, (_, index) =>
+    canonicalObservationId({
+      source: "calendar",
+      sourceAccountId: "primary",
+      externalId: `missing-${index}`,
+    }),
+  );
+  const pages = await collect(
+    createCalendarInboxSource({
+      runner: async () => jsonResult({ items: [] }),
+    }),
+    {},
+    knownObservationIds,
+  );
+
+  assert.deepEqual(
+    pages.map((page) => page.removedObservationIds.length),
+    [500, 1],
+  );
+  assert.deepEqual(
+    pages.flatMap((page) => page.removedObservationIds),
+    knownObservationIds,
+  );
 });
 
 test("Google runner allowlist has no Gmail send, mutation, Calendar insert, or Tasks surface", () => {

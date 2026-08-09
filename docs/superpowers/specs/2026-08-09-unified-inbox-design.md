@@ -130,8 +130,10 @@ Overlapping retries are therefore idempotent. Invalid persisted state is quarant
 closed rather than being silently overwritten.
 
 Retention is deterministic: expired ignorable/informational observations are pruned by their
-source timestamp, while actionable observations and evidence needed by the current reporting
-window remain. No deletion is based on filesystem mtime.
+source timestamp, and expired observations that never entered the reporting window are pruned in
+the same page commit. Actionable observations and evidence needed by the current reporting window
+remain. No deletion is based on filesystem mtime. The pipeline lock refreshes its lease while
+provider and model calls are in flight so another run cannot reclaim a live lock.
 
 ## Source Adapters
 
@@ -153,8 +155,10 @@ The adapter invokes `gws` without a shell. It supports only these fixed read ope
 - get the metadata and bounded body excerpt for returned message IDs.
 
 The cursor is based on provider timestamps/history metadata carried by validated pages. Queries
-overlap the previous boundary, and canonical message IDs deduplicate replayed results. No send,
-reply, delete, modify, trash, label mutation, or mark-read operation is present in the adapter.
+overlap the previous boundary. Intermediate provider pages keep the retry-safe starting watermark;
+only the final page advances it, so a later-page failure cannot skip older messages. Canonical
+message IDs deduplicate replayed results. No send, reply, delete, modify, trash, label mutation, or
+mark-read operation is present in the adapter.
 
 Reply proposals are internal structured data. A future explicit Gmail draft writer can consume
 them, but is not part of automatic pipeline execution.
@@ -162,8 +166,10 @@ them, but is not part of automatic pipeline execution.
 ### Calendar
 
 The adapter invokes only Calendar event listing for a bounded look-back and look-ahead window. It
-does not insert, update, delete, invite, or respond to events. Event revisions produce stable
-canonical identities, while overlapping windows make changed events visible without duplicates.
+requests deleted events and emits local removal tombstones for cancelled event IDs without making
+any Calendar mutation. It does not insert, update, delete, invite, or respond to events. Event
+revisions produce stable canonical identities, while overlapping windows make changed events
+visible without duplicates.
 
 ## Pipeline Flow
 
@@ -171,7 +177,9 @@ canonical identities, while overlapping windows make changed events visible with
 2. Acquire the account-scoped pipeline lock and load validated state.
 3. Collect each source incrementally through its adapter.
 4. Validate, normalize, and atomically reduce each source page before advancing its cursor.
-5. Select the current reporting window and pass only bounded observations to the classifier.
+5. Select at most 500 observations from the current reporting window, prioritizing previously
+   actionable records and Calendar context before the newest remaining records. Report how many
+   observations were deferred instead of passing an unbounded classifier input.
 6. Validate classification evidence and build Gmail reply proposals.
 7. Build briefs for upcoming meetings, consulting the optional relationship provider.
 8. Render a compact report and create a delivery envelope whose target equals the owner ID and whose

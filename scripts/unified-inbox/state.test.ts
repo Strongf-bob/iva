@@ -8,6 +8,7 @@ import {
   readdir,
   rm,
   symlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -136,6 +137,28 @@ test("a new revision replaces the stable observation and keeps both fingerprints
   assert.equal(state.cursors.gmail?.order, 101);
 });
 
+test("source tombstones remove observations and their classifications atomically", async (t) => {
+  const root = await temporaryRoot(t);
+  const paths = inboxStatePaths(root, "data", "7");
+  let state = reduceObservationPage(await loadInboxState(paths), page());
+  state = recordClassifications(state, { [observation().id]: "urgent" });
+  state = reduceObservationPage(
+    state,
+    ObservationPageSchema.parse({
+      schemaVersion: 1,
+      source: "gmail",
+      sourceAccountId: "me",
+      cursor: { key: "gmail", value: "101", order: 101 },
+      observations: [],
+      removedObservationIds: [observation().id],
+    }),
+  );
+
+  assert.equal(state.observations[observation().id], undefined);
+  assert.equal(state.classifications[observation().id], undefined);
+  assert.equal(state.cursors.gmail?.order, 101);
+});
+
 test("cursor regression fails before the persisted state is overwritten", async (t) => {
   const root = await temporaryRoot(t);
   const paths = inboxStatePaths(root, "data", "7");
@@ -183,6 +206,16 @@ test("state directories reject existing symbolic links", async (t) => {
   await assert.rejects(() => loadInboxState(paths), /symbolic link/u);
 });
 
+test("state paths reject symbolic links in relative data-dir components", async (t) => {
+  const root = await temporaryRoot(t);
+  const outside = join(root, "outside");
+  await mkdir(outside);
+  await symlink(outside, join(root, "linked-data"));
+  const paths = inboxStatePaths(root, "linked-data/inbox-data", "7");
+
+  await assert.rejects(() => loadInboxState(paths), /symbolic link/u);
+});
+
 test("pipeline lock serializes concurrent state operations", async (t) => {
   const root = await temporaryRoot(t);
   const paths = inboxStatePaths(root, "data", "7");
@@ -207,6 +240,22 @@ test("pipeline lock serializes concurrent state operations", async (t) => {
   releaseFirst();
   await Promise.all([first, second]);
   assert.deepEqual(events, ["first:start", "first:end", "second"]);
+});
+
+test("pipeline lock refreshes its lease during long asynchronous work", async (t) => {
+  const root = await temporaryRoot(t);
+  const paths = inboxStatePaths(root, "data", "7");
+  const stale = new Date(Date.now() - 60_000);
+
+  await withInboxLock(
+    paths,
+    async () => {
+      await utimes(paths.lockFile, stale, stale);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      assert.ok((await lstat(paths.lockFile)).mtimeMs > stale.getTime());
+    },
+    10,
+  );
 });
 
 test("reporting selection is timestamp based and source failures are sanitized", async (t) => {
@@ -234,6 +283,75 @@ test("reporting selection is timestamp based and source failures are sanitized",
   assert.equal(
     JSON.stringify(state.sourceHealth).includes("alice@example.com"),
     false,
+  );
+});
+
+test("unclassified observations cannot be starved by retained actionable records", async (t) => {
+  const root = await temporaryRoot(t);
+  const paths = inboxStatePaths(root, "data", "7");
+  const makeItem = (externalId: string): InboxObservation => {
+    const identity = {
+      source: "gmail" as const,
+      sourceAccountId: "me",
+      externalId,
+    };
+    return InboxObservationSchema.parse({
+      ...observation(),
+      ...identity,
+      id: canonicalObservationId(identity),
+      evidence: {
+        source: "gmail",
+        externalId,
+        timestamp: occurredAt,
+        locator: `Gmail message ${externalId}`,
+      },
+    });
+  };
+  const actionable = Array.from({ length: 500 }, (_, index) =>
+    makeItem(`actionable-${index}`),
+  );
+  const fresh = Array.from({ length: 500 }, (_, index) =>
+    makeItem(`fresh-unclassified-${index}`),
+  );
+  let state = reduceObservationPage(
+    await loadInboxState(paths),
+    ObservationPageSchema.parse({
+      schemaVersion: 1,
+      source: "gmail",
+      sourceAccountId: "me",
+      cursor: { key: "gmail", value: "1", order: 1 },
+      observations: actionable,
+    }),
+  );
+  state = recordClassifications(
+    state,
+    Object.fromEntries(actionable.map((item) => [item.id, "urgent"])),
+  );
+  state = reduceObservationPage(
+    state,
+    ObservationPageSchema.parse({
+      schemaVersion: 1,
+      source: "gmail",
+      sourceAccountId: "me",
+      cursor: { key: "gmail", value: "2", order: 2 },
+      observations: fresh,
+    }),
+  );
+
+  const selected = selectReportingObservations(state, new Date(occurredAt));
+  assert.equal(
+    selected.filter((item) => state.classifications[item.id] === "urgent")
+      .length,
+    400,
+  );
+  assert.deepEqual(
+    selected
+      .filter((item) => state.classifications[item.id] === undefined)
+      .map((item) => item.id),
+    fresh
+      .map((item) => item.id)
+      .sort()
+      .slice(0, 100),
   );
 });
 
@@ -265,12 +383,21 @@ test("retention prunes expired non-actionable observations by source timestamp",
   };
   const oldInfo = makeObservation("old-info", "2026-07-01T00:00:00.000Z");
   const oldUrgent = makeObservation("old-urgent", "2026-07-01T00:00:00.000Z");
+  const oldUnclassified = makeObservation(
+    "old-unclassified",
+    "2026-07-01T00:00:00.000Z",
+  );
   const recentIgnore = makeObservation(
     "recent-ignore",
     "2026-08-31T00:00:00.000Z",
   );
   let state = await loadInboxState(paths);
-  for (const [order, item] of [oldInfo, oldUrgent, recentIgnore].entries()) {
+  for (const [order, item] of [
+    oldInfo,
+    oldUrgent,
+    oldUnclassified,
+    recentIgnore,
+  ].entries()) {
     state = reduceObservationPage(state, page(order + 1, item));
   }
   state = recordClassifications(state, {
@@ -283,7 +410,8 @@ test("retention prunes expired non-actionable observations by source timestamp",
 
   assert.equal(pruned.observations[oldInfo.id], undefined);
   assert.equal(pruned.classifications[oldInfo.id], undefined);
+  assert.equal(pruned.observations[oldUnclassified.id], undefined);
   assert.equal(pruned.observations[oldUrgent.id]?.id, oldUrgent.id);
   assert.equal(pruned.observations[recentIgnore.id]?.id, recentIgnore.id);
-  assert.equal(pruned.processedFingerprints.length, 3);
+  assert.equal(pruned.processedFingerprints.length, 4);
 });

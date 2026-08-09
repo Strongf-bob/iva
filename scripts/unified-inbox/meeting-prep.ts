@@ -10,6 +10,7 @@ import {
 } from "./types.ts";
 
 const PREPARATION_HORIZON_MS = 48 * 60 * 60 * 1_000;
+const MAX_MEETING_CONTEXTS = 100;
 
 export class EmptyRelationshipContextProvider implements RelationshipContextProvider {
   lookup(): Promise<RelationshipContext[]> {
@@ -48,7 +49,8 @@ function upcomingEvents(
         Date.parse(left.startsAt ?? left.occurredAt) -
           Date.parse(right.startsAt ?? right.occurredAt) ||
         left.id.localeCompare(right.id),
-    );
+    )
+    .slice(0, MAX_MEETING_CONTEXTS);
 }
 
 export async function buildMeetingContexts(
@@ -65,7 +67,7 @@ export async function buildMeetingContexts(
   const contexts: MeetingContext[] = [];
 
   for (const event of upcomingEvents(observations, now)) {
-    const participantKeys = partyKeys(event);
+    const participantKeys = partyKeys(event).slice(0, 100);
     const participantSet = new Set(participantKeys);
     const directlyRelated = observations
       .filter(
@@ -78,9 +80,9 @@ export async function buildMeetingContexts(
       eventObservationId: event.id,
       participantKeys,
     });
-    const relationshipContext = (await relationships.lookup(lookup)).map(
-      (context) => RelationshipContextSchema.parse(context),
-    );
+    const relationshipContext = (await relationships.lookup(lookup))
+      .slice(0, 100)
+      .map((context) => RelationshipContextSchema.parse(context));
     const relationshipEvidence = relationshipContext.flatMap(
       (context) => context.evidenceObservationIds,
     );
@@ -91,7 +93,7 @@ export async function buildMeetingContexts(
     }
     const relatedObservationIds = [
       ...new Set([...directlyRelated, ...relationshipEvidence]),
-    ];
+    ].slice(0, 200);
     contexts.push(
       MeetingContextSchema.parse({
         eventObservationId: event.id,

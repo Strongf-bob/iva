@@ -21,8 +21,11 @@ function result(partial = false): UnifiedInboxResult {
     categories: { urgent: [], needsReply: [], informational: [] },
     meetings: [],
     draftProposals: [],
+    urgentCount: 0,
+    needsReplyCount: 0,
     informationalCount: 0,
     ignorableCount: 0,
+    deferredObservationCount: 0,
     sourceHealth: partial
       ? [
           {
