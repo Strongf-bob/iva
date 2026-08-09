@@ -249,6 +249,50 @@ void test("an expired commitment action cannot authorize a Google Task", (t) => 
   store.close();
 });
 
+void test("a stable suggestion in a new report gets a fresh action and current payload", (t) => {
+  const store = ProactiveStore.open(root(t));
+  const [oldAction] = store.createCommitmentActions({
+    ownerId: "101",
+    reportVersionId: 9,
+    suggestions: [suggestion],
+    tokenSecret: "s".repeat(32),
+    nowMs: 1_000,
+    expiresAt: 2_000,
+  });
+  const [freshAction] = store.createCommitmentActions({
+    ownerId: "101",
+    reportVersionId: 10,
+    suggestions: [{ ...suggestion, title: "Updated commitment" }],
+    tokenSecret: "s".repeat(32),
+    nowMs: 3_000,
+    expiresAt: 5_000,
+  });
+  assert.notEqual(freshAction.token, oldAction.token);
+  assert.equal(
+    store.decideCommitment({
+      token: oldAction.token,
+      ownerId: "101",
+      decision: "confirmed",
+      nowMs: 3_500,
+    }).status,
+    "rejected",
+  );
+  assert.equal(
+    store.decideCommitment({
+      token: freshAction.token,
+      ownerId: "101",
+      decision: "confirmed",
+      nowMs: 3_500,
+    }).status,
+    "accepted",
+  );
+  assert.equal(
+    store.claimConfirmedCommitment(3_600)?.suggestion.title,
+    "Updated commitment",
+  );
+  store.close();
+});
+
 void test("dismissed commitments never become task work", (t) => {
   const store = ProactiveStore.open(root(t));
   const [action] = store.createCommitmentActions({

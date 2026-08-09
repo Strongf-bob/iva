@@ -248,7 +248,7 @@ export class ProactiveStore {
         task_receipt TEXT,
         task_error_code TEXT,
         expires_at INTEGER NOT NULL,
-        UNIQUE (owner_id, suggestion_id)
+        UNIQUE (owner_id, suggestion_id, report_version_id)
       ) STRICT;
     `);
     const actionColumns = [
@@ -258,6 +258,52 @@ export class ProactiveStore {
       this.database.exec(
         "ALTER TABLE commitment_actions ADD COLUMN expires_at INTEGER; UPDATE commitment_actions SET expires_at = 0 WHERE expires_at IS NULL",
       );
+    }
+    const actionTable = rowFrom(
+      this.database.prepare(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'commitment_actions'",
+      ),
+    );
+    const actionSql = actionTable ? stringValue(actionTable.sql) : "";
+    if (
+      actionSql.includes("UNIQUE (owner_id, suggestion_id)") &&
+      !actionSql.includes("UNIQUE (owner_id, suggestion_id, report_version_id)")
+    ) {
+      this.database.exec(`
+        BEGIN IMMEDIATE;
+        CREATE TABLE commitment_actions_v2 (
+          token_hash TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL,
+          suggestion_id TEXT NOT NULL,
+          suggestion_json TEXT NOT NULL,
+          report_version_id INTEGER NOT NULL,
+          decision TEXT NOT NULL DEFAULT 'pending',
+          decided_at INTEGER,
+          task_idempotency_key TEXT NOT NULL,
+          task_state TEXT NOT NULL DEFAULT 'pending',
+          task_attempts INTEGER NOT NULL DEFAULT 0,
+          task_next_attempt_at INTEGER,
+          task_claimed_at INTEGER,
+          task_receipt TEXT,
+          task_error_code TEXT,
+          expires_at INTEGER NOT NULL,
+          UNIQUE (owner_id, suggestion_id, report_version_id)
+        ) STRICT;
+        INSERT INTO commitment_actions_v2(
+          token_hash, owner_id, suggestion_id, suggestion_json,
+          report_version_id, decision, decided_at, task_idempotency_key,
+          task_state, task_attempts, task_next_attempt_at, task_claimed_at,
+          task_receipt, task_error_code, expires_at
+        ) SELECT
+          token_hash, owner_id, suggestion_id, suggestion_json,
+          report_version_id, decision, decided_at, task_idempotency_key,
+          task_state, task_attempts, task_next_attempt_at, task_claimed_at,
+          task_receipt, task_error_code, expires_at
+        FROM commitment_actions;
+        DROP TABLE commitment_actions;
+        ALTER TABLE commitment_actions_v2 RENAME TO commitment_actions;
+        COMMIT;
+      `);
     }
   }
 
@@ -710,7 +756,9 @@ export class ProactiveStore {
     return this.transaction(() =>
       suggestionListSchema.parse(input.suggestions).map((suggestion) => {
         const token = createHmac("sha256", input.tokenSecret)
-          .update(`${input.ownerId}\0${suggestion.id}`)
+          .update(
+            `${input.ownerId}\0${input.reportVersionId}\0${suggestion.id}`,
+          )
           .digest("base64url");
         const tokenHash = sha256(token);
         const idempotencyKey = sha256(
