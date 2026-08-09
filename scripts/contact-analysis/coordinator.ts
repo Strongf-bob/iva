@@ -31,9 +31,27 @@ import {
   canonicalChatId,
   canonicalUserId,
   type AnalysisPage,
+  type ChatKind,
   type TelegramDialog,
   type TelegramMessage,
 } from "./types.ts";
+
+const CHAT_KIND_PRIORITY = {
+  private: 0,
+  group: 1,
+  channel: 2,
+  bot: 3,
+} satisfies Record<ChatKind, number>;
+
+export function orderDialogsForAnalysis(
+  dialogs: readonly TelegramDialog[],
+): TelegramDialog[] {
+  return [...dialogs].sort(
+    (left, right) =>
+      CHAT_KIND_PRIORITY[left.kind] - CHAT_KIND_PRIORITY[right.kind] ||
+      left.id - right.id,
+  );
+}
 
 export type SettledItem<T> =
   | { item: T; status: "fulfilled"; value: T }
@@ -306,7 +324,7 @@ export async function runContactAnalysis({
   let unsupportedMedia = 0;
   let skippedMessages = 0;
   let generatedQuestions = 0;
-  const sortedDialogs = [...dialogs].sort((left, right) => left.id - right.id);
+  const sortedDialogs = orderDialogsForAnalysis(dialogs);
 
   const results = await runWorkerPool(
     sortedDialogs,
