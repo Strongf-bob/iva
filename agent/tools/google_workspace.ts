@@ -25,7 +25,9 @@ const SAFE_FLAGS = new Set([
   "--params",
   "--spreadsheet",
   "--range",
+  "--values",
   "--document",
+  "--text",
   "--name",
   "--page-size",
 ]);
@@ -37,15 +39,19 @@ const READ_HELPERS = new Set([
   "workflow +weekly-digest",
 ]);
 const CREATE_OPERATIONS = new Set([
-  "gmail users drafts create",
   "calendar +insert",
   "calendar events insert",
-  "tasks tasks insert",
   "drive +upload",
   "drive files create",
   "drive files copy",
+  "sheets +append",
   "sheets spreadsheets create",
+  "sheets spreadsheets batchUpdate",
+  "sheets spreadsheets values append",
+  "sheets spreadsheets values update",
+  "docs +write",
   "docs documents create",
+  "docs documents batchUpdate",
 ]);
 const READ_METHODS = new Set(["get", "list", "search"]);
 const MAX_OUTPUT = 24_000;
@@ -112,6 +118,13 @@ export function validateGoogleWorkspaceArgs(args: readonly string[]): string[] {
       ) {
         throw new Error("calendar attendees are not allowed");
       }
+      if (
+        operation.startsWith("drive ") &&
+        arg === "--json" &&
+        JSON.stringify(parsed).match(/"trashed"\s*:/iu)
+      ) {
+        throw new Error("Google Drive trash mutation is not allowed");
+      }
     }
     checked.push(arg, value);
     index += 1;
@@ -122,7 +135,8 @@ export function validateGoogleWorkspaceArgs(args: readonly string[]): string[] {
 export default defineTool({
   description:
     "Выполнить разрешённую команду Google Workspace через персонально авторизованный gws без shell. " +
-    "Разрешены чтение, Gmail drafts, Calendar без attendees и создание Tasks/Drive/Sheets/Docs; отправка и удаление запрещены.",
+    "Разрешены чтение, Calendar без attendees и создание личных Drive/Sheets/Docs артефактов. " +
+    "Gmail drafts и Google Tasks доступны только через узкие owner-confirmed инструменты; отправка и удаление запрещены.",
   inputSchema: z.object({
     args: z.array(z.string().min(1).max(20_000)).min(2).max(32),
   }),
