@@ -23,10 +23,12 @@
 ### Task 1: Fail-safe owner-route reconciliation
 
 **Files:**
+
 - Create: `scripts/lib/owner-routing.ts`
 - Create: `scripts/lib/owner-routing.test.ts`
 
 **Interfaces:**
+
 - Consumes: `readUserRegistry(controlDir)`, `readRoutingUserRegistry(controlDir)`, `enableLegacyOwnerRoute(controlDir, user)`, `parseTelegramUserId(value)`, `defaultUserLimits()`.
 - Produces: `reconcileTelegramOwnerRoute(input): Promise<{ outcome: "created" | "preserved"; owner: UserRecord }>` and `requireActiveTelegramOwner(controlDir): Promise<UserRecord>`.
 
@@ -48,10 +50,12 @@ assert.deepEqual(
   [{ id: "101", role: "owner", status: "active", port: 8723 }],
 );
 assert.equal(
-  (await reconcileTelegramOwnerRoute({
-    controlDir,
-    allowedUserIds: new Set(["101"]),
-  })).outcome,
+  (
+    await reconcileTelegramOwnerRoute({
+      controlDir,
+      allowedUserIds: new Set(["101"]),
+    })
+  ).outcome,
   "preserved",
 );
 ```
@@ -104,12 +108,14 @@ git commit -m "fix(telegram): reconcile the configured legacy owner" -m "Create 
 ### Task 2: Container-aware route selection and startup gate
 
 **Files:**
+
 - Modify: `scripts/poller/tenant-routing.ts`
 - Modify: `scripts/poller/tenant-routing.test.ts`
 - Modify: `scripts/poller/main.ts`
 - Create: `scripts/poller/startup-routing.test.ts`
 
 **Interfaces:**
+
 - Consumes: `reconcileTelegramOwnerRoute`, `isLegacyOwnerRoute`, `HOST`, `ROUTE`, `ACCEPTANCE_ROUTE`, and `RESET_ROUTE`.
 - Produces: `routesForTenant(user, legacyBase): WorkerRoutes`; `main()` reconciles routing before its first Telegram API mutation.
 
@@ -176,6 +182,7 @@ git commit -m "fix(telegram): route the legacy owner across containers" -m "Reco
 ### Task 3: Deployment routing readiness gate
 
 **Files:**
+
 - Create: `scripts/production/routing-health.ts`
 - Create: `scripts/production/routing-health.test.ts`
 - Modify: `deploy/container/deploy.sh`
@@ -183,6 +190,7 @@ git commit -m "fix(telegram): route the legacy owner across containers" -m "Reco
 - Modify: `scripts/production/release-contract.test.ts`
 
 **Interfaces:**
+
 - Consumes: `requireActiveTelegramOwner`, `routesForTenant`, `CONTROL_DIR`, and `HOST`.
 - Produces: a silent exit-0 `routing-health.ts` command only when exactly one active owner exists and its worker health endpoint responds; deployment invokes it inside the poller container.
 
@@ -236,9 +244,11 @@ git commit -m "fix(deploy): require usable Telegram owner routing" -m "Run a bou
 ### Task 4: Verification, documentation audit, review, and release
 
 **Files:**
+
 - Modify only if evidence requires it: `README.md`, `README.ru.md`, `docs/deploy.md`, `docs/configuration.md`
 
 **Interfaces:**
+
 - Consumes: Tasks 1-3 and the repository publication workflow.
 - Produces: fresh local verification, reviewed documentation, protected-main PR, deployed immutable SHA, and production round-trip evidence.
 

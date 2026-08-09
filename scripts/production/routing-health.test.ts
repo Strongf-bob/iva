@@ -15,6 +15,11 @@ function fixture(t: { after: (fn: () => Promise<void>) => void }): string {
   return join(root, "control");
 }
 
+function requestUrl(input: string | URL | Request): string {
+  if (typeof input === "string") return input;
+  return input instanceof URL ? input.href : input.url;
+}
+
 void test("a healthy legacy owner is probed through the trusted container host", async (t) => {
   const controlDir = fixture(t);
   await reconcileTelegramOwnerRoute({
@@ -26,10 +31,10 @@ void test("a healthy legacy owner is probed through the trusted container host",
   await checkRoutingHealth({
     controlDir,
     legacyBase: "http://iva:8723",
-    fetchImpl: async (input) => {
+    fetchImpl: (input) => {
       calls += 1;
-      assert.equal(String(input), "http://iva:8723/eve/v1/health");
-      return new Response("{}", { status: 200 });
+      assert.equal(requestUrl(input), "http://iva:8723/eve/v1/health");
+      return Promise.resolve(new Response("{}", { status: 200 }));
     },
   });
 
@@ -43,12 +48,12 @@ void test("a healthy personalized owner is probed on its registry worker port", 
   await checkRoutingHealth({
     controlDir,
     legacyBase: "http://iva:8723",
-    fetchImpl: async (input) => {
+    fetchImpl: (input) => {
       assert.equal(
-        String(input),
+        requestUrl(input),
         `http://127.0.0.1:${owner.port}/eve/v1/health`,
       );
-      return new Response(null, { status: 204 });
+      return Promise.resolve(new Response(null, { status: 204 }));
     },
   });
 });
@@ -62,9 +67,9 @@ void test("missing owner state fails before any network request", async (t) => {
       checkRoutingHealth({
         controlDir,
         legacyBase: "http://iva:8723",
-        fetchImpl: async () => {
+        fetchImpl: () => {
           called = true;
-          return new Response("{}");
+          return Promise.resolve(new Response("{}"));
         },
       }),
     /exactly one active owner/u,
@@ -84,7 +89,8 @@ void test("non-success and network failures use secret-free diagnostics", async 
       checkRoutingHealth({
         controlDir,
         legacyBase: "http://iva:8723",
-        fetchImpl: async () => new Response("private body", { status: 503 }),
+        fetchImpl: () =>
+          Promise.resolve(new Response("private body", { status: 503 })),
       }),
     /^Error: Telegram owner worker health returned HTTP 503$/u,
   );
@@ -93,9 +99,8 @@ void test("non-success and network failures use secret-free diagnostics", async 
       checkRoutingHealth({
         controlDir,
         legacyBase: "http://iva:8723",
-        fetchImpl: async () => {
-          throw new Error("token=private message=private");
-        },
+        fetchImpl: () =>
+          Promise.reject(new Error("token=private message=private")),
       }),
     /^Error: Telegram owner worker health request failed$/u,
   );
