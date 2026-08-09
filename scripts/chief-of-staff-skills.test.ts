@@ -81,3 +81,15 @@ test("weekly review is honest about coverage and tracks decision arcs", () => {
   assert.match(skill.body, /vault-relative/u);
   assert.match(skill.body, /do not create, modify, or send/iu);
 });
+
+test("Telegram routes chief-of-staff commands through the bounded classifier", () => {
+  const source = readFileSync(
+    fileURLToPath(new URL("../agent/channels/telegram.ts", import.meta.url)),
+    "utf8",
+  );
+
+  assert.match(source, /chiefOfStaffCommand\(cmdText\)/u);
+  assert.match(source, /chief-of-staff-today/u);
+  assert.match(source, /relationship-briefing/u);
+  assert.match(source, /weekly-review/u);
+});
