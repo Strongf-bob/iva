@@ -5,8 +5,6 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-const ROOT = fileURLToPath(new URL("../", import.meta.url));
-
 type Skill = {
   frontmatter: Record<string, string>;
   body: string;
