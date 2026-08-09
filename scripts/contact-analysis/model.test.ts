@@ -42,9 +42,9 @@ test("structured analysis passes the exact skill and bounded chat context", asyn
     },
     {
       model,
-      streamObjectImpl: ((options: Record<string, unknown>) => {
+      generateObjectImpl: ((options: Record<string, unknown>) => {
         received = options;
-        return { object: Promise.resolve(batch) };
+        return Promise.resolve({ object: batch });
       }) as never,
     },
   );
@@ -97,8 +97,8 @@ test("structured analysis aborts a model call at its bounded deadline", async ()
       {
         model,
         timeoutMs: 5,
-        streamObjectImpl: ((options: { abortSignal: AbortSignal }) => ({
-          object: new Promise((_resolve, reject) => {
+        generateObjectImpl: ((options: { abortSignal: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
             options.abortSignal.addEventListener(
               "abort",
               () =>
@@ -109,8 +109,47 @@ test("structured analysis aborts a model call at its bounded deadline", async ()
                 ),
               { once: true },
             );
-          }),
-        })) as never,
+          })) as never,
+      },
+    ),
+    (error: unknown) =>
+      error instanceof DOMException && error.name === "TimeoutError",
+  );
+});
+
+test("structured analysis enforces the deadline when the provider ignores abort", async () => {
+  await assert.rejects(
+    analyzeStructured(
+      {
+        skillText: "PRIVATE CHAT SKILL",
+        ownerUserId: 7,
+        dialog: {
+          id: 44,
+          kind: "private",
+          title: "Alex",
+          username: null,
+        },
+        rollingSummary: "",
+        messages: [],
+      },
+      {
+        model,
+        timeoutMs: 5,
+        generateObjectImpl: (() =>
+          new Promise((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  object: {
+                    schemaVersion: 1,
+                    chatId: 44,
+                    rollingSummary: "late result",
+                    observations: [],
+                  },
+                }),
+              40,
+            ),
+          )) as never,
       },
     ),
     (error: unknown) =>
@@ -135,14 +174,15 @@ test("structured analysis validates provider output again", async () => {
       },
       {
         model,
-        streamObjectImpl: (() => ({
-          object: Promise.resolve({
-            schemaVersion: 1,
-            chatId: 44,
-            rollingSummary: "",
-            observations: [{ predicate: "invented" }],
-          }),
-        })) as never,
+        generateObjectImpl: (() =>
+          Promise.resolve({
+            object: {
+              schemaVersion: 1,
+              chatId: 44,
+              rollingSummary: "",
+              observations: [{ predicate: "invented" }],
+            },
+          })) as never,
       },
     ),
   );
