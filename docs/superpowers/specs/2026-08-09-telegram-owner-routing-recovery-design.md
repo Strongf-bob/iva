@@ -46,13 +46,19 @@ Existing active registry records continue to route to their fixed loopback
 worker ports. Blocked, provisioning, unknown, non-private, and sender/chat-ID
 mismatched updates remain rejected. No behavior widens Telegram authorization.
 
+The temporary legacy owner is the one exception to fixed loopback worker URLs.
+Its routes use the trusted configured `ASSISTANT_HOST`: systemd deployments may
+use loopback, while production Compose uses `http://iva:8723` across the private
+container network. Dedicated personalized workers keep their registry-derived
+loopback URLs. Route selection never uses Telegram message content.
+
 ### Deployment health contract
 
 Production health must additionally prove that routing is usable:
 
 - the effective routing registry contains exactly one active owner;
-- the owner's resolved webhook and acceptance URLs use a permitted loopback
-  worker port;
+- the owner's resolved webhook and acceptance URLs use the trusted legacy
+  `ASSISTANT_HOST` or the registered dedicated loopback worker port;
 - the target worker health endpoint answers successfully;
 - the poller stays running with zero restarts after reconciliation.
 
