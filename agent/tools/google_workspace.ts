@@ -43,6 +43,53 @@ export function validateGoogleWorkspaceArgs(args: readonly string[]): string[] {
   ) {
     throw new Error("Google Workspace service is not allowed");
   }
+  const service = args[0];
+  const command = args.slice(1).filter((arg) => !arg.startsWith("--"));
+  const forbidden = new Set([
+    "+send",
+    "+reply",
+    "send",
+    "delete",
+    "trash",
+    "untrash",
+    "batchDelete",
+    "batchModify",
+    "emptyTrash",
+  ]);
+  if (command.some((part) => forbidden.has(part))) {
+    throw new Error(`${service} mutation is not allowed`);
+  }
+  if (service === "tasks") {
+    const method = args[2];
+    if (!new Set(["list", "get"]).has(method)) {
+      throw new Error("Google Tasks mutation is not allowed");
+    }
+  }
+  if (
+    service === "drive" &&
+    args[1] === "permissions" &&
+    !new Set(["list", "get"]).has(args[2])
+  ) {
+    throw new Error("Google Drive permission mutation is not allowed");
+  }
+  if (service === "calendar") {
+    const jsonIndex = args.indexOf("--json");
+    if (jsonIndex >= 0) {
+      let payload: unknown;
+      try {
+        payload = JSON.parse(args[jsonIndex + 1] ?? "");
+      } catch {
+        throw new Error("calendar --json must be valid JSON");
+      }
+      if (
+        typeof payload === "object" &&
+        payload !== null &&
+        Object.prototype.hasOwnProperty.call(payload, "attendees")
+      ) {
+        throw new Error("Calendar attendees are not allowed");
+      }
+    }
+  }
   const checked: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
