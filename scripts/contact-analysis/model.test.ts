@@ -52,6 +52,9 @@ test("structured analysis passes the exact skill and bounded chat context", asyn
   assert.deepEqual(result, batch);
   assert.equal(received?.model, model);
   assert.equal(received?.system, "PRIVATE CHAT SKILL");
+  assert.equal(received?.maxOutputTokens, 16_384);
+  assert.equal(received?.maxRetries, 0);
+  assert.ok(received?.abortSignal instanceof AbortSignal);
   assert.deepEqual(JSON.parse(String(received?.prompt)), {
     ownerUserId: 7,
     dialog: {
@@ -74,6 +77,45 @@ test("structured analysis passes the exact skill and bounded chat context", asyn
       },
     ],
   });
+});
+
+test("structured analysis aborts a model call at its bounded deadline", async () => {
+  await assert.rejects(
+    analyzeStructured(
+      {
+        skillText: "PRIVATE CHAT SKILL",
+        ownerUserId: 7,
+        dialog: {
+          id: 44,
+          kind: "private",
+          title: "Alex",
+          username: null,
+        },
+        rollingSummary: "",
+        messages: [],
+      },
+      {
+        model,
+        timeoutMs: 5,
+        streamObjectImpl: ((options: { abortSignal: AbortSignal }) => ({
+          object: new Promise((_resolve, reject) => {
+            options.abortSignal.addEventListener(
+              "abort",
+              () =>
+                reject(
+                  options.abortSignal.reason instanceof Error
+                    ? options.abortSignal.reason
+                    : new Error("model call aborted"),
+                ),
+              { once: true },
+            );
+          }),
+        })) as never,
+      },
+    ),
+    (error: unknown) =>
+      error instanceof DOMException && error.name === "TimeoutError",
+  );
 });
 
 test("structured analysis validates provider output again", async () => {
