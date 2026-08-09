@@ -1,4 +1,5 @@
 import { generateObject, type LanguageModel } from "ai";
+import { z } from "zod";
 
 import { createTextModel } from "../../agent/provider.ts";
 import {
@@ -45,6 +46,13 @@ export interface AnalyzeStructuredDependencies {
 const runGenerateObject: GenerateObjectImpl = (input) => generateObject(input);
 const DEFAULT_MODEL_TIMEOUT_MS = 5 * 60_000;
 const MAX_OUTPUT_TOKENS = 16_384;
+const ANALYSIS_BATCH_JSON_SCHEMA = z.toJSONSchema(AnalysisBatchSchema);
+const ANALYSIS_BATCH_RESPONSE_RULES = [
+  "Every observation must contain exactly one of value or objectId, never both and never neither.",
+  "An external_owner_claim observation must contain assertedById.",
+  "Relationship metadata is required for commitment observations and forbidden for every other predicate.",
+  "A birthday observation must use value YYYY-MM-DD or --MM-DD and confidence EXTRACTED.",
+] as const;
 
 export async function analyzeStructured(
   input: ModelAnalysisInput,
@@ -67,6 +75,8 @@ export async function analyzeStructured(
     );
   }
   const prompt = JSON.stringify({
+    responseSchema: ANALYSIS_BATCH_JSON_SCHEMA,
+    responseRules: ANALYSIS_BATCH_RESPONSE_RULES,
     ownerUserId: input.ownerUserId,
     dialog,
     rollingSummary: input.rollingSummary,

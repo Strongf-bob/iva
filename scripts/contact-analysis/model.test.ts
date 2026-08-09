@@ -55,7 +55,37 @@ test("structured analysis passes the exact skill and bounded chat context", asyn
   assert.equal(received?.maxOutputTokens, 16_384);
   assert.equal(received?.maxRetries, 0);
   assert.ok(received?.abortSignal instanceof AbortSignal);
-  assert.deepEqual(JSON.parse(String(received?.prompt)), {
+  const parsedPrompt: unknown = JSON.parse(String(received?.prompt));
+  assert.ok(
+    parsedPrompt !== null &&
+      typeof parsedPrompt === "object" &&
+      !Array.isArray(parsedPrompt),
+  );
+  const prompt = parsedPrompt as Record<string, unknown>;
+  const responseSchema = prompt.responseSchema;
+  assert.ok(
+    responseSchema !== null &&
+      typeof responseSchema === "object" &&
+      !Array.isArray(responseSchema),
+  );
+  const responseSchemaRecord = responseSchema as Record<string, unknown>;
+  assert.equal(responseSchemaRecord.type, "object");
+  assert.equal(responseSchemaRecord.additionalProperties, false);
+  assert.deepEqual(responseSchemaRecord.required, [
+    "schemaVersion",
+    "chatId",
+    "rollingSummary",
+    "observations",
+  ]);
+  assert.deepEqual(prompt.responseRules, [
+    "Every observation must contain exactly one of value or objectId, never both and never neither.",
+    "An external_owner_claim observation must contain assertedById.",
+    "Relationship metadata is required for commitment observations and forbidden for every other predicate.",
+    "A birthday observation must use value YYYY-MM-DD or --MM-DD and confidence EXTRACTED.",
+  ]);
+  delete prompt.responseSchema;
+  delete prompt.responseRules;
+  assert.deepEqual(prompt, {
     ownerUserId: 7,
     dialog: {
       id: 44,
