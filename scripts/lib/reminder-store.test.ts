@@ -275,6 +275,58 @@ void test("completed one-off requires an attempt at or after its due time", asyn
   await assert.rejects(() => loadReminderStore(dataDir), /history invariants/u);
 });
 
+void test("delivery and cancelled one-off history require real due attempts", async () => {
+  const dataDir = await fixture();
+  const file = reminderFile(dataDir);
+  const recurring = {
+    id: "00000000-0000-4000-8000-000000000006",
+    idempotencyKey: "corrupt-delivery-history-1",
+    message: "No phantom delivery",
+    timezone: "UTC",
+    schedule: { kind: "cron", expression: "0 8 * * *" },
+    state: "active",
+    createdAt: "2026-08-09T07:00:00.000Z",
+    updatedAt: "2026-08-10T07:00:00.000Z",
+    nextRunAt: Date.parse("2026-08-10T08:00:00.000Z"),
+    occurrenceAt: null,
+    leaseUntil: null,
+    lastAttemptAt: null,
+    lastDeliveredAt: Date.parse("2026-08-09T08:00:00.000Z"),
+    failureCount: 0,
+    retryAt: null,
+    lastError: null,
+  };
+  await writeFile(
+    file,
+    JSON.stringify({
+      schema: "iva-reminders/v1",
+      revision: 1,
+      jobs: [recurring],
+    }),
+  );
+  await assert.rejects(() => loadReminderStore(dataDir), /history invariants/u);
+
+  await writeFile(
+    file,
+    JSON.stringify({
+      schema: "iva-reminders/v1",
+      revision: 1,
+      jobs: [
+        {
+          ...recurring,
+          id: "00000000-0000-4000-8000-000000000007",
+          idempotencyKey: "corrupt-cancelled-history-1",
+          schedule: { kind: "once", at: "2026-08-10T08:00:00.000Z" },
+          state: "cancelled",
+          nextRunAt: null,
+          lastAttemptAt: Date.parse("2026-08-10T07:30:00.000Z"),
+        },
+      ],
+    }),
+  );
+  await assert.rejects(() => loadReminderStore(dataDir), /history invariants/u);
+});
+
 void test("concurrent creates serialize without losing jobs", async () => {
   const dataDir = await fixture();
   await Promise.all(

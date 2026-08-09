@@ -72,7 +72,8 @@ function parseStore(value: unknown): ReminderStore {
       (job.lastAttemptAt === null ||
         (job.lastAttemptAt >= createdAt && job.lastAttemptAt <= updatedAt)) &&
       (job.lastDeliveredAt === null ||
-        (job.lastDeliveredAt >= createdAt &&
+        (job.lastAttemptAt !== null &&
+          job.lastDeliveredAt >= createdAt &&
           job.lastDeliveredAt <= updatedAt)) &&
       (inactive ||
         (job.nextRunAt !== null &&
@@ -90,7 +91,12 @@ function parseStore(value: unknown): ReminderStore {
           job.lastError === null)) &&
       (job.schedule.kind !== "once" ||
         inactive ||
-        job.lastDeliveredAt === null);
+        job.lastDeliveredAt === null) &&
+      (job.schedule.kind !== "once" ||
+        job.state !== "cancelled" ||
+        (job.lastDeliveredAt === null &&
+          (job.lastAttemptAt === null ||
+            (scheduleAt !== null && job.lastAttemptAt >= scheduleAt))));
     if (!historyValid) {
       throw new Error(
         `invalid reminder store: state invariants: history invariants failed for reminder ${job.id}`,
