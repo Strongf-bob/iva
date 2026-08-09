@@ -123,6 +123,62 @@ test("Gmail pagination accepts only bounded provider tokens", async () => {
   );
 });
 
+test("Google pagination carries a monotonic watermark across older pages", async () => {
+  let gmailListPage = 0;
+  const gmailRunner: GwsRunner = async (args) => {
+    if (args[3] === "list") {
+      gmailListPage += 1;
+      return jsonResult({
+        messages: [{ id: gmailListPage === 1 ? "m-new" : "m-old" }],
+        ...(gmailListPage === 1 ? { nextPageToken: "page-2" } : {}),
+      });
+    }
+    const params = JSON.parse(args[5] ?? "null") as { id: string };
+    const internalDate =
+      params.id === "m-new" ? "1723181500000" : "1723181400000";
+    return jsonResult({
+      id: params.id,
+      threadId: `thread-${params.id}`,
+      internalDate,
+      payload: { headers: [] },
+    });
+  };
+  const gmailPages = await collect(
+    createGmailInboxSource({ runner: gmailRunner }),
+  );
+  assert.deepEqual(
+    gmailPages.map((page) => page.cursor.order),
+    [1723181500000, 1723181500000],
+  );
+
+  let calendarPage = 0;
+  const calendarRunner: GwsRunner = async () => {
+    calendarPage += 1;
+    const updated =
+      calendarPage === 1
+        ? "2026-08-09T07:00:00.000Z"
+        : "2026-08-09T06:00:00.000Z";
+    return jsonResult({
+      items: [
+        {
+          id: `event-${calendarPage}`,
+          updated,
+          start: { dateTime: "2026-08-09T10:00:00.000Z" },
+          end: { dateTime: "2026-08-09T11:00:00.000Z" },
+        },
+      ],
+      ...(calendarPage === 1 ? { nextPageToken: "page-2" } : {}),
+    });
+  };
+  const calendarPages = await collect(
+    createCalendarInboxSource({ runner: calendarRunner }),
+  );
+  assert.deepEqual(
+    calendarPages.map((page) => page.cursor.value),
+    ["2026-08-09T07:00:00.000Z", "2026-08-09T07:00:00.000Z"],
+  );
+});
+
 test("Calendar lists a bounded window and normalizes event revisions", async () => {
   const calls: string[][] = [];
   const runner: GwsRunner = async (args) => {

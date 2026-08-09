@@ -352,6 +352,7 @@ export function createGmailInboxSource({
         : Math.max(0, nowMs - GMAIL_FIRST_RUN_MS);
       let pageToken: string | undefined;
       const seenTokens = new Set<string>();
+      let highWatermark = prior?.order ?? 0;
       do {
         const params = {
           userId: sourceAccountId,
@@ -371,7 +372,6 @@ export function createGmailInboxSource({
           GmailListSchema,
         );
         const observations: InboxObservation[] = [];
-        let highWatermark = prior?.order ?? 0;
         for (const reference of list.messages ?? []) {
           const message = parseResult(
             await runner([
@@ -497,6 +497,7 @@ export function createCalendarInboxSource({
       const prior = input.cursors.calendar;
       let pageToken: string | undefined;
       const seenTokens = new Set<string>();
+      let highWatermark = prior?.order ?? 0;
       do {
         const params = {
           calendarId: sourceAccountId,
@@ -521,8 +522,8 @@ export function createCalendarInboxSource({
           normalizeCalendarEvent(sourceAccountId, event),
         );
         if (observations.length > 0) {
-          const highWatermark = Math.max(
-            prior?.order ?? 0,
+          highWatermark = Math.max(
+            highWatermark,
             ...(list.items ?? []).map((event) => Date.parse(event.updated)),
           );
           const value =
