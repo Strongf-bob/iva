@@ -1,7 +1,5 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { ZodError } from "zod";
-
 import { analyzeStructured, type ModelAnalysisInput } from "./model.ts";
 import {
   AnalysisBatchSchema,
@@ -98,6 +96,34 @@ export function validateEvidence(
       }
     }
   }
+  for (const question of batch.questions ?? []) {
+    if (!allowedSubjects.has(question.subjectId)) {
+      throw new Error(`question subject ${question.subjectId} was not allowed`);
+    }
+    if (question.contextChatId !== batch.chatId) {
+      throw new Error(
+        `question context chat ${question.contextChatId} did not match batch chat ${batch.chatId}`,
+      );
+    }
+    for (const evidence of question.evidence) {
+      const message = messagesById.get(evidence.messageId);
+      if (message === undefined) {
+        throw new Error(
+          `question evidence message ${evidence.messageId} was not present in the input page`,
+        );
+      }
+      if (evidence.chatId !== batch.chatId) {
+        throw new Error(
+          `question evidence chat ${evidence.chatId} did not match batch chat ${batch.chatId}`,
+        );
+      }
+      if (evidence.timestamp !== message.timestamp) {
+        throw new Error(
+          `question evidence timestamp for message ${evidence.messageId} did not match the input`,
+        );
+      }
+    }
+  }
   return batch;
 }
 
@@ -107,31 +133,13 @@ export interface AnalyzePageInput {
   rollingSummary: string;
   messages: TelegramMessage[];
   allowedSubjects: ReadonlySet<string>;
+  skillText?: string;
   maxChars?: number;
 }
 
 export interface AnalyzePageDependencies {
   readSkillText?: (path: string) => Promise<string>;
   analyzeStructuredImpl?: (input: ModelAnalysisInput) => Promise<AnalysisBatch>;
-}
-
-function isMalformedStructuredOutput(error: unknown): boolean {
-  return (
-    error instanceof ZodError ||
-    (error instanceof Error && error.name === "AI_NoObjectGeneratedError")
-  );
-}
-
-async function analyzeWithOneFormatRepair(
-  input: ModelAnalysisInput,
-  run: (input: ModelAnalysisInput) => Promise<AnalysisBatch>,
-): Promise<AnalysisBatch> {
-  try {
-    return await run(input);
-  } catch (error) {
-    if (!isMalformedStructuredOutput(error)) throw error;
-    return run(input);
-  }
 }
 
 export async function analyzePage(
@@ -141,36 +149,31 @@ export async function analyzePage(
   const readSkillText =
     dependencies.readSkillText ?? ((path) => readFile(path, "utf8"));
   const run = dependencies.analyzeStructuredImpl ?? analyzeStructured;
-  const skillText = await readSkillText(skillPathFor(input.dialog.kind));
-  const chunks = chunkMessages(input.messages, input.maxChars);
-  let rollingSummary = input.rollingSummary;
-  const observations: AnalysisBatch["observations"] = [];
-
-  for (const messages of chunks) {
-    const batch = await analyzeWithOneFormatRepair(
-      {
-        skillText,
-        ownerUserId: input.ownerUserId,
-        dialog: input.dialog,
-        rollingSummary,
-        messages,
-      },
-      run,
+  const skillText =
+    input.skillText ?? (await readSkillText(skillPathFor(input.dialog.kind)));
+  const batch = await run({
+    skillText,
+    ownerUserId: input.ownerUserId,
+    dialog: input.dialog,
+    rollingSummary: input.rollingSummary,
+    messages: input.messages,
+  });
+  if (batch.chatId !== input.dialog.id) {
+    throw new Error(
+      `analysis batch chat ${batch.chatId} did not match dialog ${input.dialog.id}`,
     );
-    if (batch.chatId !== input.dialog.id) {
-      throw new Error(
-        `analysis batch chat ${batch.chatId} did not match dialog ${input.dialog.id}`,
-      );
-    }
-    const validated = validateEvidence(batch, messages, input.allowedSubjects);
-    observations.push(...validated.observations);
-    rollingSummary = validated.rollingSummary;
   }
+  const validated = validateEvidence(
+    batch,
+    input.messages,
+    input.allowedSubjects,
+  );
 
   return AnalysisPageSchema.parse({
     schemaVersion: 1,
     chatId: input.dialog.id,
-    rollingSummary,
-    observations,
+    rollingSummary: validated.rollingSummary,
+    observations: validated.observations,
+    questions: validated.questions ?? [],
   });
 }

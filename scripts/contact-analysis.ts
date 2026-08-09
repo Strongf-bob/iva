@@ -122,7 +122,7 @@ function safeErrorCode(error: unknown): string {
 }
 
 function compactReport(report: ContactAnalysisReport): string {
-  return `completed=${report.completedChats} pending=${report.pendingChats} failed=${report.failedChats} messages=${report.processedMessages} unsupported_media=${report.unsupportedMedia}`;
+  return `completed=${report.completedChats} pending=${report.pendingChats} failed=${report.failedChats} messages=${report.processedMessages} unsupported_media=${report.unsupportedMedia} skipped_messages=${report.skippedMessages} questions=${report.generatedQuestions}`;
 }
 
 export async function runContactAnalysisCommand(

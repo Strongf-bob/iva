@@ -22,6 +22,11 @@ const MessagesPageSchema = z.strictObject({
   messages: z.array(TelegramMessageSchema).max(200),
   nextAfterId: z.int().nonnegative(),
 });
+const MessageWindowSchema = z.strictObject({
+  messages: z.array(TelegramMessageSchema).max(5000),
+  latestMessageId: z.int().nonnegative(),
+  skippedMessages: z.int().nonnegative(),
+});
 const FailureMetadataSchema = z.object({
   retryAfterSeconds: z.int().positive().max(86_400).optional(),
 });
@@ -45,21 +50,28 @@ export interface TelegramMessagesPage {
   messages: TelegramMessage[];
   nextAfterId: number;
 }
+export type TelegramMessageWindow = z.infer<typeof MessageWindowSchema>;
 
 export interface TelegramAnalysisClient {
   account(): Promise<TelegramAccount>;
   dialogs(offset: number, limit: number): Promise<TelegramDialogsPage>;
-  messages(
+  messages?(
     chatId: number,
     afterId: number,
     limit: number,
   ): Promise<TelegramMessagesPage>;
+  messageWindow(
+    chatId: number,
+    afterId: number,
+    maxChars: number,
+  ): Promise<TelegramMessageWindow>;
 }
 
 export interface TelegramAnalysisClientOptions {
   root?: string;
   dataDir?: string;
   tokenPath?: string;
+  mcpUrl?: string;
   port?: string | number;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
@@ -91,11 +103,16 @@ export function createTelegramAnalysisClient({
   root = process.cwd(),
   dataDir = "data",
   tokenPath,
-  port = process.env.TELEGRAM_MCP_PORT ?? "8724",
+  mcpUrl,
+  port,
   timeoutMs = 30_000,
   fetchImpl = globalThis.fetch,
 }: TelegramAnalysisClientOptions = {}): TelegramAnalysisClient {
-  const baseUrl = `http://127.0.0.1:${safePort(port)}/analysis/v1`;
+  const configuredMcpUrl =
+    mcpUrl ?? (port === undefined ? process.env.TELEGRAM_MCP_URL : undefined);
+  const baseUrl = configuredMcpUrl
+    ? new URL("/analysis/v1", configuredMcpUrl).toString().replace(/\/$/u, "")
+    : `http://127.0.0.1:${safePort(port ?? process.env.TELEGRAM_MCP_PORT ?? "8724")}/analysis/v1`;
   const resolvedTokenPath = tokenPath
     ? resolve(root, tokenPath)
     : resolve(root, dataDir, "telegram-userbot.token");
@@ -169,6 +186,20 @@ export function createTelegramAnalysisClient({
           limit: String(limit),
         })}`,
         MessagesPageSchema,
+      );
+    },
+    messageWindow(chatId, afterId, maxChars) {
+      safeInteger(chatId, "chat ID", -(2 ** 53) + 1, 2 ** 53 - 1);
+      if (chatId === 0) throw new TypeError("invalid chat ID");
+      safeInteger(afterId, "message cursor", 0, 2 ** 53 - 1);
+      safeInteger(maxChars, "message character budget", 1, 500_000);
+      return request(
+        `/message-window?${new URLSearchParams({
+          chat_id: String(chatId),
+          after_id: String(afterId),
+          max_chars: String(maxChars),
+        })}`,
+        MessageWindowSchema,
       );
     },
   };

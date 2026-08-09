@@ -76,7 +76,7 @@ test("client uses loopback GET routes, bearer auth and encoded pagination", asyn
 
   assert.equal((await client.account()).userId, 7);
   assert.equal((await client.dialogs(100, 25)).dialogs[0]?.kind, "group");
-  assert.equal((await client.messages(-1001, 8, 200)).messages[0]?.id, 9);
+  assert.equal((await client.messages?.(-1001, 8, 200))?.messages[0]?.id, 9);
 
   assert.deepEqual(
     requests.map((request) => request.url),
@@ -172,4 +172,57 @@ test("client can read a shared token independently from personal state", async (
 
   await client.account();
   assert.equal(authorization, "Bearer shared-secret");
+});
+
+test("client derives analysis routes from the configured MCP sidecar URL", async () => {
+  const requests: string[] = [];
+  const root = await mkdtemp(join(tmpdir(), "iva-contact-sidecar-url-"));
+  await mkdir(join(root, "data"), { recursive: true });
+  await writeFile(join(root, "data", "telegram-userbot.token"), "secret\n", {
+    mode: 0o600,
+  });
+  const client = createTelegramAnalysisClient({
+    root,
+    mcpUrl: "http://telegram-userbot:8724/mcp",
+    fetchImpl: async (input) => {
+      requests.push(String(input));
+      return jsonResponse({ userId: 7, displayName: "Owner", username: null });
+    },
+  });
+
+  await client.account();
+
+  assert.deepEqual(requests, [
+    "http://telegram-userbot:8724/analysis/v1/account",
+  ]);
+});
+
+test("client requests a bounded newest-message window from the sidecar", async () => {
+  const requests: string[] = [];
+  const root = await mkdtemp(join(tmpdir(), "iva-contact-message-window-"));
+  await mkdir(join(root, "data"), { recursive: true });
+  await writeFile(join(root, "data", "telegram-userbot.token"), "secret\n", {
+    mode: 0o600,
+  });
+  const client = createTelegramAnalysisClient({
+    root,
+    mcpUrl: "http://telegram-userbot:8724/mcp",
+    fetchImpl: async (input) => {
+      requests.push(String(input));
+      return jsonResponse({
+        messages: [],
+        latestMessageId: 15,
+        skippedMessages: 4,
+      });
+    },
+  });
+
+  assert.deepEqual(await client.messageWindow?.(-1001, 8, 320_000), {
+    messages: [],
+    latestMessageId: 15,
+    skippedMessages: 4,
+  });
+  assert.deepEqual(requests, [
+    "http://telegram-userbot:8724/analysis/v1/message-window?chat_id=-1001&after_id=8&max_chars=320000",
+  ]);
 });

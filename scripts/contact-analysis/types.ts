@@ -94,11 +94,22 @@ export const ObservationSchema = z
   });
 export type Observation = z.infer<typeof ObservationSchema>;
 
+export const ClarificationQuestionSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  subjectId: CanonicalSubjectIdSchema,
+  question: z.string().min(1).max(500),
+  reason: z.string().min(1).max(500),
+  contextChatId: TelegramIntegerSchema,
+  evidence: z.array(EvidenceSchema).min(1).max(8),
+});
+export type ClarificationQuestion = z.infer<typeof ClarificationQuestionSchema>;
+
 export const AnalysisBatchSchema = z.strictObject({
   schemaVersion: z.literal(1),
   chatId: TelegramIntegerSchema,
   rollingSummary: z.string().max(4000),
   observations: z.array(ObservationSchema).max(32),
+  questions: z.array(ClarificationQuestionSchema).max(16).optional(),
 });
 export type AnalysisBatch = z.infer<typeof AnalysisBatchSchema>;
 
@@ -109,6 +120,7 @@ export const AnalysisPageSchema = z.strictObject({
   chatId: TelegramIntegerSchema,
   rollingSummary: z.string().max(4000),
   observations: z.array(ObservationSchema).max(200 * 32),
+  questions: z.array(ClarificationQuestionSchema).max(16).optional(),
 });
 export type AnalysisPage = z.infer<typeof AnalysisPageSchema>;
 

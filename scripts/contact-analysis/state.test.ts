@@ -53,6 +53,7 @@ test("state saves atomically with private file and directory modes", async () =>
         title: "Team",
         committedThrough: 12,
         contextSummary: "project context",
+        skippedMessages: 4,
         status: "ready",
         attempts: 0,
         lastErrorCode: null,

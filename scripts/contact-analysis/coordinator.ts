@@ -1,6 +1,17 @@
+import { readFile } from "node:fs/promises";
 import { ZodError } from "zod";
 
-import { analyzePage, type AnalyzePageInput } from "./analyzer.ts";
+import {
+  analyzePage,
+  skillPathFor,
+  type AnalyzePageInput,
+} from "./analyzer.ts";
+import { messageCharacterBudget } from "./context-budget.ts";
+import {
+  updateQuestionWorkbook,
+  type UpdateQuestionWorkbookInput,
+  type UpdateQuestionWorkbookResult,
+} from "./question-workbook.ts";
 import {
   reduceBatch,
   type ReduceBatchInput,
@@ -21,6 +32,7 @@ import {
   canonicalUserId,
   type AnalysisPage,
   type TelegramDialog,
+  type TelegramMessage,
 } from "./types.ts";
 
 export type SettledItem<T> =
@@ -90,6 +102,8 @@ export interface ContactAnalysisReport {
   failedChats: number;
   processedMessages: number;
   unsupportedMedia: number;
+  skippedMessages: number;
+  generatedQuestions: number;
 }
 
 export interface RunContactAnalysisOptions {
@@ -101,6 +115,11 @@ export interface RunContactAnalysisOptions {
   concurrency?: number;
   analyzePageImpl?: (input: AnalyzePageInput) => Promise<AnalysisPage>;
   reduceBatchImpl?: (input: ReduceBatchInput) => Promise<ReduceResult>;
+  updateQuestionWorkbookImpl?: (
+    input: UpdateQuestionWorkbookInput,
+  ) => Promise<UpdateQuestionWorkbookResult>;
+  readSkillTextImpl?: (dialog: TelegramDialog) => Promise<string>;
+  contextTokens?: number;
   sleepImpl?: (milliseconds: number) => Promise<void>;
 }
 
@@ -193,6 +212,7 @@ function upsertJobs(
       title: dialog.title,
       committedThrough: existing?.committedThrough ?? 0,
       contextSummary: existing?.contextSummary ?? "",
+      skippedMessages: existing?.skippedMessages ?? 0,
       status: "ready",
       attempts: existing?.attempts ?? 0,
       lastErrorCode: null,
@@ -203,7 +223,7 @@ function upsertJobs(
 function allowedSubjects(
   ownerUserId: number,
   dialog: TelegramDialog,
-  messages: Awaited<ReturnType<TelegramAnalysisClient["messages"]>>["messages"],
+  messages: readonly TelegramMessage[],
 ): Set<string> {
   const subjects = new Set<string>([
     canonicalUserId(ownerUserId),
@@ -231,6 +251,9 @@ export async function runContactAnalysis({
   concurrency = 3,
   analyzePageImpl = analyzePage,
   reduceBatchImpl = reduceBatch,
+  updateQuestionWorkbookImpl = updateQuestionWorkbook,
+  readSkillTextImpl = (dialog) => readFile(skillPathFor(dialog.kind), "utf8"),
+  contextTokens = Number(process.env.OPENCODE_CONTEXT_WINDOW ?? 131_072),
   sleepImpl = (milliseconds) =>
     new Promise((resolve) => setTimeout(resolve, milliseconds)),
 }: RunContactAnalysisOptions = {}): Promise<ContactAnalysisReport> {
@@ -263,8 +286,15 @@ export async function runContactAnalysis({
   await persist();
 
   let reducerChain = Promise.resolve();
-  const enqueueReduction = (input: ReduceBatchInput) => {
-    const pending = reducerChain.then(() => reduceBatchImpl(input));
+  const enqueueReduction = (
+    graphInput: ReduceBatchInput,
+    workbookInput: UpdateQuestionWorkbookInput,
+  ) => {
+    const pending = reducerChain.then(async () => {
+      const graph = await reduceBatchImpl(graphInput);
+      const workbook = await updateQuestionWorkbookImpl(workbookInput);
+      return { graph, workbook };
+    });
     reducerChain = pending.then(
       () => undefined,
       () => undefined,
@@ -274,6 +304,8 @@ export async function runContactAnalysis({
 
   let processedMessages = 0;
   let unsupportedMedia = 0;
+  let skippedMessages = 0;
+  let generatedQuestions = 0;
   const sortedDialogs = [...dialogs].sort((left, right) => left.id - right.id);
 
   const results = await runWorkerPool(
@@ -284,53 +316,76 @@ export async function runContactAnalysis({
       if (!job) throw new Error("contact analysis job was not inventoried");
       job.status = "running";
       try {
-        for (;;) {
-          const page = await withTransientRetries(
-            () => client.messages(dialog.id, job.committedThrough, 200),
-            sleepImpl,
-          );
-          if (page.messages.length === 0) {
-            job.status = "complete";
-            job.attempts = 0;
-            job.lastErrorCode = null;
-            await persist();
-            return dialog;
-          }
-          if (page.nextAfterId <= job.committedThrough) {
-            throw new Error("telegram_analysis_invalid_message_cursor");
-          }
-          const batch = await withTransientRetries(
-            () =>
-              analyzePageImpl({
-                ownerUserId: account.userId,
-                dialog,
-                rollingSummary: job.contextSummary,
-                messages: page.messages,
-                allowedSubjects: allowedSubjects(
-                  account.userId,
-                  dialog,
-                  page.messages,
-                ),
-              }),
-            sleepImpl,
-          );
-          await enqueueReduction({
-            vault,
+        const skillText = await readSkillTextImpl(dialog);
+        const envelopeChars = JSON.stringify({
+          ownerUserId: account.userId,
+          dialog,
+          rollingSummary: job.contextSummary,
+          messages: [],
+        }).length;
+        const maxChars = messageCharacterBudget({
+          contextTokens,
+          skillChars: skillText.length,
+          envelopeChars,
+        });
+        const page = await withTransientRetries(
+          () => client.messageWindow(dialog.id, job.committedThrough, maxChars),
+          sleepImpl,
+        );
+        if (
+          page.latestMessageId < job.committedThrough ||
+          (page.messages.length > 0 &&
+            (page.latestMessageId <= job.committedThrough ||
+              page.messages.some(
+                (message, index) =>
+                  message.id <= job.committedThrough ||
+                  message.id > page.latestMessageId ||
+                  (index > 0 && message.id <= page.messages[index - 1].id),
+              )))
+        ) {
+          throw new Error("telegram_analysis_invalid_message_cursor");
+        }
+        if (page.messages.length > 0) {
+          const batch = await analyzePageImpl({
             ownerUserId: account.userId,
             dialog,
-            batch,
+            rollingSummary: job.contextSummary,
+            messages: page.messages,
+            allowedSubjects: allowedSubjects(
+              account.userId,
+              dialog,
+              page.messages,
+            ),
+            skillText,
           });
-          job.committedThrough = page.nextAfterId;
+          await enqueueReduction(
+            {
+              vault,
+              ownerUserId: account.userId,
+              dialog,
+              batch,
+            },
+            {
+              vault,
+              dialog,
+              questions: batch.questions ?? [],
+            },
+          );
           job.contextSummary = batch.rollingSummary;
-          job.status = "running";
-          job.attempts = 0;
-          job.lastErrorCode = null;
           processedMessages += page.messages.length;
           unsupportedMedia += page.messages.filter(
             (message) => message.mediaKind !== null,
           ).length;
-          await persist();
+          generatedQuestions += batch.questions?.length ?? 0;
         }
+        job.committedThrough = page.latestMessageId;
+        job.skippedMessages += page.skippedMessages;
+        skippedMessages += page.skippedMessages;
+        job.status = "complete";
+        job.attempts = 0;
+        job.lastErrorCode = null;
+        await persist();
+        return dialog;
       } catch (error) {
         job.status = "retry";
         job.attempts += 1;
@@ -359,5 +414,7 @@ export async function runContactAnalysis({
     failedChats,
     processedMessages,
     unsupportedMedia,
+    skippedMessages,
+    generatedQuestions,
   };
 }

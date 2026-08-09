@@ -98,9 +98,10 @@ The bot is half of Telegram. The other half is your personal account: connect th
 - **Private onboarding in chat** — open `/menu`, enter your phone in a delete-before-processing step, and submit the Telegram code with a masked keypad. No terminal and no login secret is sent to the model.
 - **Production read-only boundary** — the MCP server registers only an explicit allowlist of read/search tools plus a read-only login status probe. Sending, editing, deleting, joining, inviting, reacting, and exporting invite links are absent regardless of what the model asks for.
 - **Isolated session** — production runs the proxy as an internal-only sidecar with a private session volume, no published port, a read-only root filesystem, and an explicit on/off marker.
-- **A contact graph that resumes** — the first read-only import walks full text history, then a
-  15-minute schedule continues from durable per-chat cursors. Every extracted observation links back
-  to its source message; voice and video-note contents are not analyzed here.
+- **A bounded contact graph** — each sync makes at most one model request per chat using the newest
+  complete messages that fit the model context, while three chats can run in parallel. Durable
+  per-chat cursors, source-message evidence and a Markdown clarification worksheet support later
+  incremental runs; voice and video-note contents are not analyzed here.
 
 > [!WARNING]
 > Automating a personal account is against Telegram's ToS and can get the account limited or banned. The userbot is opt-in, beta, and used at your own risk — reading is far safer than sending. Details: [docs/userbot.md](docs/userbot.md).

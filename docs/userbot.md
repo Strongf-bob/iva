@@ -92,9 +92,11 @@ state/reason values; bearer tokens and transport errors are not returned.
 ## Automatic contact graph
 
 When the personal account becomes authorized, Iva starts a full read-only import of every accessible
-private chat, group and channel. It processes at most three chats in parallel; pages inside one chat
-remain chronological. Each successfully reduced page advances an account-scoped cursor, so the
-15-minute schedule performs incremental syncs and safely resumes an interrupted first import.
+private chat, group and channel. It processes at most three chats in parallel and makes at most one
+model request per chat in each sync. If all unseen messages do not fit the configured model context,
+the userbot keeps the newest complete messages, restores chronological order for analysis and reports
+how many older unseen messages were skipped. The account-scoped cursor advances only after durable
+graph and question-workbook writes, so the 15-minute schedule performs incremental syncs safely.
 
 The pipeline creates Markdown contact, chat and project cards in the normal vault. A numeric Telegram
 user ID is the identity key, so the same person in a direct message and several groups links to one
@@ -102,6 +104,11 @@ card. Every material observation keeps message-level provenance and confidence. 
 about the account owner build the owner's contact card too, but group-derived claims never update
 `CORE.md` automatically. Voice messages and video notes are counted and marked as unsupported media;
 their contents are not interpreted by this pipeline.
+
+The same model response can include evidence-bound clarification questions. Iva deduplicates and
+groups them by chat in `vault/inbox/contact-analysis-questions.md`, with an `**Answer:**` area under
+each question. Later syncs preserve text written in those answer areas. Answer ingestion is not part
+of this pipeline yet.
 
 Contact analysis is available only with `TELEGRAM_EXPOSED_TOOLS=read-only`. The agent normally runs
 these commands for you, but they are useful for diagnosis:
@@ -127,8 +134,8 @@ node --env-file-if-exists=.env scripts/contact-analysis.ts status --json
 - **Enforced production read-only registry.** Upstream tools are pruned to the reviewed
   local allowlist before onboarding tools are added. CI enumerates the effective registry
   and rejects mutating tool families.
-- **Bounded analysis export.** Three bearer-protected, GET-only loopback routes expose normalized
-  account, dialog and chronological-message pages to the contact pipeline without opening a second
-  Telethon client.
+- **Bounded analysis export.** Four bearer-protected, GET-only internal routes expose normalized
+  account, dialog, chronological-message and newest-window projections to the contact pipeline
+  without opening a second Telethon client.
 - Built on [chigwell/telegram-mcp](https://github.com/chigwell/telegram-mcp) `v3.2.0`
   (116 tools), pinned in `services/telegram-userbot/requirements.txt`.

@@ -1,9 +1,13 @@
+import json
 import unittest
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from analysis_export import (
+    _message_payload,
     account_payload,
     dialogs_payload,
+    message_window_payload,
     messages_payload,
     parse_bounded_int,
     register_analysis_routes,
@@ -85,10 +89,18 @@ class FakeClient:
         for dialog in self.dialogs[:limit]:
             yield dialog
 
-    async def iter_messages(self, chat_id, min_id, reverse, limit):
+    async def get_messages(self, chat_id, min_id, limit):
+        if limit != 0:
+            raise AssertionError("message totals must use limit=0")
+        return SimpleNamespace(
+            total=len([item for item in self.messages if item.id > min_id])
+        )
+
+    async def iter_messages(self, chat_id, min_id, reverse, limit=None):
+        unseen = [item for item in self.messages if item.id > min_id]
         if not reverse:
-            raise AssertionError("messages must be requested oldest-first")
-        for message in [item for item in self.messages if item.id > min_id][:limit]:
+            unseen.reverse()
+        for message in unseen[:limit]:
             yield message
 
 
@@ -128,6 +140,52 @@ class AnalysisExportTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(payload["nextAfterId"], 12)
+
+    async def test_message_window_keeps_newest_complete_messages_in_chronological_order(self):
+        client = FakeClient()
+        client.messages = [FakeMessage(message_id, "x" * 100) for message_id in range(11, 16)]
+        max_chars = sum(
+            len(json.dumps(_message_payload(message), ensure_ascii=False, separators=(",", ":")))
+            for message in client.messages[-2:]
+        )
+
+        payload = await message_window_payload(
+            client,
+            chat_id=-1001,
+            after_id=10,
+            max_chars=max_chars,
+        )
+
+        self.assertEqual([item["id"] for item in payload["messages"]], [14, 15])
+        self.assertEqual(payload["latestMessageId"], 15)
+        self.assertEqual(payload["skippedMessages"], 3)
+
+    async def test_message_window_uses_javascript_utf16_character_units(self):
+        client = FakeClient()
+        client.messages = [
+            FakeMessage(message_id, "😀" * 1000) for message_id in range(11, 16)
+        ]
+        newest_sizes = [
+            len(
+                json.dumps(
+                    _message_payload(message),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-16-le")
+            )
+            // 2
+            for message in client.messages[-2:]
+        ]
+
+        payload = await message_window_payload(
+            client,
+            chat_id=-1001,
+            after_id=10,
+            max_chars=sum(newest_sizes),
+        )
+
+        self.assertEqual([item["id"] for item in payload["messages"]], [14, 15])
+        self.assertEqual(payload["skippedMessages"], 3)
 
 
 class BoundedIntTest(unittest.TestCase):
@@ -169,6 +227,7 @@ class AnalysisRoutesTest(unittest.IsolatedAsyncioTestCase):
                 ("/analysis/v1/account", ("GET",)),
                 ("/analysis/v1/dialogs", ("GET",)),
                 ("/analysis/v1/messages", ("GET",)),
+                ("/analysis/v1/message-window", ("GET",)),
             },
         )
         handler = app.routes[("/analysis/v1/dialogs", ("GET",))]
@@ -187,6 +246,20 @@ class AnalysisRoutesTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.payload, {"error": "invalid_parameters"})
+
+        window = app.routes[("/analysis/v1/message-window", ("GET",))]
+        for max_chars in ("0", "500001"):
+            response = await window(
+                FakeRequest(
+                    {
+                        "chat_id": "-1001",
+                        "after_id": "0",
+                        "max_chars": max_chars,
+                    }
+                )
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.payload, {"error": "invalid_parameters"})
 
 
 if __name__ == "__main__":
