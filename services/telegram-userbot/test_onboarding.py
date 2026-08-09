@@ -1,184 +1,289 @@
 import asyncio
 import contextlib
 import io
-import logging
-import os
 import unittest
-from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest import mock
 
 import onboarding
 from telethon import errors
 
 
-class FailingClient:
-    async def qr_login(self):
-        token = os.environ["TELEGRAM_BOT_TOKEN"]
-        raise RuntimeError(f"POST https://api.telegram.org/bot{token}/sendPhoto failed")
+PHONE = "+79991234567"
+CODE = "12345"
+PASSWORD = "synthetic-password-canary"
 
 
-class FakeQr:
-    def __init__(self, outcome):
-        self.url = "tg://login?token=synthetic"
-        self.expires = datetime.now(timezone.utc) + timedelta(seconds=30)
-        self.outcome = outcome
-        self.wait_calls = 0
+class FakeClient:
+    def __init__(self, sign_in_outcomes=(), *, send_code_error=None):
+        self.authorized = False
+        self.sign_in_outcomes = list(sign_in_outcomes)
+        self.send_code_error = send_code_error
+        self.send_code_calls = []
+        self.sign_in_calls = []
 
-    async def wait(self, timeout):
-        self.wait_calls += 1
-        if isinstance(self.outcome, BaseException):
-            raise self.outcome
+    async def is_user_authorized(self):
+        return self.authorized
 
+    async def send_code_request(self, phone):
+        self.send_code_calls.append(phone)
+        if self.send_code_error is not None:
+            raise self.send_code_error
+        return SimpleNamespace(phone_code_hash="synthetic_hash", timeout=120)
 
-class FakeQrClient:
-    def __init__(self, qr):
-        self.qr = qr
-
-    async def qr_login(self):
-        return self.qr
-
-
-class OnboardingSafetyTest(unittest.TestCase):
-    def setUp(self):
-        onboarding._state = {"phase": "idle", "detail": ""}
-
-    def test_qr_delivery_uses_only_the_explicit_bot_api_proxy(self):
-        calls = {}
-
-        class Response:
-            def raise_for_status(self):
-                calls["status_checked"] = True
-
-        class Client:
-            def __init__(self, **kwargs):
-                calls["client"] = kwargs
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *_args):
-                return None
-
-            async def post(self, url, **kwargs):
-                calls["post"] = {"url": url, **kwargs}
-                return Response()
-
-        env = {
-            "TELEGRAM_BOT_TOKEN": "123456:SYNTHETIC_TOKEN",
-            "TELEGRAM_ALLOWED_USER_IDS": "777",
-            "TELEGRAM_USERBOT_BOT_API_PROXY": "http://10.0.2.2:7890",
-            "HTTPS_PROXY": "http://ambient.invalid:9999",
-        }
-        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(
-            onboarding.httpx, "AsyncClient", Client
-        ):
-            asyncio.run(onboarding._send_qr_to_bot(b"png", "caption"))
-
-        self.assertEqual(
-            calls["client"],
+    async def sign_in(self, phone=None, code=None, *, password=None, phone_code_hash=None):
+        self.sign_in_calls.append(
             {
-                "timeout": 30,
-                "proxy": "http://10.0.2.2:7890",
-                "trust_env": False,
-            },
+                "phone": phone,
+                "code": code,
+                "password": password,
+                "phone_code_hash": phone_code_hash,
+            }
         )
-        self.assertEqual(calls["post"]["data"]["chat_id"], "777")
-        self.assertEqual(calls["post"]["files"]["photo"][1], b"png")
-        self.assertTrue(calls["status_checked"])
+        if self.sign_in_outcomes:
+            outcome = self.sign_in_outcomes.pop(0)
+            if isinstance(outcome, BaseException):
+                raise outcome
+        self.authorized = True
+        return SimpleNamespace(id=1)
 
-    def test_qr_failure_never_retains_or_logs_the_bot_token(self):
-        token = "123456:TOP_SECRET_BOT_TOKEN"
-        previous = os.environ.get("TELEGRAM_BOT_TOKEN")
-        os.environ["TELEGRAM_BOT_TOKEN"] = token
-        stderr = io.StringIO()
-        try:
+
+class PhoneLoginControllerTest(unittest.TestCase):
+    def test_phone_code_authorizes_and_clears_private_flow_state(self):
+        async def scenario():
+            client = FakeClient()
+            controller = onboarding.PhoneLoginController(client, now=lambda: 100.0)
+
+            self.assertEqual(
+                await controller.start(PHONE),
+                {"state": "code_sent", "reason": "code_sent"},
+            )
+            self.assertEqual(
+                await controller.submit_code(CODE),
+                {"state": "authorized", "reason": "ok"},
+            )
+            self.assertEqual(
+                client.sign_in_calls,
+                [
+                    {
+                        "phone": PHONE,
+                        "code": CODE,
+                        "password": None,
+                        "phone_code_hash": "synthetic_hash",
+                    }
+                ],
+            )
+            self.assertEqual(await controller.status(), {"state": "authorized", "reason": "ok"})
+            self.assertNotIn(PHONE, repr(controller))
+            self.assertNotIn("synthetic_hash", repr(controller))
+
+        asyncio.run(scenario())
+
+    def test_code_can_transition_to_2fa_without_retaining_password(self):
+        async def scenario():
+            client = FakeClient([errors.SessionPasswordNeededError(request=None)])
+            controller = onboarding.PhoneLoginController(client, now=lambda: 100.0)
+
+            await controller.start(PHONE)
+            self.assertEqual(
+                await controller.submit_code(CODE),
+                {"state": "password_needed", "reason": "password_needed"},
+            )
+            self.assertEqual(
+                await controller.submit_password(PASSWORD),
+                {"state": "authorized", "reason": "ok"},
+            )
+            self.assertEqual(client.sign_in_calls[-1]["password"], PASSWORD)
+            self.assertNotIn(PASSWORD, repr(controller))
+
+        asyncio.run(scenario())
+
+    def test_2fa_keeps_the_original_absolute_flow_deadline(self):
+        async def scenario():
+            clock = [100.0]
+            client = FakeClient([errors.SessionPasswordNeededError(request=None)])
+            controller = onboarding.PhoneLoginController(client, now=lambda: clock[0])
+
+            await controller.start(PHONE)
+            clock[0] = 399.0
+            self.assertEqual(
+                await controller.submit_code(CODE),
+                {"state": "password_needed", "reason": "password_needed"},
+            )
+            clock[0] = 400.0
+            self.assertEqual(
+                await controller.submit_password(PASSWORD),
+                {"state": "error", "reason": "flow_missing"},
+            )
+            self.assertEqual(len(client.sign_in_calls), 1)
+
+        asyncio.run(scenario())
+
+    def test_invalid_code_is_bounded_to_three_attempts(self):
+        async def scenario():
+            invalid = [errors.PhoneCodeInvalidError(request=None) for _ in range(3)]
+            controller = onboarding.PhoneLoginController(
+                FakeClient(invalid), now=lambda: 100.0
+            )
+            await controller.start(PHONE)
+
+            for _ in range(2):
+                self.assertEqual(
+                    await controller.submit_code("54321"),
+                    {"state": "code_sent", "reason": "code_invalid"},
+                )
+            self.assertEqual(
+                await controller.submit_code("54321"),
+                {"state": "error", "reason": "attempt_limit"},
+            )
+            self.assertEqual(
+                await controller.submit_code("54321"),
+                {"state": "error", "reason": "flow_missing"},
+            )
+
+        asyncio.run(scenario())
+
+    def test_invalid_password_is_bounded_to_three_attempts(self):
+        async def scenario():
+            outcomes = [errors.SessionPasswordNeededError(request=None)] + [
+                errors.PasswordHashInvalidError(request=None) for _ in range(3)
+            ]
+            controller = onboarding.PhoneLoginController(
+                FakeClient(outcomes), now=lambda: 100.0
+            )
+            await controller.start(PHONE)
+            await controller.submit_code(CODE)
+
+            for _ in range(2):
+                self.assertEqual(
+                    await controller.submit_password("wrong-password"),
+                    {"state": "password_needed", "reason": "password_invalid"},
+                )
+            self.assertEqual(
+                await controller.submit_password("wrong-password"),
+                {"state": "error", "reason": "attempt_limit"},
+            )
+
+        asyncio.run(scenario())
+
+    def test_expiry_cancel_and_restart_wipe_the_previous_flow(self):
+        async def scenario():
+            clock = [100.0]
+            first = FakeClient()
+            controller = onboarding.PhoneLoginController(first, now=lambda: clock[0])
+            await controller.start(PHONE)
+            clock[0] = 401.0
+            self.assertEqual(
+                await controller.status(),
+                {"state": "expired", "reason": "code_expired"},
+            )
+            self.assertEqual(
+                await controller.submit_code(CODE),
+                {"state": "error", "reason": "flow_missing"},
+            )
+
+            clock[0] = 500.0
+            await controller.start(PHONE)
+            self.assertEqual(
+                await controller.cancel(), {"state": "idle", "reason": "cancelled"}
+            )
+            self.assertNotIn(PHONE, repr(controller))
+
+            clock[0] = 531.0
+            await controller.start(PHONE)
+            clock[0] = 562.0
+            await controller.start("+447700900123")
+            self.assertEqual(first.send_code_calls[-1], "+447700900123")
+            self.assertNotIn(PHONE, repr(controller))
+
+        asyncio.run(scenario())
+
+    def test_repeated_code_requests_are_locally_rate_limited(self):
+        async def scenario():
+            clock = [100.0]
+            client = FakeClient()
+            controller = onboarding.PhoneLoginController(client, now=lambda: clock[0])
+
+            self.assertEqual(
+                await controller.start(PHONE),
+                {"state": "code_sent", "reason": "code_sent"},
+            )
+            clock[0] = 101.0
+            self.assertEqual(
+                await controller.start("+447700900123"),
+                {"state": "error", "reason": "phone_flood_wait"},
+            )
+            self.assertEqual(client.send_code_calls, [PHONE])
+
+            clock[0] = 131.0
+            self.assertEqual(
+                await controller.start("+447700900123"),
+                {"state": "code_sent", "reason": "code_sent"},
+            )
+            self.assertEqual(client.send_code_calls, [PHONE, "+447700900123"])
+
+        asyncio.run(scenario())
+
+    def test_hung_telethon_operation_times_out_and_releases_the_lock(self):
+        class HangingClient(FakeClient):
+            async def send_code_request(self, phone):
+                self.send_code_calls.append(phone)
+                await asyncio.Event().wait()
+
+        async def scenario():
+            clock = [100.0]
+            client = HangingClient()
+            controller = onboarding.PhoneLoginController(client, now=lambda: clock[0])
+
+            with mock.patch.object(onboarding, "_OPERATION_TIMEOUT_SECONDS", 0.01):
+                self.assertEqual(
+                    await asyncio.wait_for(controller.start(PHONE), timeout=0.2),
+                    {"state": "error", "reason": "transport_failed"},
+                )
+                clock[0] = 131.0
+                client.send_code_request = FakeClient.send_code_request.__get__(client)
+                self.assertEqual(
+                    await asyncio.wait_for(controller.start(PHONE), timeout=0.2),
+                    {"state": "code_sent", "reason": "code_sent"},
+                )
+
+        asyncio.run(scenario())
+
+    def test_validation_and_telethon_failures_return_fixed_secret_free_reasons(self):
+        async def scenario():
+            cases = (
+                ("invalid", {"state": "error", "reason": "phone_invalid"}),
+                (
+                    "+1234567",
+                    {"state": "error", "reason": "phone_invalid"},
+                ),
+            )
+            controller = onboarding.PhoneLoginController(FakeClient(), now=lambda: 100.0)
+            for phone, expected in cases:
+                self.assertEqual(await controller.start(phone), expected)
+
+            banned = onboarding.PhoneLoginController(
+                FakeClient(send_code_error=errors.PhoneNumberBannedError(request=None)),
+                now=lambda: 100.0,
+            )
+            stderr = io.StringIO()
             with contextlib.redirect_stderr(stderr):
-                asyncio.run(onboarding._run_qr_login(FailingClient()))
-            rendered = f"{onboarding._state} {stderr.getvalue()}"
-            self.assertNotIn(token, rendered)
-            self.assertEqual(onboarding._state["phase"], "error")
-            self.assertEqual(onboarding._state["detail"], "qr_transport_failed")
-        finally:
-            if previous is None:
-                os.environ.pop("TELEGRAM_BOT_TOKEN", None)
-            else:
-                os.environ["TELEGRAM_BOT_TOKEN"] = previous
+                result = await banned.start(PHONE)
+            self.assertEqual(result, {"state": "error", "reason": "phone_invalid"})
+            self.assertNotIn(PHONE, stderr.getvalue())
 
-    def test_qr_timeout_sends_only_one_image_and_reports_expired(self):
-        qr = FakeQr(asyncio.TimeoutError())
-        with mock.patch.object(
-            onboarding, "_send_qr_to_bot", new=mock.AsyncMock()
-        ) as send:
-            asyncio.run(onboarding._run_qr_login(FakeQrClient(qr)))
+            transport = onboarding.PhoneLoginController(
+                FakeClient(send_code_error=RuntimeError(f"transport failed for {PHONE}")),
+                now=lambda: 100.0,
+            )
+            with contextlib.redirect_stderr(stderr):
+                result = await transport.start(PHONE)
+            self.assertEqual(
+                result, {"state": "error", "reason": "transport_failed"}
+            )
+            self.assertNotIn(PHONE, stderr.getvalue())
 
-        self.assertEqual(send.await_count, 1)
-        self.assertEqual(qr.wait_calls, 1)
-        self.assertEqual(onboarding._state["phase"], "expired")
-        self.assertEqual(onboarding._state["detail"], "qr_expired")
-
-    def test_qr_protocol_errors_are_classified_without_exception_text(self):
-        cases = (
-            (errors.AuthTokenExpiredError(request=None), "expired", "qr_expired"),
-            (
-                errors.AuthTokenAlreadyAcceptedError(request=None),
-                "error",
-                "qr_already_used",
-            ),
-            (errors.AuthTokenInvalidError(request=None), "error", "qr_invalid"),
-            (TypeError("secret response body"), "error", "qr_unexpected_response"),
-        )
-        for exception, phase, detail in cases:
-            with self.subTest(exception=type(exception).__name__), mock.patch.object(
-                onboarding, "_send_qr_to_bot", new=mock.AsyncMock()
-            ):
-                stderr = io.StringIO()
-                with contextlib.redirect_stderr(stderr):
-                    asyncio.run(
-                        onboarding._run_qr_login(FakeQrClient(FakeQr(exception)))
-                    )
-                self.assertEqual(onboarding._state, {"phase": phase, "detail": detail})
-                self.assertNotIn("secret response body", stderr.getvalue())
-
-    def test_qr_delivery_suppresses_http_client_urls_containing_bot_token(self):
-        class Response:
-            def raise_for_status(self):
-                return None
-
-        class Client:
-            def __init__(self, **_kwargs):
-                pass
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *_args):
-                return None
-
-            async def post(self, url, **_kwargs):
-                logging.getLogger("httpx").info("HTTP Request: POST %s", url)
-                return Response()
-
-        token = "123456:SYNTHETIC_LOG_SECRET"
-        stream = io.StringIO()
-        handler = logging.StreamHandler(stream)
-        logger = logging.getLogger("httpx")
-        previous_level = logger.level
-        logger.addHandler(handler)
-        logger.setLevel(logging.INFO)
-        try:
-            with mock.patch.dict(
-                os.environ,
-                {
-                    "TELEGRAM_BOT_TOKEN": token,
-                    "TELEGRAM_ALLOWED_USER_IDS": "777",
-                },
-                clear=False,
-            ), mock.patch.object(onboarding.httpx, "AsyncClient", Client):
-                asyncio.run(onboarding._send_qr_to_bot(b"png", "caption"))
-            self.assertNotIn(token, stream.getvalue())
-        finally:
-            logger.removeHandler(handler)
-            logger.setLevel(previous_level)
+        asyncio.run(scenario())
 
 
 if __name__ == "__main__":

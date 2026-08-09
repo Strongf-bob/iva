@@ -16,12 +16,8 @@ from telegram_mcp.runtime import mcp, _apply_exposed_tools_mode  # noqa: E402
 import telegram_mcp.tools  # noqa: E402,F401
 
 
-ONBOARDING_TOOLS = {
-    "qr_login_start",
-    "qr_login_status",
-    "qr_login_password",
-    "login_status",
-}
+ONBOARDING_TOOLS = {"login_status"}
+REMOVED_QR_TOOLS = {"qr_login_start", "qr_login_status", "qr_login_password"}
 
 
 class ReadOnlyRegistryTest(unittest.TestCase):
@@ -52,11 +48,11 @@ class ReadOnlyRegistryTest(unittest.TestCase):
         tools = list(mcp._tool_manager.list_tools())
         names = {tool.name for tool in tools}
         self.assertEqual(names, APPROVED_READ_ONLY_TOOLS | ONBOARDING_TOOLS)
+        self.assertTrue(REMOVED_QR_TOOLS.isdisjoint(names))
         for tool in tools:
-            expected_read_only = tool.name not in {"qr_login_start", "qr_login_password"}
             self.assertEqual(
                 getattr(tool.annotations, "readOnlyHint", False),
-                expected_read_only,
+                True,
                 f"incorrect readOnlyHint: {tool.name}",
             )
 

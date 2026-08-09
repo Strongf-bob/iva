@@ -353,7 +353,7 @@ export function createMenu({
       const del = await tg("deleteMessage", {
         chat_id: chatId,
         message_id: msg.message_id,
-      });
+      }).catch(() => ({ ok: false }));
       if (!telegramCallOk(del)) {
         await deps.reply(
           chatId,
@@ -362,6 +362,7 @@ export function createMenu({
             "Не смог удалить сообщение — удали его вручную.",
           ),
         );
+        return true;
       }
     }
     const screen = typeof st.screen === "string" ? st.screen : "";

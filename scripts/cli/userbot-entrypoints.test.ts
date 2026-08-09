@@ -268,10 +268,7 @@ void test("userbot setup creates a 0600 token and preserves venv, unit, activati
     events[1]?.replaceAll("/private/var/", "/var/"),
     `uv:pip sync --python ${venvPython} --require-hashes --strict ${join(dirname(dirname(dirname(venvPython))), "requirements.lock")}`,
   );
-  assert.equal(
-    events[2],
-    "python:-c import telethon, telegram_mcp, qrcode, mcp",
-  );
+  assert.equal(events[2], "python:-c import telethon, telegram_mcp, mcp");
   const reload = events.indexOf("systemctl:daemon-reload");
   const enable = events.indexOf(
     "systemctl:enable --now iva-telegram-userbot.service",

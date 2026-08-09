@@ -96,6 +96,12 @@ void test("production Compose requires an immutable image and narrow mounts", ()
   }
   assert.equal(compose.split("./data:/app/data\n").length - 1, 2);
   assert.equal(compose.split("./data:/app/data:ro").length - 1, 1);
+  assert.equal(
+    compose.match(
+      /telegram-userbot-onboarding-auth:\/app\/userbot-onboarding-auth/gu,
+    )?.length,
+    2,
+  );
   assert.doesNotMatch(compose, /docker\.sock/u);
   assert.doesNotMatch(compose, /^\s*-\s*["']?8723:8723/mu);
 
@@ -106,6 +112,24 @@ void test("production Compose requires an immutable image and narrow mounts", ()
   assert.notEqual(userbotStart, -1);
   assert.notEqual(networksStart, -1);
   const userbot = compose.slice(userbotStart, networksStart);
+  const iva = compose.slice(
+    compose.indexOf("\n  iva:\n"),
+    compose.indexOf("\n  telegram-poll:\n"),
+  );
+  const poll = compose.slice(
+    compose.indexOf("\n  telegram-poll:\n"),
+    userbotStart,
+  );
+  assert.doesNotMatch(iva, /TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE/u);
+  assert.doesNotMatch(iva, /telegram-userbot-onboarding-auth/u);
+  assert.match(
+    poll,
+    /TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE: \/app\/userbot-onboarding-auth\/token/u,
+  );
+  assert.match(
+    poll,
+    /telegram-userbot-onboarding-auth:\/app\/userbot-onboarding-auth:ro/u,
+  );
   assert.match(userbot, /TELEGRAM_EXPOSED_TOOLS: "read-only"/u);
   assert.match(userbot, /if \[ -x \/opt\/iva-userbot-venv\/bin\/python \]/u);
   assert.match(userbot, /exec sleep infinity/u);
@@ -127,9 +151,16 @@ void test("production Compose requires an immutable image and narrow mounts", ()
     userbot,
     /TELEGRAM_PROXY_RDNS: \$\{TELEGRAM_USERBOT_PROXY_RDNS:-true\}/u,
   );
+  assert.doesNotMatch(userbot, /TELEGRAM_USERBOT_BOT_API_PROXY/u);
+  assert.doesNotMatch(userbot, /TELEGRAM_BOT_TOKEN/u);
+  assert.doesNotMatch(userbot, /TELEGRAM_ALLOWED_USER_IDS/u);
   assert.match(
     userbot,
-    /TELEGRAM_USERBOT_BOT_API_PROXY: \$\{TELEGRAM_USERBOT_BOT_API_PROXY:-\}/u,
+    /TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE: \/app\/userbot-onboarding-auth\/token/u,
+  );
+  assert.match(
+    userbot,
+    /telegram-userbot-onboarding-auth:\/app\/userbot-onboarding-auth(?!:ro)/u,
   );
   assert.match(userbot, /\.\/data:\/app\/data:ro/u);
   assert.match(userbot, /telegram-userbot-state:\/app\/userbot-state/u);
@@ -145,7 +176,10 @@ void test("production Compose requires an immutable image and narrow mounts", ()
     compose.match(/telegram-userbot-state:\/app\/userbot-state/gu)?.length,
     1,
   );
-  assert.match(compose, /^volumes:\s*\n\s+telegram-userbot-state:$/mu);
+  assert.match(
+    compose,
+    /^volumes:\s*\n\s+telegram-userbot-state:\s*\n\s+telegram-userbot-onboarding-auth:$/mu,
+  );
   assert.equal(
     compose.match(/TELEGRAM_USERBOT_RUNTIME: "container"/gu)?.length,
     2,
@@ -167,7 +201,7 @@ void test("production Compose requires an immutable image and narrow mounts", ()
   assert.match(runtime, /^TELEGRAM_USERBOT_PROXY_HOST=$/mu);
   assert.match(runtime, /^TELEGRAM_USERBOT_PROXY_PORT=$/mu);
   assert.match(runtime, /^TELEGRAM_USERBOT_PROXY_RDNS=true$/mu);
-  assert.match(runtime, /^TELEGRAM_USERBOT_BOT_API_PROXY=$/mu);
+  assert.doesNotMatch(runtime, /^TELEGRAM_USERBOT_BOT_API_PROXY=/mu);
 
   const requirements = read("services/telegram-userbot/requirements.in");
   const lock = read("services/telegram-userbot/requirements.lock");

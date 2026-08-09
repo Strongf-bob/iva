@@ -18,14 +18,29 @@ import {
   writeUserbotCredentials,
 } from "../userbot-container-runtime.ts";
 import { probeUserbotHealth } from "../userbot-health.ts";
+import { createUserbotOnboardingClient } from "../userbot-onboarding-client.ts";
 
 type ErrorLike = { code?: unknown; message?: unknown };
 type Health = { state: string };
+type OnboardingResult = { state: string; reason: string };
+type OnboardingClient = {
+  start: (phone: string) => Promise<OnboardingResult>;
+  code: (code: string) => Promise<OnboardingResult>;
+  password: (password: string) => Promise<OnboardingResult>;
+  cancel: () => Promise<OnboardingResult>;
+  status: () => Promise<OnboardingResult>;
+};
+type UserbotFlowData = {
+  apiId?: string;
+  codeDigits?: string;
+  loginExpiresAt?: number;
+  loginExpiryScheduledFor?: number;
+};
 type MenuState = {
   chatId: number | string;
   userId: string;
   screen: string;
-  data: { ub?: { apiId?: string } | null };
+  data: { ub?: UserbotFlowData | null };
   awaitText?: { kind: string; secret: boolean; data: { step?: string } } | null;
 };
 type View = { text: string; rows: Array<Array<unknown>> };
@@ -39,6 +54,9 @@ type MenuContext = {
       runtime?: string;
       mcpUrl?: string;
     }) => Promise<Health>;
+    userbotOnboarding?: OnboardingClient;
+    now?: () => number;
+    schedule?: (callback: () => void, delayMs: number) => unknown;
     runUserbotSetup?: () => Promise<void>;
     log?: (...parts: unknown[]) => void;
   };
@@ -67,10 +85,21 @@ const errorMessage = (error: unknown) => (error as ErrorLike).message;
 const SID = "ub";
 const PARENT = "r";
 const SVC = "iva-telegram-userbot.service";
+const LOGIN_TTL_MS = 5 * 60 * 1000;
 
 const isPrivate = (st: MenuState) => Number(st.chatId) > 0;
 const isContainerRuntime = () =>
   process.env.TELEGRAM_USERBOT_RUNTIME === "container";
+const phoneLoginAvailable = (ctx: MenuContext) =>
+  Boolean(
+    ctx.deps.userbotOnboarding ||
+    (isContainerRuntime() &&
+      process.env.TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE),
+  );
+
+function onboardingFor(ctx: MenuContext): OnboardingClient {
+  return ctx.deps.userbotOnboarding || createUserbotOnboardingClient();
+}
 
 export function userbotAllowed(
   multiUser = process.env.ASSISTANT_MULTI_USER === "1",
@@ -261,10 +290,15 @@ async function buildScreen(st: MenuState, ctx: MenuContext): Promise<View> {
 
   const accountHint =
     status.state === "unauthorized"
-      ? T(
-          "Proxy is on, but the Telegram account is not connected. Message the bot: «connect my telegram» to scan a QR.",
-          "Прокси включён, но аккаунт Telegram не подключён. Напиши боту: «подключи мой телеграм», чтобы отсканировать QR.",
-        )
+      ? phoneLoginAvailable(ctx)
+        ? T(
+            "Proxy is on, but the Telegram account is not connected. Log in by phone; the code is entered with private keypad buttons.",
+            "Прокси включён, но аккаунт Telegram не подключён. Войди по номеру; код вводится приватными кнопками.",
+          )
+        : T(
+            "Phone login is disabled in host-native mode because it cannot isolate onboarding authority from model shell tools. Use container production.",
+            "Вход по номеру отключён в host-native режиме: там нельзя изолировать права онбординга от shell-инструментов модели. Используй container production.",
+          )
       : T(
           "Proxy and Telegram account are ready.",
           "Прокси и аккаунт Telegram готовы.",
@@ -273,6 +307,16 @@ async function buildScreen(st: MenuState, ctx: MenuContext): Promise<View> {
   return {
     text,
     rows: [
+      ...(status.state === "unauthorized" && phoneLoginAvailable(ctx)
+        ? [
+            [
+              ctx.btn(
+                T("Log in by phone", "Войти по номеру"),
+                `iva_menu:${SID}:do:login`,
+              ),
+            ],
+          ]
+        : []),
       [
         ctx.btn(T("Turn off", "Выключить"), `iva_menu:${SID}:do:off`),
         ctx.btn(T("🔄 Refresh", "🔄 Обновить"), `iva_menu:${SID}:rf`),
@@ -280,6 +324,176 @@ async function buildScreen(st: MenuState, ctx: MenuContext): Promise<View> {
       ctx.backRow(PARENT),
     ],
   };
+}
+
+function promptPhone(st: MenuState, ctx: MenuContext) {
+  st.data.ub = {};
+  st.awaitText = { kind: "ubphone", secret: true, data: { step: "phone" } };
+  return ctx.flows.screen(
+    st,
+    ctx.tr(
+      "Send the phone number with country code, for example +79991234567. I will delete the message before processing it.",
+      "Пришли номер с кодом страны, например +79991234567. Сообщение удалю до обработки.",
+    ),
+    [[ctx.btn(ctx.tr("Cancel", "Отмена"), `iva_menu:${SID}:do:cancel_login`)]],
+  );
+}
+
+function promptPassword(st: MenuState, ctx: MenuContext) {
+  const flow = st.data.ub;
+  st.data.ub = {
+    loginExpiresAt: flow?.loginExpiresAt,
+    loginExpiryScheduledFor: flow?.loginExpiryScheduledFor,
+  };
+  st.awaitText = {
+    kind: "ubpassword",
+    secret: true,
+    data: { step: "password" },
+  };
+  return ctx.flows.screen(
+    st,
+    ctx.tr(
+      "Telegram requires the 2FA password. Send it now; I will delete the message before processing it.",
+      "Telegram запросил пароль 2FA. Пришли его сейчас; сообщение удалю до обработки.",
+    ),
+    [[ctx.btn(ctx.tr("Cancel", "Отмена"), `iva_menu:${SID}:do:cancel_login`)]],
+  );
+}
+
+function codeKeypad(st: MenuState, ctx: MenuContext, note = "") {
+  const now = ctx.deps.now?.() ?? Date.now();
+  if (st.data.ub?.loginExpiresAt && now >= st.data.ub.loginExpiresAt) {
+    st.data.ub = null;
+    st.awaitText = null;
+    return renderExpired(st, ctx);
+  }
+  const digits = st.data.ub?.codeDigits ?? "";
+  st.data.ub = { ...st.data.ub, codeDigits: digits };
+  st.awaitText = null;
+  const button = (digit: string) =>
+    ctx.btn(digit, `iva_menu:${SID}:do:digit:${digit}`);
+  const text = [
+    ctx.tr(
+      "Enter the code Telegram sent to the official app. The digits are never shown or sent to the model.",
+      "Введи код, который Telegram прислал в официальное приложение. Цифры не показываются и не отправляются модели.",
+    ),
+    "",
+    digits ? "•".repeat(digits.length) : ctx.tr("No digits yet", "Пока пусто"),
+    note ? `\n${note}` : "",
+  ].join("\n");
+  return ctx.flows.screen(st, text, [
+    [button("1"), button("2"), button("3")],
+    [button("4"), button("5"), button("6")],
+    [button("7"), button("8"), button("9")],
+    [
+      ctx.btn(ctx.tr("Erase", "Стереть"), `iva_menu:${SID}:do:erase`),
+      button("0"),
+      ctx.btn(ctx.tr("Done", "Готово"), `iva_menu:${SID}:do:submit_code`),
+    ],
+    [ctx.btn(ctx.tr("Cancel", "Отмена"), `iva_menu:${SID}:do:cancel_login`)],
+  ]);
+}
+
+function reasonText(result: OnboardingResult, ctx: MenuContext): string {
+  const messages: Record<string, string> = {
+    phone_invalid: ctx.tr("Invalid phone number.", "Неверный номер телефона."),
+    phone_flood_wait: ctx.tr(
+      "Telegram temporarily limited login attempts. Try later.",
+      "Telegram временно ограничил попытки входа. Попробуй позже.",
+    ),
+    code_invalid: ctx.tr("The code is invalid.", "Код неверный."),
+    code_expired: ctx.tr(
+      "The code expired. Start again.",
+      "Код истёк. Начни заново.",
+    ),
+    password_invalid: ctx.tr(
+      "The 2FA password is invalid.",
+      "Пароль 2FA неверный.",
+    ),
+    attempt_limit: ctx.tr(
+      "Too many failed attempts. Start again later.",
+      "Слишком много ошибок. Начни заново позже.",
+    ),
+    flow_missing: ctx.tr("The login flow expired.", "Попытка входа истекла."),
+    transport_failed: ctx.tr(
+      "Telegram is temporarily unavailable.",
+      "Telegram временно недоступен.",
+    ),
+  };
+  return (
+    messages[result.reason] || ctx.tr("Login failed.", "Вход не выполнен.")
+  );
+}
+
+function renderExpired(st: MenuState, ctx: MenuContext) {
+  return ctx.flows.screen(
+    st,
+    reasonText({ state: "expired", reason: "code_expired" }, ctx),
+    [
+      [ctx.btn(ctx.tr("Try again", "Повторить"), `iva_menu:${SID}:do:login`)],
+      ctx.backRow(PARENT),
+    ],
+  );
+}
+
+async function renderOnboardingResult(
+  result: OnboardingResult,
+  st: MenuState,
+  ctx: MenuContext,
+) {
+  if (result.state === "code_sent") {
+    const now = ctx.deps.now?.() ?? Date.now();
+    const deadline = st.data.ub?.loginExpiresAt ?? now + LOGIN_TTL_MS;
+    const needsTimer = st.data.ub?.loginExpiryScheduledFor !== deadline;
+    st.data.ub = {
+      ...st.data.ub,
+      loginExpiresAt: deadline,
+      loginExpiryScheduledFor: deadline,
+    };
+    if (needsTimer) {
+      const schedule = ctx.deps.schedule ?? setTimeout;
+      schedule(
+        () => {
+          if (st.data.ub?.loginExpiresAt === deadline) {
+            st.data.ub = null;
+            // Never clear an active secret capture from a background timer. Telegram
+            // can report both edit and fallback-send failure without throwing, leaving
+            // the old 2FA prompt visible. A late password must therefore stay in this
+            // deterministic delete-first handler until the user retries or navigates.
+            void renderExpired(st, ctx).catch(() => {});
+          }
+        },
+        Math.max(0, deadline - now),
+      );
+    }
+    return codeKeypad(
+      st,
+      ctx,
+      result.reason === "code_invalid" ? reasonText(result, ctx) : "",
+    );
+  }
+  if (result.state === "password_needed") return promptPassword(st, ctx);
+  if (result.state === "authorized") {
+    st.awaitText = null;
+    st.data.ub = null;
+    return ctx.flows.screen(
+      st,
+      ctx.tr(
+        "✅ Telegram account connected.",
+        "✅ Аккаунт Telegram подключён.",
+      ),
+      [
+        [ctx.btn(ctx.tr("Refresh", "Обновить"), `iva_menu:${SID}:rf`)],
+        ctx.backRow(PARENT),
+      ],
+    );
+  }
+  st.awaitText = null;
+  st.data.ub = null;
+  return ctx.flows.screen(st, reasonText(result, ctx), [
+    [ctx.btn(ctx.tr("Try again", "Повторить"), `iva_menu:${SID}:do:login`)],
+    ctx.backRow(PARENT),
+  ]);
 }
 
 // Приглашение ввести api_id или api_hash (двухшаговый секретный приём).
@@ -335,6 +549,80 @@ export default {
       }
       st.data.ub = {};
       return promptCred(st, ctx, "api_id");
+    }
+
+    if (step === "login") {
+      if (!phoneLoginAvailable(ctx)) return ctx.show(st, SID);
+      if (!isPrivate(st)) {
+        st.awaitText = null;
+        return ctx.flows.screen(
+          st,
+          ctx.tr(
+            "Phone login is available only in a private chat.",
+            "Вход по номеру доступен только в личном чате.",
+          ),
+          [ctx.backRow(PARENT)],
+        );
+      }
+      return promptPhone(st, ctx);
+    }
+
+    if (step === "digit") {
+      const digit = args[1];
+      const current = st.data.ub?.codeDigits;
+      if (typeof current !== "string" || !/^[0-9]$/u.test(digit || ""))
+        return ctx.show(st, SID);
+      if (current.length < 8)
+        st.data.ub = { ...st.data.ub, codeDigits: current + digit };
+      return codeKeypad(st, ctx);
+    }
+
+    if (step === "erase") {
+      if (typeof st.data.ub?.codeDigits === "string")
+        st.data.ub = {
+          ...st.data.ub,
+          codeDigits: st.data.ub.codeDigits.slice(0, -1),
+        };
+      return codeKeypad(st, ctx);
+    }
+
+    if (step === "submit_code") {
+      const code = st.data.ub?.codeDigits || "";
+      if (!/^[0-9]{5,8}$/u.test(code)) {
+        return codeKeypad(
+          st,
+          ctx,
+          ctx.tr("Enter 5-8 digits.", "Введи 5-8 цифр."),
+        );
+      }
+      st.data.ub = {
+        loginExpiresAt: st.data.ub?.loginExpiresAt,
+        loginExpiryScheduledFor: st.data.ub?.loginExpiryScheduledFor,
+      };
+      try {
+        return await renderOnboardingResult(
+          await onboardingFor(ctx).code(code),
+          st,
+          ctx,
+        );
+      } catch {
+        return renderOnboardingResult(
+          { state: "error", reason: "transport_failed" },
+          st,
+          ctx,
+        );
+      }
+    }
+
+    if (step === "cancel_login") {
+      try {
+        await onboardingFor(ctx).cancel();
+      } catch {
+        // Local state still clears; the server flow expires after five minutes.
+      }
+      st.awaitText = null;
+      st.data.ub = null;
+      return ctx.show(st, SID);
     }
 
     if (step === "setup") {
@@ -408,6 +696,64 @@ export default {
   },
 
   texts: {
+    async ubphone(
+      text: unknown,
+      _msg: unknown,
+      st: MenuState,
+      ctx: MenuContext,
+    ) {
+      const phone = String(text)
+        .trim()
+        .replace(/[\s()-]/gu, "");
+      if (!/^\+[0-9]{8,15}$/u.test(phone)) return promptPhone(st, ctx);
+      st.awaitText = null;
+      try {
+        return await renderOnboardingResult(
+          await onboardingFor(ctx).start(phone),
+          st,
+          ctx,
+        );
+      } catch {
+        return renderOnboardingResult(
+          { state: "error", reason: "transport_failed" },
+          st,
+          ctx,
+        );
+      }
+    },
+
+    async ubpassword(
+      text: unknown,
+      _msg: unknown,
+      st: MenuState,
+      ctx: MenuContext,
+    ) {
+      if (st.data.ub === null) {
+        st.awaitText = {
+          kind: "ubpassword",
+          secret: true,
+          data: { step: "expired" },
+        };
+        return renderExpired(st, ctx);
+      }
+      const password = String(text);
+      if (!password || password.length > 256) return promptPassword(st, ctx);
+      st.awaitText = null;
+      try {
+        return await renderOnboardingResult(
+          await onboardingFor(ctx).password(password),
+          st,
+          ctx,
+        );
+      } catch {
+        return renderOnboardingResult(
+          { state: "error", reason: "transport_failed" },
+          st,
+          ctx,
+        );
+      }
+    },
+
     // Двухшаговый приём: сначала api_id (число), затем api_hash. Сообщения уже удалены движком.
     async ubcred(
       text: unknown,

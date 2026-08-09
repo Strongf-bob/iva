@@ -3,8 +3,9 @@
 // владелец сессии, живёт как systemd-сервис или внутренний Compose sidecar. Тулы видны модели как
 // connection__telegram-userbot__<tool> и находятся через connection_search.
 //
-// Онбординг (QR-логин) и правила безопасности — в скилле telegram-userbot.
-// URL/токен модель НЕ видит: они на стороне рантайма.
+// Онбординг по телефону и правила безопасности — в скилле telegram-userbot.
+// Значения не становятся аргументами MCP-тулов. В container production отдельный
+// onboarding-bearer смонтирован только в poller и sidecar, но не в контейнер агента.
 import { defineMcpClientConnection } from "eve/connections";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -40,7 +41,7 @@ export default defineMcpClientConnection({
   description:
     "Личный Telegram владельца (userbot, НЕ бот-аккаунт): только чтение диалогов, " +
     "истории и поиск. Отправка и другие изменения отключены на MCP-сервере. " +
-    "Требует подключения аккаунта через QR (скилл telegram-userbot).",
+    "Подключение аккаунта выполняется через приватный экран userbot в /menu.",
   auth: {
     getToken: () => Promise.resolve({ token: proxyToken() }),
   },

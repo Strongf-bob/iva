@@ -209,3 +209,255 @@ test("container menu stores credentials outside .env and toggles the sidecar mar
   });
   assert.doesNotMatch(JSON.stringify(rendered), new RegExp(apiHash));
 });
+
+type PhoneCall = { operation: string; value?: string };
+
+async function phoneMenuFixture({ withOnboarding = true } = {}) {
+  const root = await mkdtemp(join(tmpdir(), "iva-userbot-phone-menu-"));
+  const envPath = join(root, ".env");
+  await writeFile(
+    envPath,
+    "TELEGRAM_API_ID=12345\nTELEGRAM_API_HASH=abcdef123456\n",
+    { mode: 0o600 },
+  );
+  const rendered: Rendered[] = [];
+  const calls: PhoneCall[] = [];
+  const scheduled: Array<() => void> = [];
+  let now = 1_000;
+  const results = {
+    start: { state: "code_sent", reason: "code_sent" },
+    code: { state: "password_needed", reason: "password_needed" },
+    password: { state: "authorized", reason: "ok" },
+    cancel: { state: "idle", reason: "cancelled" },
+    status: { state: "code_sent", reason: "code_sent" },
+  };
+  const onboarding = {
+    start: (value: string) => {
+      calls.push({ operation: "start", value });
+      return Promise.resolve(results.start);
+    },
+    code: (value: string) => {
+      calls.push({ operation: "code", value });
+      return Promise.resolve(results.code);
+    },
+    password: (value: string) => {
+      calls.push({ operation: "password", value });
+      return Promise.resolve(results.password);
+    },
+    cancel: () => {
+      calls.push({ operation: "cancel" });
+      return Promise.resolve(results.cancel);
+    },
+    status: () => Promise.resolve(results.status),
+  };
+  const state = {
+    chatId: 1,
+    userId: "2",
+    screen: "ub",
+    data: {
+      ub: null as {
+        apiId?: string;
+        codeDigits?: string;
+        loginExpiresAt?: number;
+        loginExpiryScheduledFor?: number;
+      } | null,
+    },
+    awaitText: null as {
+      kind: string;
+      secret: boolean;
+      data: { step?: string };
+    } | null,
+  };
+  const ctx = {
+    deps: {
+      root,
+      envPath,
+      probeUserbotHealth: () =>
+        Promise.resolve({
+          state: "unauthorized",
+          reason: "telegram_login_required",
+        }),
+      ...(withOnboarding ? { userbotOnboarding: onboarding } : {}),
+      now: () => now,
+      schedule: (callback: () => void) => scheduled.push(callback),
+      log: (...parts: unknown[]) => {
+        rendered.push({ text: parts.map(String).join(" "), rows: [] });
+      },
+    },
+    flows: {
+      get: () => state,
+      screen: async (_state: unknown, text: string, rows: unknown) => {
+        rendered.push({ text, rows });
+      },
+    },
+    tr: (en: string) => en,
+    btn: (text: string, callback_data: string) => ({ text, callback_data }),
+    backRow: () => [{ text: "Back", callback_data: "iva_menu:r:o" }],
+    show: async () => {},
+  };
+  return {
+    state,
+    ctx,
+    calls,
+    rendered,
+    results,
+    scheduled,
+    setNow: (value: number) => {
+      now = value;
+    },
+  };
+}
+
+test("unauthorized userbot screen offers phone login instead of QR", async () => {
+  const { state, ctx } = await phoneMenuFixture();
+
+  const view = await userbot.render(state, ctx);
+  const serialized = JSON.stringify(view);
+
+  assert.match(serialized, /Log in by phone/u);
+  assert.match(serialized, /iva_menu:ub:do:login/u);
+  assert.doesNotMatch(serialized, /QR/u);
+});
+
+test("host-native userbot screen fails closed even if a token-file env leaks", async () => {
+  const previousTokenFile = process.env.TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE;
+  const previousRuntime = process.env.TELEGRAM_USERBOT_RUNTIME;
+  process.env.TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE = "/synthetic/token";
+  delete process.env.TELEGRAM_USERBOT_RUNTIME;
+  try {
+    const { state, ctx } = await phoneMenuFixture({ withOnboarding: false });
+
+    const view = await userbot.render(state, ctx);
+    const serialized = JSON.stringify(view);
+
+    assert.match(serialized, /Phone login is disabled in host-native mode/u);
+    assert.doesNotMatch(serialized, /iva_menu:ub:do:login/u);
+  } finally {
+    if (previousTokenFile === undefined)
+      delete process.env.TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE;
+    else process.env.TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE = previousTokenFile;
+    if (previousRuntime === undefined)
+      delete process.env.TELEGRAM_USERBOT_RUNTIME;
+    else process.env.TELEGRAM_USERBOT_RUNTIME = previousRuntime;
+  }
+});
+
+test("phone login accepts a deleted private number and renders a masked keypad", async () => {
+  const { state, ctx, calls, rendered } = await phoneMenuFixture();
+
+  await userbot.on("do", ["login"], state, ctx);
+  assert.deepEqual(state.awaitText, {
+    kind: "ubphone",
+    secret: true,
+    data: { step: "phone" },
+  });
+
+  const phone = "+7 (999) 765-43-21";
+  await userbot.texts.ubphone(phone, {}, state, ctx);
+  assert.deepEqual(calls.at(-1), {
+    operation: "start",
+    value: "+79997654321",
+  });
+  assert.equal(state.awaitText, null);
+  assert.equal(state.data.ub?.codeDigits, "");
+  const output = JSON.stringify(rendered);
+  assert.match(output, /Enter the code/u);
+  assert.match(output, /iva_menu:ub:do:digit:1/u);
+  assert.doesNotMatch(output, /79997654321/u);
+});
+
+test("keypad masks digits and transitions to a secret 2FA prompt", async () => {
+  const { state, ctx, calls, rendered } = await phoneMenuFixture();
+  state.data.ub = { codeDigits: "" };
+
+  for (const digit of ["1", "2", "3", "4", "5"]) {
+    await userbot.on("do", ["digit", digit], state, ctx);
+  }
+  assert.equal(state.data.ub.codeDigits, "12345");
+  assert.match(rendered.at(-1)?.text ?? "", /•••••/u);
+  assert.doesNotMatch(rendered.at(-1)?.text ?? "", /12345/u);
+
+  await userbot.on("do", ["submit_code"], state, ctx);
+  assert.deepEqual(calls.at(-1), { operation: "code", value: "12345" });
+  assert.equal(state.data.ub?.codeDigits, undefined);
+  assert.deepEqual(state.awaitText, {
+    kind: "ubpassword",
+    secret: true,
+    data: { step: "password" },
+  });
+});
+
+test("phone login wipes abandoned code digits at the absolute five-minute deadline", async () => {
+  const { state, ctx, scheduled, setNow } = await phoneMenuFixture();
+
+  await userbot.on("do", ["login"], state, ctx);
+  await userbot.texts.ubphone("+79997654321", {}, state, ctx);
+  for (const digit of ["1", "2", "3", "4", "5"]) {
+    await userbot.on("do", ["digit", digit], state, ctx);
+  }
+  const deadline = state.data.ub?.loginExpiresAt;
+  assert.equal(deadline, 301_000);
+  assert.equal(scheduled.length, 1);
+
+  setNow(deadline);
+  scheduled[0]?.();
+
+  assert.equal(state.data.ub, null);
+  assert.equal(state.awaitText, null);
+});
+
+test("2FA expiry keeps consuming late secrets even after prompt replacement fails", async () => {
+  const { state, ctx, scheduled, calls } = await phoneMenuFixture();
+
+  await userbot.on("do", ["login"], state, ctx);
+  await userbot.texts.ubphone("+79997654321", {}, state, ctx);
+  for (const digit of ["1", "2", "3", "4", "5"]) {
+    await userbot.on("do", ["digit", digit], state, ctx);
+  }
+  await userbot.on("do", ["submit_code"], state, ctx);
+  assert.equal(state.awaitText?.kind, "ubpassword");
+
+  const originalScreen = ctx.flows.screen;
+  let finishReplacement: (() => void) | undefined;
+  ctx.flows.screen = () =>
+    new Promise<void>((resolve) => {
+      finishReplacement = resolve;
+    });
+  scheduled[0]?.();
+
+  assert.equal(state.data.ub, null);
+  assert.equal(state.awaitText?.kind, "ubpassword");
+  finishReplacement?.();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(state.awaitText?.kind, "ubpassword");
+
+  ctx.flows.screen = originalScreen;
+  await userbot.texts.ubpassword("late-secret-canary", {}, state, ctx);
+  assert.equal(state.awaitText?.kind, "ubpassword");
+  assert.equal(
+    calls.some((call) => call.operation === "password"),
+    false,
+  );
+  assert.doesNotMatch(JSON.stringify(ctx), /late-secret-canary/u);
+});
+
+test("2FA and cancel never render the submitted secret", async () => {
+  const { state, ctx, calls, rendered } = await phoneMenuFixture();
+  const canary = "synthetic-2fa-canary";
+  state.awaitText = {
+    kind: "ubpassword",
+    secret: true,
+    data: { step: "password" },
+  };
+  state.data.ub = {};
+
+  await userbot.texts.ubpassword(canary, {}, state, ctx);
+  assert.deepEqual(calls.at(-1), { operation: "password", value: canary });
+  assert.equal(state.awaitText, null);
+  assert.doesNotMatch(JSON.stringify(rendered), new RegExp(canary));
+
+  await userbot.on("do", ["cancel_login"], state, ctx);
+  assert.deepEqual(calls.at(-1), { operation: "cancel" });
+  assert.equal(state.data.ub, null);
+});

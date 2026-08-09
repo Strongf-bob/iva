@@ -69,6 +69,7 @@ services:
       PORT: "8723"
       TELEGRAM_USERBOT_RUNTIME: "container"
       TELEGRAM_MCP_URL: http://telegram-userbot:8724/mcp
+      TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE: /app/userbot-onboarding-auth/token
       NO_PROXY: ${NO_PROXY:-iva,127.0.0.1,localhost},telegram-userbot
     command: ["npm", "run", "poll"]
     depends_on:
@@ -82,6 +83,7 @@ services:
       - ./vault:/app/vault
       - ./.eve:/app/.eve
       - ./.env:/app/.env:ro
+      - telegram-userbot-onboarding-auth:/app/userbot-onboarding-auth:ro
     tmpfs:
       - /app/node_modules/.cache/eve:rw,noexec,nosuid,nodev,mode=0700
     security_opt:
@@ -113,6 +115,7 @@ services:
       TELEGRAM_SESSION_FILE: /app/userbot-state/telegram-userbot.session
       TELEGRAM_MCP_HOST: "0.0.0.0"
       TELEGRAM_MCP_PORT: "8724"
+      TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE: /app/userbot-onboarding-auth/token
       TELEGRAM_EXPOSED_TOOLS: "read-only"
       # Optional MTProto egress proxy. Keep the sidecar detached from the full
       # runtime .env while allowing production hosts that block Telegram's
@@ -121,10 +124,7 @@ services:
       TELEGRAM_PROXY_HOST: ${TELEGRAM_USERBOT_PROXY_HOST:-}
       TELEGRAM_PROXY_PORT: ${TELEGRAM_USERBOT_PROXY_PORT:-}
       TELEGRAM_PROXY_RDNS: ${TELEGRAM_USERBOT_PROXY_RDNS:-true}
-      TELEGRAM_USERBOT_BOT_API_PROXY: ${TELEGRAM_USERBOT_BOT_API_PROXY:-}
       TELEGRAM_USERBOT_ALLOW_INERT: ${TELEGRAM_USERBOT_ALLOW_INERT:-0}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_ALLOWED_USER_IDS: ${TELEGRAM_ALLOWED_USER_IDS:-}
     # Older rollback images predate the sidecar. Keep their placeholder alive so
     # the core bot can recover; only compatible images start the session owner.
     command:
@@ -141,6 +141,7 @@ services:
     volumes:
       - ./data:/app/data:ro
       - telegram-userbot-state:/app/userbot-state
+      - telegram-userbot-onboarding-auth:/app/userbot-onboarding-auth
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,mode=0700,size=16m
     read_only: true
@@ -167,3 +168,4 @@ networks:
 
 volumes:
   telegram-userbot-state:
+  telegram-userbot-onboarding-auth:
