@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { open, readFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 
-import { childEnv, gwsBin } from "../lib/menu/gws-auth.ts";
+import { childEnv, gwsBin, resolveGoogleHome } from "../lib/menu/gws-auth.ts";
 
 import {
   loadRegistry,
@@ -95,8 +95,7 @@ async function releaseGoogleActionLock(
 export async function runGoogleCommand(
   args: readonly string[],
 ): Promise<GoogleRunResult> {
-  const home =
-    process.env.ASSISTANT_PERSONAL_ROOT ?? process.env.HOME ?? homedir();
+  const home = resolveRelationshipGoogleHome(process.env);
   return new Promise((resolve) => {
     execFile(
       gwsBin(),
@@ -116,6 +115,18 @@ export async function runGoogleCommand(
         });
       },
     );
+  });
+}
+
+export function resolveRelationshipGoogleHome(
+  env: NodeJS.ProcessEnv = process.env,
+  fallbackHome = homedir(),
+): string {
+  return resolveGoogleHome({
+    personalRoot: env.ASSISTANT_PERSONAL_ROOT,
+    container: env.IVA_RUNTIME === "container",
+    multiUser: env.ASSISTANT_MULTI_USER === "1",
+    fallbackHome,
   });
 }
 
@@ -317,6 +328,9 @@ function encodeMessage(input: {
   subject: string;
   body: string;
 }): string {
+  if (/\r|\n/u.test(input.to) || /\r|\n/u.test(input.subject)) {
+    throw new Error("invalid Gmail Draft header");
+  }
   const message = [
     `To: ${input.to}`,
     `Subject: ${input.subject}`,

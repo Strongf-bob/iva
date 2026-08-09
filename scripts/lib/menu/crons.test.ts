@@ -88,6 +88,14 @@ test("container timers screen lists personal reminders without host timer claims
   assert.match(view.text, /Personal reminders/u);
   assert.doesNotMatch(view.text, /No Iva timers found/u);
   assert.doesNotMatch(view.text, /digest .*disabled/u);
+  for (const schedule of [
+    "relationship-daily-prepare",
+    "relationship-daily-deliver",
+    "relationship-weekly-prepare",
+    "relationship-weekly-deliver",
+  ]) {
+    assert.match(view.text, new RegExp(schedule, "u"));
+  }
 });
 
 test("container timers screen reports corrupt personal reminder storage", async () => {

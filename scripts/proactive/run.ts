@@ -1,6 +1,5 @@
 import { isAbsolute, join } from "node:path";
 
-import { notificationChat } from "../lib/notification-chat.ts";
 import { reconcileProactiveReviews } from "./reconciler.ts";
 import { createRuntimeProviders } from "./runtime.ts";
 import { ProactiveStore } from "./store.ts";
@@ -17,9 +16,7 @@ if (
   throw new Error("proactive reviews run only for the owner");
 }
 
-const ownerId = String(
-  process.env.ASSISTANT_USER_ID || notificationChat(process.env),
-).trim();
+const ownerId = String(process.env.ASSISTANT_USER_ID ?? "").trim();
 const tokenSecret = process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN ?? "";
 if (!/^\d+$/u.test(ownerId)) throw new Error("proactive owner id is missing");
 if (tokenSecret.length < 32) {

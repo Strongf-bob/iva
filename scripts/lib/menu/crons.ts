@@ -39,6 +39,10 @@ const EVE_SCHEDULES = [
   { name: "memory-monthly", cron: "20 4 1 * *" },
   { name: "memory-yearly", cron: "25 4 1 1 *" },
   { name: "digest", cron: "0 8 * * *" },
+  { name: "relationship-daily-prepare", cron: "45 7 * * *" },
+  { name: "relationship-daily-deliver", cron: "0 8 * * *" },
+  { name: "relationship-weekly-prepare", cron: "45 7 * * 1" },
+  { name: "relationship-weekly-deliver", cron: "0 8 * * 1" },
   { name: "proactive-reviews", cron: "*/5 * * * *" },
 ];
 

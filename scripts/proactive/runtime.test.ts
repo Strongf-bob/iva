@@ -12,6 +12,7 @@ import test from "node:test";
 
 import {
   createGwsTasksProvider,
+  createRuntimeProviders,
   createSnapshotProviders,
   createTelegramBotProvider,
   parseComposedReportJson,
@@ -144,6 +145,34 @@ void test("Telegram provider enforces the owner recipient and emits action marku
       ],
     ],
   });
+});
+
+void test("runtime never promotes a digest destination to owner identity", () => {
+  assert.throws(
+    () =>
+      createRuntimeProviders({
+        ASSISTANT_DATA_DIR: dataRoot(),
+        ASSISTANT_PERSONAL_ROOT: dataRoot(),
+        TELEGRAM_BOT_TOKEN: "bot",
+        TELEGRAM_ALLOWED_USER_IDS: "101",
+        TELEGRAM_DIGEST_CHAT_ID: "202",
+      }),
+    /owner private chat/u,
+  );
+});
+
+void test("container runtime requires a personal Google root", () => {
+  assert.throws(
+    () =>
+      createRuntimeProviders({
+        ASSISTANT_DATA_DIR: dataRoot(),
+        ASSISTANT_USER_ID: "101",
+        IVA_RUNTIME: "container",
+        TELEGRAM_BOT_TOKEN: "bot",
+        TELEGRAM_DIGEST_CHAT_ID: "101",
+      }),
+    /personal Google HOME/u,
+  );
 });
 
 void test("GWS task provider finds its idempotency marker before insert", async () => {

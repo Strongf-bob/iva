@@ -59,13 +59,11 @@ docker compose -f deploy/container/compose.production.yml exec reminder-schedule
 In container mode `/menu` stores Google OAuth files beneath the selected user's private
 `HOME`, so users never share `~/.config/gws`. Maintenance runs doctor, vault cleanup,
 and memory work as attached per-user processes. It does not call systemd or control the
-Docker daemon. The Update screen therefore shows host-side lifecycle guidance:
-
-```bash
-docker compose -f deploy/container/compose.production.yml pull
-docker compose -f deploy/container/compose.production.yml up -d
-docker compose -f deploy/container/compose.production.yml ps
-```
+Docker daemon. Container updates therefore use the release path: merge a verified PR
+into `main`, wait for CI, and let the Deploy workflow publish `sha-<commit>` and invoke
+the restricted production endpoint as `deploy <40-character main SHA>`. Do not run a
+bare `docker compose pull/up`: the release script supplies the required immutable
+`IVA_IMAGE`, activates the matching Compose bundle, and verifies health before promotion.
 
 Keep exactly one `reminder-scheduler` replica for a data mount. Container health is the
 authoritative scheduler status; `data/control/reminder-scheduler-status.json` is the

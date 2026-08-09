@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/require-await -- Node's test runner owns registrations and injected senders retain async contracts. */
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -172,4 +172,55 @@ test("parallel delivery reserves the artifact before external send", async () =>
   const results = await Promise.all([deliver(), deliver()]);
   assert.equal(sends, 1);
   assert.equal(results.filter((result) => result.delivered).length, 1);
+});
+
+test("a crashed delivery becomes ambiguous and cannot wedge later preparation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "iva-relationship-report-"));
+  const paths = relationshipPaths(root, "data");
+  await mutateRegistry(paths, () => true);
+  await prepareRelationshipReport({
+    paths,
+    period: "daily",
+    now: "2026-08-09T07:45:00Z",
+  });
+  const reportFile = join(paths.reportsDir, "daily.json");
+  const report = JSON.parse(await readFile(reportFile, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  await writeFile(
+    reportFile,
+    JSON.stringify({
+      ...report,
+      deliveryState: "sending",
+      deliveryAttemptId: "crashed-attempt",
+      deliveryStartedAt: "2026-08-09T08:00:00Z",
+    }),
+  );
+  let sends = 0;
+  assert.deepEqual(
+    await deliverRelationshipReport({
+      paths,
+      period: "daily",
+      ownerUserId: "7",
+      destination: "7",
+      role: "owner",
+      now: "2026-08-09T08:20:01Z",
+      send: async () => {
+        sends += 1;
+      },
+    }),
+    { delivered: false },
+  );
+  assert.equal(sends, 0);
+  const recovered = JSON.parse(await readFile(reportFile, "utf8")) as {
+    deliveryState?: string;
+  };
+  assert.equal(recovered.deliveryState, "ambiguous");
+  const next = await prepareRelationshipReport({
+    paths,
+    period: "daily",
+    now: "2026-08-10T07:45:00Z",
+  });
+  assert.equal(next.deliveryState, "pending");
 });

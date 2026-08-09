@@ -56,13 +56,15 @@ The bridge long-polls Telegram, so no public HTTPS, domain or webhook is needed.
 - **Rich replies** — tables, checklists, collapsible blocks and formulas render natively in Telegram via Bot API 10.1 rich messages; plain formatting keeps its proven path, with a graceful fallback.
 - **Quiet update checks** — once a day Iva checks for a newer stable release without spending model tokens. If one exists, Telegram offers **Update** or **Later** once; otherwise it says nothing.
 - **Layered memory** — remembers across months, long after the chat window has scrolled away.
-- **Personal CRM** — who your people are, what you agreed, when to follow up.
+- **Evidence-linked relationships** — private contact dossiers, commitments, birthdays and follow-ups stay tied to their source messages; scheduled reports go only to the owner's private bot chat.
+- **Unified inbox** — bounded, read-only Gmail, Calendar and personal Telegram collection turns current evidence into prioritized actions and meeting prep without delivering anything on its own.
+- **Proactive reviews** — opt-in daily and weekly briefings prepare immutable reports, deduplicate alerts and require the owner to confirm every proposed Google Task.
 - **Chief-of-staff briefs** — `/brief`, `/brief <person>` and `/weekly` turn tasks and current vault evidence into traceable, read-only priorities and meeting prep.
 - **Search by meaning** — BM25 plus link-graph rerank, any language; optional vector mode with one key.
 - **Decision cards** — what you chose, when and why; old versions stay in a dated History.
 - **Tasks & reminders** — priorities, due dates and a morning digest.
 - **Web search** — four pluggable providers: Tavily, Exa, Parallel or Brave.
-- **Google Workspace** — Gmail, Calendar, Drive, Sheets, Docs and Tasks from chat via the `gws` CLI; installed for you, with a guided key setup right in the conversation.
+- **Google Workspace** — Gmail drafts (never sends), Calendar events without attendees, Drive files, Sheets, Docs and owner-confirmed Tasks via the `gws` CLI; installed for you, with guided key setup right in the conversation.
 - **Skills & MCP** — drop one file to add a procedure or connect an MCP server; keys stay in `.env`.
 - **Personal Telegram — userbot (beta)** — read and search your _own_ account, not just the bot; connect by phone and Telegram code in a private menu, no terminal. This fork's production deployment enforces a server-side read-only tool allowlist. Rough and buggy — opt-in, **at your own risk**. [Details](docs/userbot.md).
 - **Telegram contact graph (read-only)** — with read-only userbot tools enabled, full accessible text

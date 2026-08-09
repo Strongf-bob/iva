@@ -54,12 +54,45 @@ const CREATE_OPERATIONS = new Set([
   "docs documents batchUpdate",
 ]);
 const READ_METHODS = new Set(["get", "list", "search"]);
+const DESTRUCTIVE_BATCH_REQUESTS = new Set([
+  "deleteBanding",
+  "deleteConditionalFormatRule",
+  "deleteContentRange",
+  "deleteDataSource",
+  "deleteDeveloperMetadata",
+  "deleteDimension",
+  "deleteDimensionGroup",
+  "deleteDuplicates",
+  "deleteEmbeddedObject",
+  "deleteFilterView",
+  "deleteFooter",
+  "deleteHeader",
+  "deleteNamedRange",
+  "deletePositionedObject",
+  "deleteProtectedRange",
+  "deleteRange",
+  "deleteSheet",
+  "deleteTab",
+  "removeDimensionGroup",
+]);
 const MAX_OUTPUT = 24_000;
 const personalHome = () =>
   resolveGoogleHome({
     personalRoot: process.env.ASSISTANT_PERSONAL_ROOT,
     fallbackHome: process.env.HOME,
   });
+
+function containsDestructiveBatchRequest(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some(containsDestructiveBatchRequest);
+  }
+  if (typeof value !== "object" || value === null) return false;
+  return Object.entries(value).some(
+    ([key, nested]) =>
+      DESTRUCTIVE_BATCH_REQUESTS.has(key) ||
+      containsDestructiveBatchRequest(nested),
+  );
+}
 
 export function validateGoogleWorkspaceArgs(args: readonly string[]): string[] {
   if (
@@ -124,6 +157,13 @@ export function validateGoogleWorkspaceArgs(args: readonly string[]): string[] {
         JSON.stringify(parsed).match(/"trashed"\s*:/iu)
       ) {
         throw new Error("Google Drive trash mutation is not allowed");
+      }
+      if (
+        operation.endsWith(" batchUpdate") &&
+        arg === "--json" &&
+        containsDestructiveBatchRequest(parsed)
+      ) {
+        throw new Error("destructive Google Workspace mutation is not allowed");
       }
     }
     checked.push(arg, value);

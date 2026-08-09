@@ -19,8 +19,20 @@ export interface RelationshipReport {
   preparedAt: string;
   text: string;
   deliveredAt: string | null;
-  deliveryState?: "pending" | "sending" | "delivered";
+  deliveryState?: "pending" | "sending" | "ambiguous" | "delivered";
   deliveryAttemptId?: string | null;
+  deliveryStartedAt?: string | null;
+}
+
+const DELIVERY_LEASE_MS = 15 * 60 * 1000;
+
+function deliveryLeaseIsFresh(
+  report: RelationshipReport,
+  now: string,
+): boolean {
+  const startedAt = report.deliveryStartedAt ?? report.preparedAt;
+  const age = Date.parse(now) - Date.parse(startedAt);
+  return Number.isFinite(age) && age >= 0 && age <= DELIVERY_LEASE_MS;
 }
 
 export interface CalendarMeeting {
@@ -358,6 +370,7 @@ export async function prepareRelationshipReport({
     deliveredAt: null,
     deliveryState: "pending",
     deliveryAttemptId: null,
+    deliveryStartedAt: null,
   };
   await mkdir(paths.reportsDir, { recursive: true, mode: 0o700 });
   await chmod(paths.reportsDir, 0o700);
@@ -369,7 +382,10 @@ export async function prepareRelationshipReport({
       reportFile,
       null,
     );
-    if (current?.deliveryState === "sending")
+    if (
+      current?.deliveryState === "sending" &&
+      deliveryLeaseIsFresh(current, now)
+    )
       throw new Error("relationship report delivery is in progress");
     await saveJsonAtomic(reportFile, report);
     await chmod(reportFile, 0o600);
@@ -418,9 +434,20 @@ export async function deliverRelationshipReport({
     if (
       loaded.deliveredAt !== null ||
       loaded.deliveryState === "delivered" ||
-      loaded.deliveryState === "sending"
+      loaded.deliveryState === "ambiguous"
     )
       return { delivered: false };
+    if (loaded.deliveryState === "sending") {
+      if (deliveryLeaseIsFresh(loaded, now)) return { delivered: false };
+      await saveJsonAtomic(reportFile, {
+        ...loaded,
+        deliveryState: "ambiguous",
+        deliveryAttemptId: null,
+        deliveryStartedAt: null,
+      });
+      await chmod(reportFile, 0o600);
+      return { delivered: false };
+    }
     const age = Date.parse(now) - Date.parse(loaded.preparedAt);
     if (age < 0 || age > 2 * 60 * 60 * 1000)
       throw new Error("prepared relationship report is stale");
@@ -428,6 +455,7 @@ export async function deliverRelationshipReport({
       ...loaded,
       deliveryState: "sending",
       deliveryAttemptId: attemptId,
+      deliveryStartedAt: now,
     };
     await saveJsonAtomic(reportFile, report);
     await chmod(reportFile, 0o600);
@@ -448,6 +476,7 @@ export async function deliverRelationshipReport({
           ...current,
           deliveryState: "pending",
           deliveryAttemptId: null,
+          deliveryStartedAt: null,
         });
       }
     } finally {
@@ -467,6 +496,7 @@ export async function deliverRelationshipReport({
         deliveredAt: now,
         deliveryState: "delivered",
         deliveryAttemptId: null,
+        deliveryStartedAt: null,
       });
       await chmod(reportFile, 0o600);
     }

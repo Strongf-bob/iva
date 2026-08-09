@@ -2,11 +2,7 @@ import { execFile } from "node:child_process";
 
 import { z } from "zod";
 
-import {
-  childEnv,
-  gwsBin,
-  resolveGoogleHome,
-} from "../lib/menu/gws-auth.ts";
+import { childEnv, gwsBin, resolveGoogleHome } from "../lib/menu/gws-auth.ts";
 import {
   CollectSourceInputSchema,
   InboxObservationSchema,

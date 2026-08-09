@@ -165,7 +165,7 @@ export function createTelegramInboxSource({
         throw new Error("unified_inbox_owner_identity_mismatch");
       }
       const dialogs = await listDialogs(client);
-      const readMessages = client.messages;
+      const readMessages = client.messages?.bind(client);
       if (!readMessages) {
         throw new Error("unified_inbox_telegram_messages_unavailable");
       }

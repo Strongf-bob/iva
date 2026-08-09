@@ -23,10 +23,12 @@
 ### Task 1: Establish immutable integration baseline
 
 **Files:**
+
 - Create: `docs/superpowers/plans/2026-08-09-integrate-current-ahead-branches.md`
 - Inspect: `package.json`, `.github/workflows/*`, `deploy/container/*`
 
 **Interfaces:**
+
 - Consumes: fetched `origin/main` at `54aea1cc003a4a2337d86c1aa8780e206f05f847` and the 14 recorded branch SHAs.
 - Produces: clean worktree `strongf/integrate-current-ahead-branches`, dependency evidence, and reproducible baseline results.
 
@@ -57,9 +59,11 @@ Expected: an auditable decision for real merge, already-contained branch, or pro
 ### Task 2: Integrate the existing userbot and contact stack
 
 **Files:**
+
 - Merge and resolve: `services/telegram-userbot/*`, `deploy/container/*`, `scripts/production/*`, `scripts/contact-analysis/*`, `agent/skills/telegram-*`, related docs and tests.
 
 **Interfaces:**
+
 - Consumes: Task 1 baseline and existing owner-only/read-only gateway contracts.
 - Produces: one combined userbot/contact implementation that retains onboarding, proxy, health, analysis export, locking, local-day history, and chief-of-staff behavior.
 
@@ -84,9 +88,11 @@ Expected: all focused checks pass before product-package merges begin.
 ### Task 3: Integrate the four verified product packages
 
 **Files:**
+
 - Merge and resolve: `Containerfile`, `agent/tools/*`, `agent/schedules/*`, `agent/skills/*`, `scripts/lib/*`, `scripts/relationship-intelligence/*`, `scripts/unified-inbox/*`, `scripts/proactive/*`, docs and coverage inventory.
 
 **Interfaces:**
+
 - Consumes: Task 2 combined userbot/contact stack.
 - Produces: container scheduler and Google runtime, relationship registry, unified read-only inbox, and proactive exact-time owner reviews in one coherent runtime.
 
@@ -115,10 +121,12 @@ Expected: the combined API compiles and focused behavioral tests pass.
 ### Task 4: Review and repair the combined diff
 
 **Files:**
+
 - Modify only files implicated by reproducible combined-state findings.
 - Test each fix in the nearest existing `*.test.ts` or Python sidecar test file.
 
 **Interfaces:**
+
 - Consumes: full `origin/main...HEAD` diff from Tasks 2-3.
 - Produces: reviewed integration with no open Critical or Important findings.
 
@@ -141,10 +149,12 @@ Expected: independent reviewer reports GO with no unresolved Critical or Importa
 ### Task 5: Verify release candidate and README accuracy
 
 **Files:**
+
 - Audit: `README.md`, `README.ru.md`, README assets, `docs/*`.
 - Modify only when the integrated product/setup/architecture requires it.
 
 **Interfaces:**
+
 - Consumes: reviewed final integration SHA.
 - Produces: immutable release candidate with fresh local and container evidence.
 
@@ -167,9 +177,11 @@ Expected: final image passes every release gate without secrets in logs or track
 ### Task 6: Publish through protected main and verify production
 
 **Files:**
+
 - No unreviewed source changes; only review/CI fixes return to Tasks 4-5.
 
 **Interfaces:**
+
 - Consumes: verified release candidate commit.
 - Produces: merged protected-main PR and production deployment matching `origin/main`.
 

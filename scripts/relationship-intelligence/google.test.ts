@@ -9,6 +9,7 @@ import {
   confirmGoogleTask,
   confirmGoogleTaskFromOwnerMessage,
   createGmailDraft,
+  resolveRelationshipGoogleHome,
   prepareTaskConfirmation,
 } from "./google.ts";
 import { loadRegistry, mutateRegistry, relationshipPaths } from "./store.ts";
@@ -270,4 +271,42 @@ test("Gmail adapter creates a draft and exposes no send path", async () => {
   assert.deepEqual(calls[0].slice(0, 3), ["gmail", "users", "drafts"]);
   assert.ok(calls[0].includes("create"));
   assert.ok(!calls[0].includes("send"));
+});
+
+test("Gmail draft headers reject newline injection before provider I/O", async () => {
+  let called = false;
+  await assert.rejects(
+    () =>
+      createGmailDraft(
+        {
+          to: "alex@example.com",
+          subject: "Hello\r\nBcc: hidden@example.com",
+          body: "Draft body",
+        },
+        async () => {
+          called = true;
+          return { stdout: '{"id":"draft-1"}', exitCode: 0 };
+        },
+      ),
+    /invalid Gmail Draft header/u,
+  );
+  assert.equal(called, false);
+});
+
+test("relationship Google HOME fails closed for isolated runtimes", () => {
+  assert.throws(
+    () =>
+      resolveRelationshipGoogleHome({
+        ASSISTANT_MULTI_USER: "1",
+        HOME: "/shared/home",
+      }),
+    /personal Google HOME/u,
+  );
+  assert.equal(
+    resolveRelationshipGoogleHome(
+      { ASSISTANT_PERSONAL_ROOT: "/srv/iva/data/users/7" },
+      "/fallback/home",
+    ),
+    "/srv/iva/data/users/7",
+  );
 });

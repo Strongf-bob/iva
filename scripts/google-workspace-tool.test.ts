@@ -148,6 +148,33 @@ void test("Google policy permits reads and approved artifact writes", () => {
     ["sheets", "spreadsheets", "batchUpdate", "--json", '{"requests":[]}'],
     ["sheets", "+append", "--spreadsheet", "s1", "--values", "x"],
   ]) {
-    assert.doesNotThrow(() => validateGoogleWorkspaceArgs(args), args.join(" "));
+    assert.doesNotThrow(
+      () => validateGoogleWorkspaceArgs(args),
+      args.join(" "),
+    );
+  }
+});
+
+void test("Docs and Sheets batch updates reject destructive requests", () => {
+  for (const args of [
+    [
+      "sheets",
+      "spreadsheets",
+      "batchUpdate",
+      "--json",
+      '{"requests":[{"deleteSheet":{"sheetId":7}}]}',
+    ],
+    [
+      "docs",
+      "documents",
+      "batchUpdate",
+      "--json",
+      '{"requests":[{"deleteContentRange":{"range":{"startIndex":1,"endIndex":3}}}]}',
+    ],
+  ]) {
+    assert.throws(
+      () => validateGoogleWorkspaceArgs(args),
+      /destructive Google Workspace mutation/u,
+    );
   }
 });

@@ -5,8 +5,7 @@ import { isAbsolute, join, sep } from "node:path";
 import { Client } from "eve/client";
 import { z } from "zod";
 
-import { childEnv, gwsBin } from "../lib/menu/gws-auth.ts";
-import { notificationChat } from "../lib/notification-chat.ts";
+import { childEnv, gwsBin, resolveGoogleHome } from "../lib/menu/gws-auth.ts";
 import { sendTelegramHtmlWithReceipt } from "../lib/telegram-send.ts";
 import {
   composedReportSchema,
@@ -366,9 +365,13 @@ export function createRuntimeProviders(
 ): ProactiveProviders {
   const dataDir = dataDirectory(env);
   const snapshots = createSnapshotProviders(dataDir);
-  const ownerId = String(env.ASSISTANT_USER_ID || notificationChat(env)).trim();
-  const chatId = notificationChat(env);
-  const homeDir = env.ASSISTANT_PERSONAL_ROOT || process.cwd();
+  const ownerId = String(env.ASSISTANT_USER_ID ?? "").trim();
+  const chatId = ownerId;
+  const homeDir = resolveGoogleHome({
+    personalRoot: env.ASSISTANT_PERSONAL_ROOT,
+    container: env.IVA_RUNTIME === "container",
+    multiUser: env.ASSISTANT_MULTI_USER === "1",
+  });
   return {
     inbox: snapshots.inbox,
     crm: snapshots.crm,

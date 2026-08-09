@@ -405,8 +405,8 @@ const service = {
         return ctx.flows.screen(
           st,
           T(
-            "This container cannot safely update itself during a chat. On the host, pull the configured image and recreate the stack:\n\ndocker compose pull\ndocker compose up -d\n\nThen check container health.",
-            "Контейнер не может безопасно обновить себя во время диалога. На хосте скачай настроенный image и пересоздай stack:\n\ndocker compose pull\ndocker compose up -d\n\nЗатем проверь health контейнеров.",
+            "This container cannot safely update itself during a chat. The normal production path is to merge a verified PR into main and wait for the CI and Deploy workflows. An authorized operator may invoke the configured restricted SSH endpoint with: deploy <40-character main SHA>. The deployment path selects the immutable image and verifies container health.",
+            "Контейнер не может безопасно обновить себя во время диалога. Штатный production-путь — влить проверенный PR в main и дождаться workflows CI и Deploy. Авторизованный оператор может вызвать настроенный ограниченный SSH endpoint командой: deploy <40-символьный SHA main>. Этот путь выбирает immutable image и проверяет health контейнеров.",
           ),
           [ctx.backRow("r")],
         );

@@ -152,7 +152,9 @@ test("container Maintenance uses per-user attached processes and truthful update
   await service.on("up", [], st, h.ctx);
   assert.equal(updateChecks, 0);
   assert.ok(st._last);
-  assert.match(st._last.text, /docker compose pull/u);
+  assert.doesNotMatch(st._last.text, /docker compose pull/u);
+  assert.match(st._last.text, /Deploy workflow/u);
+  assert.match(st._last.text, /deploy <40-character main SHA>/u);
 });
 
 const waitFor = async (fn: () => boolean, ms = 3000): Promise<void> => {
