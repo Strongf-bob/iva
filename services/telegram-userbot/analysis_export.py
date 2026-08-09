@@ -1,11 +1,13 @@
 """Bounded read-only projections of the proxy's existing Telethon client."""
 
+import json
 import re
 from datetime import datetime
 
 
 MAX_DIALOG_LIMIT = 100
 MAX_MESSAGE_LIMIT = 200
+MAX_WINDOW_CHARS = 500_000
 
 
 def parse_bounded_int(raw: str, *, name: str, minimum: int, maximum: int) -> int:
@@ -133,6 +135,33 @@ async def messages_payload(
     return {"messages": messages, "nextAfterId": next_after_id}
 
 
+async def message_window_payload(
+    client, *, chat_id: int, after_id: int, max_chars: int
+) -> dict:
+    total = int((await client.get_messages(chat_id, min_id=after_id, limit=0)).total)
+    selected = []
+    used = 0
+    latest_message_id = after_id
+    async for message in client.iter_messages(
+        chat_id, min_id=after_id, reverse=False, limit=None
+    ):
+        payload = _message_payload(message)
+        latest_message_id = max(latest_message_id, payload["id"])
+        size = len(
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        )
+        if size > max_chars - used:
+            break
+        selected.append(payload)
+        used += size
+    selected.reverse()
+    return {
+        "messages": selected,
+        "latestMessageId": latest_message_id,
+        "skippedMessages": max(0, total - len(selected)),
+    }
+
+
 def register_analysis_routes(app, client, *, json_response_cls=None) -> None:
     """Register the pipeline's GET-only surface on the already bearer-gated app."""
     if json_response_cls is None:
@@ -217,6 +246,43 @@ def register_analysis_routes(app, client, *, json_response_cls=None) -> None:
         except Exception as exc:  # noqa: BLE001 - sanitized transport boundary
             return failure(exc)
 
+    async def message_window(request):
+        if not await authorized():
+            return response({"error": "telegram_unauthorized"}, 409)
+        try:
+            chat_id = parse_bounded_int(
+                request.query_params.get("chat_id", ""),
+                name="chat_id",
+                minimum=-(2**63) + 1,
+                maximum=2**63 - 1,
+            )
+            after_id = parse_bounded_int(
+                request.query_params.get("after_id", "0"),
+                name="after_id",
+                minimum=0,
+                maximum=2**63 - 1,
+            )
+            max_chars = parse_bounded_int(
+                request.query_params.get("max_chars", ""),
+                name="max_chars",
+                minimum=1,
+                maximum=MAX_WINDOW_CHARS,
+            )
+        except ValueError:
+            return response({"error": "invalid_parameters"}, 400)
+        try:
+            return response(
+                await message_window_payload(
+                    client,
+                    chat_id=chat_id,
+                    after_id=after_id,
+                    max_chars=max_chars,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - sanitized transport boundary
+            return failure(exc)
+
     app.add_route("/analysis/v1/account", account, methods=["GET"])
     app.add_route("/analysis/v1/dialogs", dialogs, methods=["GET"])
     app.add_route("/analysis/v1/messages", messages, methods=["GET"])
+    app.add_route("/analysis/v1/message-window", message_window, methods=["GET"])
