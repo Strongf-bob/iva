@@ -91,7 +91,7 @@ upstream, remove the workarounds rather than leaving them as permanent scaffoldi
 
 ## 11. Cron/name metadata duplicated across schedules, migration, and the menu
 
-The same 5 schedule names + cron expressions are hand-maintained in three places:
+The schedule names + cron expressions are hand-maintained in several places:
 `agent/schedules/*.ts` (the actual cron strings), `scripts/lib/schedule-migration.ts`'s
 `PERIOD_SCHEDULE` (hour/minute per period, for catch-up math), and
 `scripts/lib/menu/crons.ts`'s `EVE_SCHEDULES` (for the /menu → ⏰ display). Changing one

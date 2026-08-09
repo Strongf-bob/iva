@@ -42,8 +42,9 @@ function fixture(t: test.TestContext) {
     answers,
     tenant,
     callback,
-    answer: async (text: string) => {
+    answer: (text: string) => {
       answers.push(text);
+      return Promise.resolve();
     },
   };
 }

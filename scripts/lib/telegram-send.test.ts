@@ -84,3 +84,89 @@ void test("telegram-send keeps redaction when retrying a rejected HTML message",
   assert.equal(requests[1].body.text, "[REDACTED]");
   assert.equal("parse_mode" in requests[1].body, false);
 });
+
+void test("telegram report delivery returns a receipt and puts allowlisted actions on the last chunk", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const requests: CapturedRequest[] = [];
+  globalThis.fetch = (url: URL | RequestInfo, options?: RequestInit) => {
+    requests.push(captureRequest(url, options));
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          result: { message_id: 40 + requests.length },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const { sendTelegramHtmlWithReceipt } = await import("./telegram-send.ts");
+  const result = await sendTelegramHtmlWithReceipt(
+    "test-bot",
+    "101",
+    `${"first ".repeat(800)}second`,
+    {
+      replyMarkup: {
+        inline_keyboard: [
+          [
+            {
+              text: "Create Google Task",
+              callback_data: `iva_commitment:c:${"x".repeat(43)}`,
+            },
+          ],
+        ],
+      },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.receipt, "telegram:41,42");
+  assert.equal("reply_markup" in requests[0].body, false);
+  assert.deepEqual(requests[1].body.reply_markup, {
+    inline_keyboard: [
+      [
+        {
+          text: "Create Google Task",
+          callback_data: `iva_commitment:c:${"x".repeat(43)}`,
+        },
+      ],
+    ],
+  });
+});
+
+void test("telegram report delivery treats a later chunk rejection as ambiguous", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let requestCount = 0;
+  globalThis.fetch = () => {
+    requestCount += 1;
+    if (requestCount === 1) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true, result: { message_id: 41 } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    }
+    return Promise.resolve(
+      new Response("temporarily unavailable", { status: 503 }),
+    );
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const { sendTelegramHtmlWithReceipt } = await import("./telegram-send.ts");
+  const result = await sendTelegramHtmlWithReceipt(
+    "test-bot",
+    "101",
+    "two chunks ".repeat(500),
+  );
+
+  assert.equal(requestCount, 2);
+  assert.equal(result.ok, false);
+  assert.equal(result.failureKind, "ambiguous");
+});

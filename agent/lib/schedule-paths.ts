@@ -73,3 +73,31 @@ export function contactAnalysisEnabled(
 ): boolean {
   return env.ASSISTANT_MULTI_USER !== "1" || env.ASSISTANT_ROLE === "owner";
 }
+
+export function proactiveReviewsEnabled(
+  settings: Record<string, unknown>,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const configured = settings.proactiveReviews;
+  const enabled =
+    typeof configured === "object" &&
+    configured !== null &&
+    (configured as { enabled?: unknown }).enabled === true;
+  return (
+    enabled &&
+    (env.ASSISTANT_MULTI_USER !== "1" || env.ASSISTANT_ROLE === "owner")
+  );
+}
+
+export function proactiveReviewsJob() {
+  const { root, statusPath } = resolvePaths();
+  return {
+    name: "proactive-reviews",
+    argv: ["scripts/proactive/run.ts"],
+    root,
+    nodeBin: process.execPath,
+    statusPath,
+    timeoutMs: 4 * 60_000,
+    guardMs: 4 * 60_000,
+  };
+}

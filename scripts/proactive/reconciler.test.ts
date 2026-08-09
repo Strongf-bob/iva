@@ -22,6 +22,7 @@ function harness(
   options?: {
     readonly suggestions?: readonly CommitmentSuggestion[];
     readonly alerts?: readonly UrgentAlert[];
+    readonly weeklyFailures?: number;
   },
 ) {
   const dataDir = mkdtempSync(join(tmpdir(), "iva-proactive-reconcile-"));
@@ -39,59 +40,78 @@ function harness(
     tasksCreated: [] as string[],
   };
   let deliveryFailure: ProviderFailure | null = null;
+  let weeklyFailuresRemaining = options?.weeklyFailures ?? 0;
   const providers: ProactiveProviders = {
     inbox: {
-      async listInbox(window) {
+      listInbox(window) {
         calls.inbox.push(window);
-        return [{ id: "mail-1", title: "Reply", evidence: ["gmail:1"] }];
+        return Promise.resolve([
+          { id: "mail-1", title: "Reply", evidence: ["gmail:1"] },
+        ]);
       },
     },
     crm: {
-      async listRelationshipUpdates(window) {
+      listRelationshipUpdates(window) {
         calls.crm.push(window);
-        return [{ id: "crm-1", title: "Follow up", evidence: ["crm:1"] }];
+        return Promise.resolve([
+          { id: "crm-1", title: "Follow up", evidence: ["crm:1"] },
+        ]);
       },
     },
     calendar: {
-      async listCalendarItems(window) {
+      listCalendarItems(window) {
         calls.calendar.push(window);
-        return [{ id: "event-1", title: "Meeting", evidence: ["gcal:1"] }];
+        return Promise.resolve([
+          { id: "event-1", title: "Meeting", evidence: ["gcal:1"] },
+        ]);
       },
     },
     tasks: {
-      async listTasks(window) {
+      listTasks(window) {
         calls.tasksRead.push(window);
-        return [{ id: "task-1", title: "Open task", evidence: ["gtask:1"] }];
+        return Promise.resolve([
+          { id: "task-1", title: "Open task", evidence: ["gtask:1"] },
+        ]);
       },
-      async createConfirmedCommitment({ idempotencyKey }) {
+      createConfirmedCommitment({ idempotencyKey }) {
         calls.tasksCreated.push(idempotencyKey);
-        return { receipt: `google:${idempotencyKey}` };
+        return Promise.resolve({ receipt: `google:${idempotencyKey}` });
       },
     },
     composer: {
-      async compose({ period }) {
+      compose({ period }) {
         calls.compose.push(period.kind);
-        return {
+        if (period.kind === "weekly" && weeklyFailuresRemaining > 0) {
+          weeklyFailuresRemaining -= 1;
+          return Promise.reject(
+            new ProviderFailure("retryable", "weekly-not-ready"),
+          );
+        }
+        return Promise.resolve({
           body: `${period.kind} prepared report`,
           sourceFingerprint: "ignored-by-reconciler",
           suggestions: options?.suggestions ?? [],
           alerts: options?.alerts ?? [],
-        };
+        });
       },
     },
     bot: {
-      async deliver(input) {
+      deliver(input) {
         calls.deliveries.push(input);
         if (deliveryFailure) {
           const failure = deliveryFailure;
           deliveryFailure = null;
-          throw failure;
+          return Promise.reject(failure);
         }
-        return { receipt: `telegram:${calls.deliveries.length}` };
+        return Promise.resolve({
+          receipt: `telegram:${calls.deliveries.length}`,
+        });
       },
-      async deliverAlert({ alert }) {
+      deliverAlert({ alert }) {
         calls.alerts.push(alert);
-        return { receipt: `telegram-alert:${calls.alerts.length}` };
+        return Promise.resolve({
+          receipt: `telegram-alert:${calls.alerts.length}`,
+        });
       },
     },
   };
@@ -150,9 +170,22 @@ void test("Monday daily and weekly versions share one 08:00 delivery receipt", a
   const result = await run(value, ms("2026-08-10T05:00:00.000Z"));
   assert.equal(result.delivered, 1);
   assert.equal(value.calls.deliveries.length, 1);
-  assert.match(value.calls.deliveries[0]!.body, /daily prepared report/u);
-  assert.match(value.calls.deliveries[0]!.body, /weekly prepared report/u);
-  assert.match(value.calls.deliveries[0]!.deliveryKey, /2026-08-10.*2026-W33/u);
+  assert.match(value.calls.deliveries[0].body, /daily prepared report/u);
+  assert.match(value.calls.deliveries[0].body, /weekly prepared report/u);
+  assert.match(value.calls.deliveries[0].deliveryKey, /2026-08-10.*2026-W33/u);
+});
+
+void test("a late weekly version does not redeliver an already delivered Monday daily", async (t) => {
+  const value = harness(t, { weeklyFailures: 2 });
+  await run(value, ms("2026-08-10T02:15:00.000Z"));
+
+  await run(value, ms("2026-08-10T05:00:00.000Z"));
+  assert.equal(value.calls.deliveries.length, 1);
+  assert.equal(value.calls.deliveries[0]?.body, "daily prepared report");
+
+  await run(value, ms("2026-08-10T05:05:00.000Z"));
+  assert.equal(value.calls.deliveries.length, 2);
+  assert.equal(value.calls.deliveries[1]?.body, "weekly prepared report");
 });
 
 void test("a restart cannot redeliver a completed report", async (t) => {

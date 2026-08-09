@@ -155,12 +155,22 @@ function individualCandidate(
 
 function deliveryCandidates(
   ownerId: string,
+  store: ProactiveStore,
   daily: ReportPeriod,
   weekly: ReportPeriod,
   dailyVersion: StoredReportVersion | null,
   weeklyVersion: StoredReportVersion | null,
 ): readonly DeliveryCandidate[] {
-  if (dailyVersion && weeklyVersion && daily.dueAt === weekly.dueAt) {
+  const dailyKey = `${ownerId}:daily:${daily.periodKey}`;
+  const weeklyKey = `${ownerId}:weekly:${weekly.periodKey}`;
+  const individualDeliveryStarted =
+    store.delivery(dailyKey) !== null || store.delivery(weeklyKey) !== null;
+  if (
+    dailyVersion &&
+    weeklyVersion &&
+    daily.dueAt === weekly.dueAt &&
+    !individualDeliveryStarted
+  ) {
     return [
       {
         key: `${ownerId}:bundle:${daily.periodKey}:${weekly.periodKey}`,
@@ -181,7 +191,7 @@ function deliveryCandidates(
 }
 
 function deliveryBody(versions: readonly StoredReportVersion[]): string {
-  if (versions.length === 1) return versions[0]!.body;
+  if (versions.length === 1) return versions[0].body;
   return versions
     .map((version) =>
       version.kind === "daily"
@@ -204,6 +214,7 @@ async function deliverReports(
   );
   for (const candidate of deliveryCandidates(
     input.ownerId,
+    input.store,
     daily,
     weekly,
     dailyVersion,

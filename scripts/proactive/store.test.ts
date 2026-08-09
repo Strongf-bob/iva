@@ -171,10 +171,11 @@ void test("commitment tokens are stored only as hashes and task execution is ide
   );
 
   const work = store.claimConfirmedCommitment(1_300);
+  assert.ok(work);
   assert.equal(work?.suggestion.id, suggestion.id);
   assert.match(work?.idempotencyKey ?? "", /^[a-f0-9]{64}$/u);
   assert.equal(store.claimConfirmedCommitment(1_301), null);
-  store.completeCommitmentTask(work!.actionHash, "google-task:abc", 1_400);
+  store.completeCommitmentTask(work.actionHash, "google-task:abc", 1_400);
   store.close();
 
   store = ProactiveStore.open(dataDir);

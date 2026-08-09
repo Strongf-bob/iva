@@ -8,12 +8,12 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
-const EXPECTED_PRODUCTION_COUNT = 164;
+const EXPECTED_PRODUCTION_COUNT = 172;
 const EXPECTED_INVENTORY_SHA256 =
-  "41f6860bbee73bbf3cfec3061728032b3652715512722750873c852ba3c9929e";
+  "20ef922078a381dc66b67b0baa58fa0869e74d66880c6f5135dffd780709c74d";
 
 // Node's native include globs filter loaded modules; they do not load untouched files.
-// This test pins the exact production path inventory and a separately measured 29-path
+// This test pins the exact production path inventory and a separately measured 33-path
 // blind-spot snapshot. It does not determine what the current import graph loads, claim
 // that the other paths are reported, or notice import-graph changes without path changes.
 const MEASURED_UNREPORTED_BY_CATEGORY = {
@@ -34,6 +34,7 @@ const MEASURED_UNREPORTED_BY_CATEGORY = {
     "agent/schedules/memory-monthly.ts",
     "agent/schedules/memory-weekly.ts",
     "agent/schedules/memory-yearly.ts",
+    "agent/schedules/proactive-reviews.ts",
     "agent/subagents/planner/agent.ts",
   ],
   thinAgentTools: [
@@ -51,6 +52,7 @@ const MEASURED_UNREPORTED_BY_CATEGORY = {
     "scripts/memory/doctor.ts",
     "scripts/memory/embed-index.ts",
     "scripts/memory/rollup.ts",
+    "scripts/proactive/run.ts",
     "scripts/replica-smoke.ts",
     "scripts/setup/main.ts",
   ],
@@ -109,7 +111,7 @@ function assertProductionPathInventory(
   const measuredUnreported = Object.values(MEASURED_UNREPORTED_BY_CATEGORY)
     .flat()
     .sort();
-  assert.equal(measuredUnreported.length, 31);
+  assert.equal(measuredUnreported.length, 33);
   assert.equal(new Set(measuredUnreported).size, measuredUnreported.length);
   assert.deepEqual(
     measuredUnreported.filter((path) => !productionFiles.includes(path)),

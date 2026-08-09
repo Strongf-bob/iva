@@ -49,6 +49,22 @@ The allowlist is **fail-closed: empty means Iva answers nobody.** The wizard aut
 
 At 10:00 in `ASSISTANT_TIMEZONE` Iva checks Git upstream without using the model. It sends nothing unless a higher stable `MAJOR.MINOR.PATCH` version exists, and offers each version only once. If `TELEGRAM_DIGEST_CHAT_ID` is empty, the first trusted ID is used.
 
+## Proactive reviews (owner only)
+
+Proactive reviews are off by default. Enable them for the owner by adding this local setting to `data/settings.json`:
+
+```json
+{
+  "proactiveReviews": { "enabled": true }
+}
+```
+
+The schedule wakes every five minutes, prepares the daily briefing at 05:00 and the Monday weekly review at 05:15, freezes the prepared versions at 07:55, and delivers at 08:00 in `Europe/Moscow`. A Monday daily and weekly review share one message. Missed daily runs recover for 12 hours and weekly runs for 72 hours; persisted versions, attempts, receipts, cooldowns, and confirmation state live in the private `data/proactive-reviews/` directory.
+
+The runtime intentionally exposes only narrow provider snapshots at `data/proactive-reviews/sources/{unified-inbox,crm,calendar,tasks}.json`; source collectors are separate integrations. Each file is a JSON array of strict normalized objects with `id`, `title`, at least one `evidence` reference, and optional `summary`, `occurredAt`, or `dueAt` Unix milliseconds. A missing file is an empty source; a malformed or symbolic-link file fails closed.
+
+Only the owner's private bot chat receives reports and urgent alerts. High alerts wait through 22:00–08:00 quiet hours and are deduplicated for six hours; critical alerts may bypass quiet hours and are deduplicated for one hour. Suggested commitments remain internal until the owner taps **Create Google Task**. Creation is idempotent; **Dismiss** records the decision without mutating Google. The personal Telegram userbot remains read-only and is not used by this workflow.
+
 ## Isolated multi-user mode
 
 Iva can serve up to 10 mutually untrusted Telegram users through private chats with one bot. The operator manages users only from the server terminal; Telegram has no command for listing users, reading another person's data or changing another person's limits.

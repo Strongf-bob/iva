@@ -29,7 +29,7 @@ export async function handleProactiveCommitmentCallback({
   callback,
   tenant,
   answer,
-  openStore = ProactiveStore.open,
+  openStore = (dataDir) => ProactiveStore.open(dataDir),
   now = Date.now,
 }: ProactiveCallbackInput): Promise<boolean> {
   if (!callback.data.startsWith(PREFIX)) return false;
@@ -54,7 +54,7 @@ export async function handleProactiveCommitmentCallback({
     store = openStore(tenant.dataDir);
     const decision = match[1] === "c" ? "confirmed" : "dismissed";
     const result = store.decideCommitment({
-      token: match[2]!,
+      token: match[2],
       ownerId: tenant.user.id,
       decision,
       nowMs: now(),
