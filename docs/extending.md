@@ -15,6 +15,9 @@ with a `SKILL.md` plus supporting files. Iva loads both your custom skills and t
 `agent/skills/`; bundled skills are read-only templates, simplest first:
 
 - 📋 **morning-digest.md** — one tool call (`tasks`), grouping rules, output format. Copy this for any "call a tool, format the result" job.
+- 🎯 **chief-of-staff-today.md** — bounded task and memory synthesis with inline provenance and an explicit no-write boundary.
+- 🤝 **relationship-briefing.md** — conservative identity resolution before linked-card synthesis.
+- 🗓 **weekly-review.md** — sparse-week handling and explicit decision arcs (`STABLE`, `NEW`, `CONFLICTING`, `CHANGED`).
 - 🔎 **web-research.md** — a 4-step chain: `web_search` → pick 2–4 sources → `web_fetch` each → synthesize with links.
 - 🌐 **agent-browser/** — directory skill wrapping a CLI the model drives through `bash`.
 - 🛡 **security-defense/** — the full shape: `SKILL.md`, bundled scripts, a patterns file.

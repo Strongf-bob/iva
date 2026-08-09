@@ -9,6 +9,10 @@ import { join } from "node:path";
 import { readEnvValues } from "../env-file.ts";
 import { acquireUpdateLock, releaseUpdateLock } from "../update-safety.ts";
 import {
+  containerMaintenanceSpec,
+  isContainerRuntime,
+} from "../container-maintenance.ts";
+import {
   LOADERS,
   currentRun,
   cancelRun,
@@ -25,7 +29,7 @@ type ServiceCommand = "doc" | "cln" | "mem";
 type MenuButton = { text: string; callback_data: string };
 type ServiceStatus = "running" | "failed" | "cancelled" | "timeout" | "done";
 type CommandSpec =
-  | { kind: "proc"; argv: string[]; cwd?: string }
+  | { kind: "proc"; argv: string[]; cwd?: string; env?: NodeJS.ProcessEnv }
   | { kind: "unit"; unit: string };
 
 export type MenuServiceView = { text: string; rows: MenuButton[][] };
@@ -34,6 +38,7 @@ export type MenuServiceState = {
   userId: string;
   screen: string;
   msgId: number;
+  personalRoot?: string;
 };
 type ServiceRunOverrides = Partial<
   Pick<
@@ -47,6 +52,7 @@ export type MenuServiceContext = {
     root: string;
     envPath: string;
     dataDir: string;
+    runtime?: "container" | "host";
     svcSpec?: (cmd: ServiceCommand, ctx: MenuServiceContext) => CommandSpec;
     svcRun?: ServiceRunOverrides;
     handleUpdateCheck?: (chatId: string | number) => unknown;
@@ -78,20 +84,34 @@ const label = (cmd: ServiceCommand, T: MenuServiceContext["tr"]): string =>
     mem: T("🌙 Night memory cycle", "🌙 Ночной цикл"),
   })[cmd];
 
-const describe = (cmd: ServiceCommand, T: MenuServiceContext["tr"]): string =>
+const describe = (
+  cmd: ServiceCommand,
+  T: MenuServiceContext["tr"],
+  container: boolean,
+): string =>
   ({
-    doc: T(
-      "Diagnoses and auto-repairs the install: units, timers, port, .env, build.\nUsually 10–60 seconds (up to minutes if a rebuild is needed).",
-      "Диагностика и авто-починка инсталляции: юниты, таймеры, порт, .env, сборка.\nОбычно 10–60 секунд (до минут, если нужна пересборка).",
-    ),
+    doc: container
+      ? T(
+          "Checks personal paths, gws, scheduler health, and persisted container status. It diagnoses the immutable runtime without claiming to repair host services.\nUsually under 10 seconds.",
+          "Проверяет личные пути, gws, scheduler health и сохранённый статус контейнеров. Диагностирует immutable runtime, не обещая чинить сервисы хоста.\nОбычно меньше 10 секунд.",
+        )
+      : T(
+          "Diagnoses and auto-repairs the install: units, timers, port, .env, build.\nUsually 10–60 seconds (up to minutes if a rebuild is needed).",
+          "Диагностика и авто-починка инсталляции: юниты, таймеры, порт, .env, сборка.\nОбычно 10–60 секунд (до минут, если нужна пересборка).",
+        ),
     cln: T(
       "Streams every memory card and removes the description bloat from the 0.3.0 bug. Safe for card bodies.\nUsually under a minute; gigabyte files take longer.",
       "Проходит по карточкам памяти стримингом и убирает раздутые description из бага 0.3.0. Тела карточек не трогает.\nОбычно меньше минуты; гигабайтные файлы — дольше.",
     ),
-    mem: T(
-      "Runs the nightly memory doctor now, without waiting for 05:00: cleanup → enforce → graph → git push.\nUsually 1–10 minutes.",
-      "Запускает ночной цикл памяти сейчас, не дожидаясь 05:00: cleanup → enforce → graph → git push.\nОбычно 1–10 минут.",
-    ),
+    mem: container
+      ? T(
+          "Runs this user's memory maintenance now as a bounded container job: cleanup → enforce → graph → vault backup.\nUsually 1–10 minutes.",
+          "Запускает обслуживание памяти этого пользователя как ограниченную container-задачу: cleanup → enforce → graph → резервная копия vault.\nОбычно 1–10 минут.",
+        )
+      : T(
+          "Runs the nightly memory doctor now, without waiting for 05:00: cleanup → enforce → graph → git push.\nUsually 1–10 minutes.",
+          "Запускает ночной цикл памяти сейчас, не дожидаясь 05:00: cleanup → enforce → graph → git push.\nОбычно 1–10 минут.",
+        ),
   })[cmd];
 
 // Командные строки. deps.svcSpec — тестовая подмена (argv на быстрые node -e).
@@ -100,9 +120,23 @@ const describe = (cmd: ServiceCommand, T: MenuServiceContext["tr"]): string =>
 export async function commandSpec(
   cmd: ServiceCommand,
   ctx: MenuServiceContext,
+  state?: MenuServiceState,
 ): Promise<CommandSpec> {
   if (ctx.deps.svcSpec) return ctx.deps.svcSpec(cmd, ctx);
   const root = ctx.deps.root;
+  if (isContainerRuntime(ctx.deps.runtime ?? process.env.IVA_RUNTIME)) {
+    if (!state?.personalRoot) {
+      throw new Error(
+        "container Maintenance requires an isolated personal root",
+      );
+    }
+    return containerMaintenanceSpec(cmd, {
+      globalDataDir: ctx.deps.dataDir,
+      personalRoot: state.personalRoot,
+      userId: state.userId,
+      appRoot: root,
+    });
+  }
   if (cmd === "doc")
     return {
       kind: "proc",
@@ -280,7 +314,7 @@ async function startCommand(
     }
     releaseUpdateLock(lock);
   }
-  const spec = await commandSpec(cmd, ctx);
+  const spec = await commandSpec(cmd, ctx, st);
   const over = ctx.deps.svcRun || {};
   const opts: RunOptions = {
     tg: ctx.tg,
@@ -347,10 +381,17 @@ const service = {
     const T = ctx.tr;
     if (verb === "c" && isServiceCommand(args[0])) {
       const cmd = args[0];
-      return ctx.flows.screen(st, `${label(cmd, T)}\n\n${describe(cmd, T)}`, [
-        [ctx.btn(T("▶ Run", "▶ Запустить"), `iva_menu:svc:go:${cmd}`)],
-        [ctx.btn(T("‹ Back", "‹ Назад"), "iva_menu:svc:o")],
-      ]);
+      const container = isContainerRuntime(
+        ctx.deps.runtime ?? process.env.IVA_RUNTIME,
+      );
+      return ctx.flows.screen(
+        st,
+        `${label(cmd, T)}\n\n${describe(cmd, T, container)}`,
+        [
+          [ctx.btn(T("▶ Run", "▶ Запустить"), `iva_menu:svc:go:${cmd}`)],
+          [ctx.btn(T("‹ Back", "‹ Назад"), "iva_menu:svc:o")],
+        ],
+      );
     }
     if (verb === "go" && isServiceCommand(args[0]))
       return startCommand(args[0], st, ctx);
@@ -359,7 +400,19 @@ const service = {
         return ctx.flows.screen(st, T("Stopping…", "Останавливаю…"), []);
       return ctx.show(st, "svc"); // нечего отменять — перерисовать текущее состояние
     }
-    if (verb === "up") return ctx.deps.handleUpdateCheck?.(st.chatId);
+    if (verb === "up") {
+      if (isContainerRuntime(ctx.deps.runtime ?? process.env.IVA_RUNTIME)) {
+        return ctx.flows.screen(
+          st,
+          T(
+            "This container cannot safely update itself during a chat. The normal production path is to merge a verified PR into main and wait for the CI and Deploy workflows. An authorized operator may invoke the configured restricted SSH endpoint with: deploy <40-character main SHA>. The deployment path selects the immutable image and verifies container health.",
+            "Контейнер не может безопасно обновить себя во время диалога. Штатный production-путь — влить проверенный PR в main и дождаться workflows CI и Deploy. Авторизованный оператор может вызвать настроенный ограниченный SSH endpoint командой: deploy <40-символьный SHA main>. Этот путь выбирает immutable image и проверяет health контейнеров.",
+          ),
+          [ctx.backRow("r")],
+        );
+      }
+      return ctx.deps.handleUpdateCheck?.(st.chatId);
+    }
   },
 };
 

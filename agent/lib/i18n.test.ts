@@ -6,6 +6,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { chiefOfStaffCommand } from "./i18n.ts";
 
 // getLang() читает env/файл на импорте и кэширует язык на ~2с, поэтому каждый сценарий
 // гоняем в СВЕЖЕМ процессе: чистый модуль, чистое окно кэша, свои env/settings.json.
@@ -108,6 +109,8 @@ test("COMMANDS is the single source: menu first, all control commands present", 
     "task",
     "tasks",
     "digest",
+    "brief",
+    "weekly",
   ];
   assert.deepEqual(commands, expected);
 });
@@ -132,11 +135,13 @@ test("helpText keeps the argument hints from the original help", () => {
   assert.match(en, /\/task <text> — add a task/);
   const ru = probe({ language: "ru" }).help;
   assert.match(ru, /\/task <текст> — добавить задачу/);
+  assert.match(en, /\/brief <person> — daily brief or meeting prep/);
+  assert.match(ru, /\/brief <человек> — бриф дня или подготовка к разговору/);
 });
 
 test("botCommands returns Telegram command objects per language", () => {
   const { botEn, botRu } = probe();
-  assert.equal(botEn.length, 12);
+  assert.equal(botEn.length, 14);
   assert.equal(botEn[0].command, "menu");
   assert.equal(botEn[0].description, "settings menu");
   assert.equal(botRu[0].description, "меню настроек");
@@ -144,4 +149,26 @@ test("botCommands returns Telegram command objects per language", () => {
     assert.doesNotMatch(c.command, /\//); // имя команды без ведущего слэша
     assert.ok(c.description.length >= 1 && c.description.length <= 256);
   }
+});
+
+test("chiefOfStaffCommand classifies only supported exact commands", () => {
+  assert.deepEqual(chiefOfStaffCommand("/brief"), {
+    skill: "chief-of-staff-today",
+    subject: null,
+  });
+  assert.deepEqual(chiefOfStaffCommand("/brief@iva_bot"), {
+    skill: "chief-of-staff-today",
+    subject: null,
+  });
+  assert.deepEqual(chiefOfStaffCommand("/brief  Александра Петрова "), {
+    skill: "relationship-briefing",
+    subject: "Александра Петрова",
+  });
+  assert.deepEqual(chiefOfStaffCommand("/weekly"), {
+    skill: "weekly-review",
+    subject: null,
+  });
+  assert.equal(chiefOfStaffCommand("/weekly unexpected"), null);
+  assert.equal(chiefOfStaffCommand("ordinary text"), null);
+  assert.equal(chiefOfStaffCommand("/briefing"), null);
 });

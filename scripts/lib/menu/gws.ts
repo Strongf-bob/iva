@@ -9,8 +9,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, writeFile, chmod, rm } from "node:fs/promises";
 import { execFile } from "node:child_process";
-import { isAbsolute, join } from "node:path";
-import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   startAuth,
   relayCode,
@@ -19,6 +18,7 @@ import {
   childEnv,
   AUTH_SERVICES,
   authSessionBelongsToUser,
+  resolveGoogleHome,
 } from "./gws-auth.ts";
 
 const SID = "gws";
@@ -77,8 +77,7 @@ function errorMessage(error: unknown): string {
 // Неавторизованный gws выходит с кодом 2 сразу (без сети); авторизованный `+triage` может
 // не уложиться в 1.5с — таймаут трактуем как «похоже, подключено» (код != 2).
 function personalHome(st: MenuState): string {
-  if (st.personalRoot && isAbsolute(st.personalRoot)) return st.personalRoot;
-  return homedir();
+  return resolveGoogleHome({ personalRoot: st.personalRoot });
 }
 
 function configDir(st: MenuState): string {
@@ -174,6 +173,21 @@ export default {
     // Возврат на экран (отмена, «Назад») с незавершённой авторизацией: awaitText уже снят
     // движком, код принять некому — приберём процесс и лог, а не оставим их висеть.
     if (st.gwsAuth && st.awaitText?.kind !== "gwsauthcode") reapAuth(st);
+    try {
+      personalHome(st);
+    } catch {
+      return {
+        text: [
+          T("🔗 Google Workspace", "🔗 Google Workspace"),
+          "",
+          T(
+            "Google is unavailable because this chat has no isolated personal HOME.",
+            "Google недоступен: у этого чата нет изолированного личного HOME.",
+          ),
+        ].join("\n"),
+        rows: [ctx.backRow(PARENT)],
+      };
+    }
     if (!existsSync(secretPath(st))) return instructions(ctx);
 
     const status = await authStatus(st);

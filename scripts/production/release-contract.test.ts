@@ -64,18 +64,18 @@ void test("production Compose requires an immutable image and narrow mounts", ()
   const compose = read("deploy/container/compose.production.yml");
   assert.equal(
     compose.match(/image: \$\{IVA_IMAGE:\?IVA_IMAGE is required\}/gu)?.length,
-    3,
+    4,
   );
   assert.match(compose, /127\.0\.0\.1:8723:8723/u);
   assert.match(compose, /\/eve\/v1\/health/u);
   assert.match(compose, /condition: service_healthy/u);
-  assert.equal(compose.match(/restart: unless-stopped/gu)?.length, 3);
-  assert.equal(compose.match(/^\s+user: "0:0"$/gmu)?.length, 3);
+  assert.equal(compose.match(/restart: unless-stopped/gu)?.length, 4);
+  assert.equal(compose.match(/^\s+user: "0:0"$/gmu)?.length, 4);
   assert.equal(compose.match(/^\s+pids_limit: 512$/gmu)?.length, 2);
   assert.equal(compose.match(/^\s+mem_limit: 4g$/gmu)?.length, 2);
   assert.equal(compose.match(/^\s+cpus: "2\.0"$/gmu)?.length, 2);
-  assert.equal(compose.match(/max-size: "10m"/gu)?.length, 3);
-  assert.equal(compose.match(/max-file: "3"/gu)?.length, 3);
+  assert.equal(compose.match(/max-size: "10m"/gu)?.length, 4);
+  assert.equal(compose.match(/max-file: "3"/gu)?.length, 4);
   assert.equal(
     compose.match(
       /\/app\/node_modules\/\.cache\/eve:rw,noexec,nosuid,nodev,mode=0700/gu,
@@ -86,7 +86,6 @@ void test("production Compose requires an immutable image and narrow mounts", ()
     "./memory:/app/memory",
     "./vault:/app/vault",
     "./.eve:/app/.eve",
-    "./.env:/app/.env:ro",
   ]) {
     assert.equal(
       compose.split(mount).length - 1,
@@ -94,7 +93,8 @@ void test("production Compose requires an immutable image and narrow mounts", ()
       `${mount} must be mounted twice`,
     );
   }
-  assert.equal(compose.split("./data:/app/data\n").length - 1, 2);
+  assert.equal(compose.split("./.env:/app/.env:ro").length - 1, 3);
+  assert.equal(compose.split("./data:/app/data\n").length - 1, 3);
   assert.equal(compose.split("./data:/app/data:ro").length - 1, 1);
   assert.equal(
     compose.match(

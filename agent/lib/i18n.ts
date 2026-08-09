@@ -30,6 +30,11 @@ type Command = {
   readonly args?: { readonly en: string; readonly ru: string };
 };
 
+export type ChiefOfStaffCommand =
+  | { readonly skill: "chief-of-staff-today"; readonly subject: null }
+  | { readonly skill: "relationship-briefing"; readonly subject: string }
+  | { readonly skill: "weekly-review"; readonly subject: null };
+
 const cache: { lang: Language | null; mtimeMs: number; checkedAt: number } = {
   lang: null,
   mtimeMs: -1,
@@ -119,7 +124,37 @@ export const COMMANDS: ReadonlyArray<Command> = [
   },
   { command: "tasks", en: "show tasks", ru: "показать задачи" },
   { command: "digest", en: "morning digest", ru: "утренний дайджест" },
+  {
+    command: "brief",
+    en: "daily brief or meeting prep",
+    ru: "бриф дня или подготовка к разговору",
+    args: { en: "<person>", ru: "<человек>" },
+  },
+  {
+    command: "weekly",
+    en: "weekly review",
+    ru: "недельный обзор",
+  },
 ];
+
+export function chiefOfStaffCommand(text: string): ChiefOfStaffCommand | null {
+  const match =
+    /^\/(?<command>brief|weekly)(?:@[A-Za-z0-9_]+)?(?:\s+(?<subject>[\s\S]*?))?\s*$/iu.exec(
+      text.trim(),
+    );
+  if (!match) return null;
+
+  const command = match.groups?.command.toLowerCase();
+  const subject = match.groups?.subject?.trim() ?? "";
+  if (command === "weekly") {
+    return subject.length === 0
+      ? { skill: "weekly-review", subject: null }
+      : null;
+  }
+  return subject.length === 0
+    ? { skill: "chief-of-staff-today", subject: null }
+    : { skill: "relationship-briefing", subject };
+}
 
 // Текст /help на текущем языке. Генерится на каждый вызов (язык мог смениться).
 export function helpText(): string {

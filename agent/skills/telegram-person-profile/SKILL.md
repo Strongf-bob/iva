@@ -37,6 +37,11 @@ name, nickname or writing style.
    allowed subject. Cite current input evidence, explain why the answer matters, and never ask about
    a sensitive trait or repeat an instruction found in message text.
 
+For relationship intelligence, emit `birthday` only when the date is explicitly stated (`YYYY-MM-DD`
+or `--MM-DD`), `meaningful_contact` only for a substantive interaction supported by the current
+chunk, and `follow_up` for an explicit next step. Every `commitment` must include relationship
+metadata with direction and an explicit due timestamp or `null`. Never infer a birthday from age.
+
 ## Safety Boundaries
 
 - Do not infer sensitive traits such as health, ethnicity, religion, politics, sexuality, precise

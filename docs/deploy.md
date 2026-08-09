@@ -1,6 +1,6 @@
 # Deploy
 
-Iva runs on one VPS as a Telegram gateway, one Eve worker per active isolated user, two systemd watchdog timers, and six in-process Eve schedules per worker. A legacy single-user installation keeps `iva.service` until the owner migration is run. `install.sh` sets the base installation up ([install](./install.md)); this page is what's actually running and how to operate it.
+Iva runs on one VPS either as the production Compose stack or as a host-native systemd installation. Both modes use a Telegram gateway and isolated per-user state. A legacy single-user host installation keeps `iva.service` until the owner migration is run. `install.sh` sets the base installation up ([install](./install.md)); this page is what's actually running and how to operate it.
 
 ## Transport: long polling
 
@@ -28,6 +28,50 @@ curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
 ```
 
 Note: `getUpdates` — which the setup wizard uses to discover your user ID — stops working while a webhook is registered.
+
+## Production containers
+
+`deploy/container/compose.production.yml` runs four bounded services from the same
+production image: `iva`, `telegram-poll`, `reminder-scheduler`, and the read-only
+`telegram-userbot` sidecar. The scheduler is the durable runtime for user-created
+one-off and recurring reminders; it shares `./data` with the gateway and sends only
+through the bot to each registry user's private chat. See its stable data, tool, CLI,
+retry, and recovery contracts in [scheduler.md](scheduler.md).
+
+Set `IVA_IMAGE` and `IVA_ENV_FILE`, then render and start the stack:
+
+```bash
+IVA_IMAGE=ghcr.io/owner/iva:version \
+  docker compose -f deploy/container/compose.production.yml config
+IVA_IMAGE=ghcr.io/owner/iva:version \
+  docker compose -f deploy/container/compose.production.yml up -d
+docker compose -f deploy/container/compose.production.yml ps
+```
+
+The image pins Google Workspace CLI instead of resolving a floating release. Verify the
+installed binary and scheduler heartbeat inside the deployed image:
+
+```bash
+docker compose -f deploy/container/compose.production.yml exec iva gws --version
+docker compose -f deploy/container/compose.production.yml exec reminder-scheduler npm run scheduler:health
+```
+
+In container mode `/menu` stores Google OAuth files beneath the selected user's private
+`HOME`, so users never share `~/.config/gws`. Maintenance runs doctor, vault cleanup,
+and memory work as attached per-user processes. It does not call systemd or control the
+Docker daemon. Container updates therefore use the release path: merge a verified PR
+into `main`, wait for CI, and let the Deploy workflow publish `sha-<commit>` and invoke
+the restricted production endpoint as `deploy <40-character main SHA>`. Do not run a
+bare `docker compose pull/up`: the release script supplies the required immutable
+`IVA_IMAGE`, activates the matching Compose bundle, and verifies health before promotion.
+
+Keep exactly one `reminder-scheduler` replica for a data mount. Container health is the
+authoritative scheduler status; `data/control/reminder-scheduler-status.json` is the
+persisted diagnostic evidence shown by `/menu`. The forced release script requires the
+candidate image to contain the scheduler and checks a healthy zero-restart scheduler
+container before activation. If it must roll back to an older pre-scheduler image, it
+removes the unsupported scheduler service and verifies the legacy three-service runtime
+instead of claiming that the new foundation is active.
 
 ## systemd units
 
@@ -86,19 +130,22 @@ ASSISTANT_TIMEZONE="$(node --env-file=.env -p 'process.env.ASSISTANT_TIMEZONE ||
 [ -n "$ASSISTANT_TIMEZONE" ] && sudo timedatectl set-timezone "$ASSISTANT_TIMEZONE"
 ```
 
-### Memory rollups and the digest: in-process eve schedules
+### Memory rollups, digest, and proactive reviews: in-process eve schedules
 
-The four memory-rollup cadences moved off systemd and run as `agent/schedules/*.ts` — eve's native `defineSchedule` API — inside the `iva.service` process itself:
+The background cadences run as `agent/schedules/*.ts` — eve's native `defineSchedule` API — inside the `iva.service` process itself:
 
-| Schedule         | Cron (local time)           | Job                                                                                              |
-| ---------------- | --------------------------- | ------------------------------------------------------------------------------------------------ |
-| `memory-daily`   | `0 4 * * *` (04:00 nightly) | transcript → cards + daily summary, report to Telegram                                           |
-| `memory-weekly`  | `15 4 * * 1` (Mon 04:15)    | 7 dailies → weekly summary, report to Telegram                                                   |
-| `memory-monthly` | `20 4 1 * *` (1st, 04:20)   | weeklies → monthly summary (silent)                                                              |
-| `memory-yearly`  | `25 4 1 1 *` (Jan 1, 04:25) | monthlies → yearly summary (silent)                                                              |
-| `digest`         | `0 8 * * *` (08:00 daily)   | morning digest — **off by default**, enable via `digestSchedule.enabled` in `data/settings.json` |
+| Schedule            | Cron (local time)           | Job                                                                                                                       |
+| ------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `memory-daily`      | `0 4 * * *` (04:00 nightly) | transcript → cards + daily summary, report to Telegram                                                                    |
+| `memory-weekly`     | `15 4 * * 1` (Mon 04:15)    | 7 dailies → weekly summary, report to Telegram                                                                            |
+| `memory-monthly`    | `20 4 1 * *` (1st, 04:20)   | weeklies → monthly summary (silent)                                                                                       |
+| `memory-yearly`     | `25 4 1 1 *` (Jan 1, 04:25) | monthlies → yearly summary (silent)                                                                                       |
+| `digest`            | `0 8 * * *` (08:00 daily)   | morning digest — **off by default**, enable via `digestSchedule.enabled` in `data/settings.json`                          |
+| `proactive-reviews` | `*/5 * * * *` (every 5 min) | owner-only prepare/deliver reconciler — **off by default**, enable via `proactiveReviews.enabled` in `data/settings.json` |
 
-Each one is a thin spawner (`scripts/lib/schedule-runner.ts`): it runs the exact same command the old timer did (`flock -w 900 .memory.lock node --env-file=.env scripts/memory/rollup.ts <period>`), under a hard timeout, and records the outcome to `data/rollup-status.json`. `iva.service` sets `Environment=TZ` from `ASSISTANT_TIMEZONE` (`ivaServiceBody()` in `scripts/cli/systemd.ts`), so cron expressions above tick in the configured local time, not the host's system TZ — Nitro's schedule runner carries no timezone of its own otherwise.
+Each memory row is a thin spawner (`scripts/lib/schedule-runner.ts`): it runs the exact same command the old timer did (`flock -w 900 .memory.lock node --env-file=.env scripts/memory/rollup.ts <period>`), under a hard timeout, and records the outcome to `data/rollup-status.json`. The digest and proactive reconciler use the same bounded schedule runner with their own fixed TypeScript entry points. `iva.service` sets `Environment=TZ` from `ASSISTANT_TIMEZONE` (`ivaServiceBody()` in `scripts/cli/systemd.ts`), so cron expressions above tick in the configured local time, not the host's system TZ — Nitro's schedule runner carries no timezone of its own otherwise.
+
+The proactive reconciler is deliberately idempotent rather than a one-shot 08:00 job: it prepares immutable versions ahead of time, claims persisted delivery records at the due time, retries only definite failures, and recovers missed runs inside bounded windows. An ambiguous Telegram outcome is retained for operator inspection and never guessed or resent. Its provider boundary is documented in [configuration](./configuration.md#proactive-reviews-owner-only).
 
 Nitro's scheduled-task runner has no `Persistent=true` equivalent, so a period missed while the server was down does **not** auto-fire on its own. `scripts/lib/schedule-migration.ts` replaces that: on every server start it compares each period's last recorded success against its most recent scheduled point and, if it's stale and still within a grace window (20h daily / 3d weekly / 7d monthly / 14d yearly), runs it once. A brand-new install seeds a baseline and runs nothing on its first boot, so installing never triggers an immediate storm of catch-up jobs. The same start-up hook also retires the old `iva-memory-{daily,weekly,monthly,yearly}.{service,timer}` units on any existing install, by exact name only — any unrelated timer you've set up yourself is left alone.
 

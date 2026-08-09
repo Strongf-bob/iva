@@ -93,6 +93,11 @@ image_supports_routing_health() {
     'test -f /app/scripts/production/routing-health.ts'
 }
 
+image_supports_scheduler() {
+  docker run --rm --entrypoint /bin/sh "$1" -c \
+    'test -f /app/scripts/reminder-scheduler.ts'
+}
+
 telegram_token() {
   sed -n 's/^TELEGRAM_BOT_TOKEN=//p' "$ENV_FILE" | tail -n 1
 }
@@ -145,7 +150,8 @@ userbot_session_ok() {
 }
 
 runtime_ok() {
-  local image="$1" allow_inert="$2" container_id health poller_id poller_state userbot_id userbot_state
+  local image="$1" allow_inert="$2" scheduler_required="$3"
+  local container_id health poller_id poller_state userbot_id userbot_state scheduler_id scheduler_state
   container_id="$(compose "$image" "$allow_inert" ps -q iva)" || return 1
   [ -n "$container_id" ] || return 1
   health="$(docker inspect --format '{{.State.Health.Status}}' "$container_id")" || return 1
@@ -164,15 +170,23 @@ runtime_ok() {
   )" || return 1
   [ "$userbot_state" = "running 0" ] || return 1
   userbot_session_ok "$userbot_id" || return 1
+  if [ "$scheduler_required" = "1" ]; then
+    scheduler_id="$(compose "$image" "$allow_inert" ps -q reminder-scheduler)" || return 1
+    [ -n "$scheduler_id" ] || return 1
+    scheduler_state="$(
+      docker inspect --format '{{.State.Health.Status}} {{.RestartCount}}' "$scheduler_id"
+    )" || return 1
+    [ "$scheduler_state" = "healthy 0" ] || return 1
+  fi
   curl --fail --silent --show-error --max-time 5 \
     "http://127.0.0.1:8723/eve/v1/health" >/dev/null || return 1
   telegram_ok
 }
 
 wait_healthy() {
-  local image="$1" allow_inert="$2" attempt=1
+  local image="$1" allow_inert="$2" scheduler_required="$3" attempt=1
   while [ "$attempt" -le "$HEALTH_ATTEMPTS" ]; do
-    if runtime_ok "$image" "$allow_inert"; then
+    if runtime_ok "$image" "$allow_inert" "$scheduler_required"; then
       return 0
     fi
     sleep "$HEALTH_DELAY"
@@ -182,10 +196,17 @@ wait_healthy() {
 }
 
 start_image() {
-  local image="$1" allow_inert="$2"
-  compose "$image" "$allow_inert" up -d --remove-orphans iva telegram-poll telegram-userbot || return 1
+  local image="$1" allow_inert="$2" scheduler_required="$3"
+  if [ "$scheduler_required" = "1" ]; then
+    compose "$image" "$allow_inert" up -d --remove-orphans \
+      iva telegram-poll telegram-userbot reminder-scheduler || return 1
+  else
+    compose "$image" "$allow_inert" rm -sf reminder-scheduler >/dev/null 2>&1 || true
+    compose "$image" "$allow_inert" up -d --remove-orphans \
+      iva telegram-poll telegram-userbot || return 1
+  fi
   sleep "$POLLER_SETTLE_DELAY"
-  wait_healthy "$image" "$allow_inert"
+  wait_healthy "$image" "$allow_inert" "$scheduler_required"
 }
 
 write_state() {
@@ -203,6 +224,7 @@ fi
 
 image_supports_userbot "$candidate_image" || fail "candidate image lacks the userbot runtime"
 image_supports_routing_health "$candidate_image" || fail "candidate image lacks owner routing health support"
+image_supports_scheduler "$candidate_image" || fail "candidate image lacks the reminder scheduler"
 
 owner_route_backup="$DEPLOY_DIR/legacy-owner-route.rollback.$$"
 owner_route_existed=0
@@ -226,7 +248,7 @@ restore_owner_route() {
   fi
 }
 
-if ! start_image "$candidate_image" 0; then
+if ! start_image "$candidate_image" 0 1; then
   printf 'deploy: candidate failed health checks; rolling back\n' >&2
   compose "$candidate_image" 0 stop telegram-poll >/dev/null 2>&1 || true
   restore_owner_route || fail "owner routing state restoration failed; polling remains stopped"
@@ -241,7 +263,11 @@ if ! start_image "$candidate_image" 0; then
         iva telegram-userbot >/dev/null 2>&1 || true
       fail "previous image lacks owner routing support; polling remains stopped"
     fi
-    if start_image "$previous_image" "$rollback_allow_inert"; then
+    rollback_scheduler=0
+    if image_supports_scheduler "$previous_image"; then
+      rollback_scheduler=1
+    fi
+    if start_image "$previous_image" "$rollback_allow_inert" "$rollback_scheduler"; then
       printf 'deploy: previous image restored\n' >&2
     else
       fail "candidate and rollback image are unhealthy"

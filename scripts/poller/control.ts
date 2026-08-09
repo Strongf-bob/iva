@@ -53,6 +53,7 @@ import {
   workerRoutes,
   type WorkerRoutes,
 } from "./tenant-routing.ts";
+import { handleProactiveCommitmentCallback } from "../proactive/callback.ts";
 
 type ControlCallbackQuery = TelegramCallbackQuery & { data: string };
 type PendingFlow = {
@@ -87,6 +88,29 @@ export type ControlTenantContext = {
   dataDir: string;
   personalRoot: string;
 };
+const PERSONAL_MENU_PREFIXES = [
+  "iva_menu:r:",
+  "iva_menu:gws:",
+  "iva_menu:cron:",
+];
+
+export function controlCallbackAllowed(
+  data: string,
+  role: UserRecord["role"],
+): boolean {
+  if (role === "owner") return true;
+  if (
+    data.startsWith("iva_update:") ||
+    data.startsWith("iva_model:") ||
+    data.startsWith("iva_think:")
+  ) {
+    return false;
+  }
+  if (data.startsWith("iva_menu:")) {
+    return PERSONAL_MENU_PREFIXES.some((prefix) => data.startsWith(prefix));
+  }
+  return true;
+}
 const OWNER_ONLY_CONTROLS = new Set([
   "/restart",
   "/update",
@@ -328,19 +352,21 @@ async function handleControl(
   const cq = update.callback_query;
   if (cq && hasCallbackData(cq)) {
     const callback = cq;
+    const proactiveHandled = await handleProactiveCommitmentCallback({
+      callback,
+      tenant,
+      answer: async (text) => {
+        await controlTg("answerCallbackQuery", {
+          callback_query_id: callback.id,
+          text,
+        }).catch(() => ({ ok: false }));
+      },
+    });
+    if (proactiveHandled) return true;
     const tenantMenuState = tenant
       ? getWizard(callback.message?.chat?.id, tenant.user.id)
       : null;
-    if (
-      tenant &&
-      tenant.user.role !== "owner" &&
-      (callback.data.startsWith("iva_update:") ||
-        callback.data.startsWith("iva_model:") ||
-        callback.data.startsWith("iva_think:") ||
-        (callback.data.startsWith("iva_menu:") &&
-          !callback.data.startsWith("iva_menu:r:") &&
-          !callback.data.startsWith("iva_menu:gws:")))
-    ) {
+    if (tenant && !controlCallbackAllowed(callback.data, tenant.user.role)) {
       await controlTg("answerCallbackQuery", {
         callback_query_id: callback.id,
         text: tr("Owner only", "Только для владельца"),

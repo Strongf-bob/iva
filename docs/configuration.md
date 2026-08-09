@@ -51,6 +51,22 @@ For an existing single-owner installation whose user registry has not been creat
 
 At 10:00 in `ASSISTANT_TIMEZONE` Iva checks Git upstream without using the model. It sends nothing unless a higher stable `MAJOR.MINOR.PATCH` version exists, and offers each version only once. If `TELEGRAM_DIGEST_CHAT_ID` is empty, the first trusted ID is used.
 
+## Proactive reviews (owner only)
+
+Proactive reviews are off by default. Enable them for the owner by adding this local setting to `data/settings.json`:
+
+```json
+{
+  "proactiveReviews": { "enabled": true }
+}
+```
+
+The schedule wakes every five minutes, prepares the daily briefing at 05:00 and the Monday weekly review at 05:15, freezes the prepared versions at 07:55, and delivers at 08:00 in `Europe/Moscow`. A Monday daily and weekly review share one message. Missed daily runs recover for 12 hours and weekly runs for 72 hours; persisted versions, attempts, receipts, cooldowns, and confirmation state live in the private `data/proactive-reviews/` directory.
+
+The runtime intentionally exposes only narrow provider snapshots at `data/proactive-reviews/sources/{unified-inbox,crm,calendar,tasks}.json`; source collectors are separate integrations. Each file is a JSON array of strict normalized objects with `id`, `title`, at least one `evidence` reference, and optional `summary`, `occurredAt`, or `dueAt` Unix milliseconds. A missing file is an empty source; a malformed or symbolic-link file fails closed.
+
+Only the owner's private bot chat receives reports and urgent alerts. High alerts wait through 22:00–08:00 quiet hours and are deduplicated for six hours; critical alerts may bypass quiet hours and are deduplicated for one hour. Suggested commitments remain internal until the owner taps **Create Google Task**. Creation is idempotent; **Dismiss** records the decision without mutating Google. The personal Telegram userbot remains read-only and is not used by this workflow.
+
 ## Isolated multi-user mode
 
 Iva can serve up to 10 mutually untrusted Telegram users through private chats with one bot. The operator manages users only from the server terminal; Telegram has no command for listing users, reading another person's data or changing another person's limits.
@@ -132,10 +148,18 @@ The nightly doctor builds the hybrid index; to build it now, run `node --env-fil
 | Variable                   | Default                        | Notes                                                                                                                                                                                                                                                                                                          |
 | -------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `AGENT_LANGUAGE`           | `ru`                           | `en` or `ru`. Sets Iva's reply language, date locale, and which CORE.md seed `init-vault` uses. The **🌐 Language** button in `/menu` overrides it at runtime via `data/settings.json` (read fresh every turn) and mirrors the choice back here, so the switch is instant — no restart ([menu.md](./menu.md)). |
-| `ASSISTANT_TIMEZONE`       | `Europe/Moscow`                | IANA name. Sets daily-transcript dates, two systemd watchdog timers, six in-process eve schedules, and the date/time Iva sees each turn. Exported as `TZ`.                                                                                                                                                     |
+| `ASSISTANT_TIMEZONE`       | `Europe/Moscow`                | IANA name. Sets reminder wall-clock calculations, daily-transcript dates, host watchdog timers, relationship preparation/delivery schedules, and the date/time Iva sees each turn. Exported as `TZ`.                                                                                                           |
 | `ASSISTANT_VAULT_DIR`      | `memory`                       | The live memory: a separate private git repo, opens in Obsidian.                                                                                                                                                                                                                                               |
-| `ASSISTANT_DATA_DIR`       | `data`                         | Runtime data: `tasks.json`, token log `usage.jsonl`.                                                                                                                                                                                                                                                           |
+| `ASSISTANT_DATA_DIR`       | `data`                         | Runtime data: tasks, usage, durable reminders, private relationship registry, prepared report artifacts, and scheduler status. Personalized workers receive their own bounded directory.                                                                                                                       |
+| `IVA_RUNTIME`              | _(host)_                       | Set to `container` by the production Compose file. Selects container-native Maintenance, per-user Google HOME, reminder status, and truthful host-side update guidance. Do not set it manually for systemd installs.                                                                                           |
 | `IVA_PORT`                 | `8723`                         | Local eve server port. Deliberately unfashionable — 3000/8000/8080 are usually taken on a stock VPS by docker and friends. Change it via `iva config`, not by hand: the systemd unit pins the port literally and must match ([deploy.md](./deploy.md)).                                                        |
 | `ASSISTANT_HOST`           | `http://127.0.0.1:${IVA_PORT}` | Where the poll bridge and memory scripts reach the server. Change only if the agent runs on another host.                                                                                                                                                                                                      |
 | `ASSISTANT_BEARER`         | _(generated)_                  | Shared secret required by Eve session routes. Setup/upgrades create it; local clients read it automatically. Keep it private.                                                                                                                                                                                  |
 | `AGENT_BROWSER_MAX_OUTPUT` | `24000`                        | Character cap on agent-browser output, so one page dump can't eat the context window.                                                                                                                                                                                                                          |
+
+The production Compose file overrides `ASSISTANT_DATA_DIR=/app/data` for the shared
+`reminder-scheduler`; each worker still receives its own personal data directory from
+the registry. Reminder creation fails closed unless `ASSISTANT_USER_ID`,
+`ASSISTANT_PERSONAL_ROOT`, and `ASSISTANT_DATA_DIR` identify that same user. The
+scheduler derives the private bot destination from the registry, never from model input.
+Full schema and retry semantics: [scheduler.md](scheduler.md).

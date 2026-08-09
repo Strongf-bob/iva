@@ -43,6 +43,9 @@ export const ObservationPredicateSchema = z.enum([
   "works_on",
   "communication_style",
   "commitment",
+  "birthday",
+  "meaningful_contact",
+  "follow_up",
   "preference",
   "owner_mention",
   "external_owner_claim",
@@ -54,6 +57,20 @@ export const EvidenceSchema = z.strictObject({
   messageId: MessageIdSchema,
   timestamp: z.iso.datetime({ offset: true }),
 });
+
+function validBirthday(value: string): boolean {
+  const match = /^(?:(\d{4})-|--)(\d{2})-(\d{2})$/u.exec(value);
+  if (!match) return false;
+  const year = Number(match[1] ?? "2000");
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
 
 export const ObservationSchema = z
   .strictObject({
@@ -69,6 +86,17 @@ export const ObservationSchema = z
     evidence: z.array(EvidenceSchema).min(1).max(32),
     validFrom: z.iso.datetime({ offset: true }).optional(),
     validUntil: z.iso.datetime({ offset: true }).optional(),
+    relationship: z
+      .strictObject({
+        direction: z.enum([
+          "owner_to_contact",
+          "contact_to_owner",
+          "mutual",
+          "unknown",
+        ]),
+        dueAt: z.iso.datetime({ offset: true }).nullable(),
+      })
+      .optional(),
   })
   .superRefine((observation, context) => {
     if (
@@ -89,6 +117,28 @@ export const ObservationSchema = z
         code: "custom",
         message: "external_owner_claim requires assertedById",
         path: ["assertedById"],
+      });
+    }
+    if (
+      (observation.predicate === "commitment") !==
+      (observation.relationship !== undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "relationship metadata is required only for commitments",
+        path: ["relationship"],
+      });
+    }
+    if (
+      observation.predicate === "birthday" &&
+      (observation.value === undefined ||
+        observation.confidence !== "EXTRACTED" ||
+        !validBirthday(observation.value))
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "birthday must be an explicit ISO or yearless date",
+        path: ["value"],
       });
     }
   });
