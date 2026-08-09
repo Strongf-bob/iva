@@ -169,8 +169,11 @@ inbox text, commitment text, callback tokens or credentials. Invalid provider
 data fails that preparation attempt without partially persisting a ready report.
 SQLite operational failures fail closed: no bot or task call is attempted unless
 the corresponding transaction established ownership of the operation. Provider
-failures are classified as retryable or terminal and stored as bounded codes,
-not raw response bodies.
+failures are classified as retryable, ambiguous or terminal and stored as
+bounded codes, not raw response bodies. A definite Bot API rejection may retry.
+A transport loss after dispatch is ambiguous because Telegram has no caller
+idempotency key; it is retained for owner-visible reconciliation and is not
+automatically resent, preventing a guessed retry from creating a duplicate.
 
 ## Test strategy
 
