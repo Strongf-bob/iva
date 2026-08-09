@@ -1,7 +1,8 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
+import { realpathSync } from "node:fs";
 import { readdir } from "node:fs/promises";
-import { join, relative, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   multiUserMode,
   personalRoot,
@@ -67,6 +68,33 @@ async function walk(root: string, dir: string, out: string[]): Promise<void> {
   }
 }
 
+export function resolveGlobRoot(cwd?: string): string {
+  if (cwd === "$VAULT") {
+    const configured = process.env.ASSISTANT_VAULT_DIR || "vault";
+    if (!multiUserMode()) return realpathSync(resolve(configured));
+
+    const personal = personalRoot();
+    const personalRelative = isAbsolute(configured)
+      ? relative(personal, realpathSync(configured))
+      : configured;
+    return resolvePersonalReadPath(personalRelative, personal);
+  }
+  return multiUserMode()
+    ? resolvePersonalReadPath(cwd ?? ".", personalRoot())
+    : (cwd ?? process.cwd());
+}
+
+export async function findGlobMatches(
+  pattern: string,
+  cwd?: string,
+): Promise<string[]> {
+  const root = resolveGlobRoot(cwd);
+  const all: string[] = [];
+  await walk(root, root, all);
+  const re = globToRegExp(pattern);
+  return all.filter((path) => re.test(path)).sort();
+}
+
 export default defineTool({
   description:
     "Найти файлы по glob-паттерну НАПРЯМУЮ на файловой системе хоста VPS. " +
@@ -81,16 +109,11 @@ export default defineTool({
     cwd: z
       .string()
       .optional()
-      .describe("Базовая директория поиска (абсолютный путь)"),
+      .describe(
+        'Базовая директория поиска (абсолютный путь или "$VAULT" для настроенного vault)',
+      ),
   }),
   async execute({ pattern, cwd }) {
-    const root = multiUserMode()
-      ? resolvePersonalReadPath(cwd ?? ".", personalRoot())
-      : (cwd ?? process.cwd());
-    const all: string[] = [];
-    await walk(root, root, all);
-    const re = globToRegExp(pattern);
-    const matches = all.filter((p) => re.test(p)).sort();
-    return matches;
+    return findGlobMatches(pattern, cwd);
   },
 });

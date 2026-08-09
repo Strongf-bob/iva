@@ -5,6 +5,7 @@ Iva is a personal agent that lives on your own server and works in your Telegram
 ## The highlight reel
 
 - Every morning at 9:00 the digest arrives on its own: today's tasks, inbox, industry news.
+- `/brief` turns open tasks and current vault evidence into one bounded focus for today.
 - "What did we agree with client X about the last shipment?" — found in seconds, months later.
 - A five-minute voice note from the car → a task list, a draft email, a meeting card.
 - A 4,000-line price list reconciled in minutes instead of a day.
@@ -51,7 +52,9 @@ Iva is a personal agent that lives on your own server and works in your Telegram
 
 **📇 Personal CRM.** Who promised what, what you agreed on, when to follow up.
 
-**🤝 Meeting prep.** A brief on the company and the person across the table, a couple of minutes before the call.
+**🤝 Meeting prep.** `/brief <person>` resolves the contact conservatively, then surfaces agreements, open questions and talking points with vault sources. It stops on ambiguous identities and does not contact anyone.
+
+**🗓 Weekly review.** `/weekly` follows themes, changed or conflicting decisions and overdue commitments across the available daily summaries, then proposes up to three evidence-backed priorities. Sparse weeks are labelled as such.
 
 **📮 Inbox and calendar from chat** — handled between meetings, from the phone.
 
@@ -65,7 +68,7 @@ Voice notes and shopping lists. People and dates she actually remembers. Search 
 
 ## Iva grows around you
 
-Out of the box Iva ships with eight skills: web research, a browser, Google Workspace, a morning digest, local document processing, rich Telegram posts, a personal-account userbot (beta) and injection defense. The rest is yours to add — and adding is cheap:
+Out of the box Iva ships with eleven core workflows: web research, a browser, Google Workspace, a morning digest, daily attention, relationship briefing, weekly review, local document processing, rich Telegram posts, a personal-account userbot (beta) and injection defense. The rest is yours to add — and adding is cheap:
 
 - a **skill** is one markdown file with a procedure;
 - an **MCP connector** to your CRM, database or internal service is one config file;
