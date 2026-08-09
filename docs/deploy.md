@@ -12,6 +12,8 @@ The bridge also gives you:
 - ⏱ **Per-chat pacing** — a 1.5s pause between updates to the same chat, so a burst can't start two runs on one session.
 - 🛟 **Out-of-band recovery** — a handful of slash commands (`/restart` and friends) are handled by the bridge itself, so they work even when the agent is stuck. Which ones, and what they do: [cli.md](./cli.md).
 
+On a legacy single-owner installation, polling starts only after it has a usable owner route. If the user registry is still empty and `TELEGRAM_ALLOWED_USER_IDS` contains exactly one valid ID, the bridge creates the private legacy route to the existing Eve worker automatically. Empty or ambiguous allowlists and incomplete registries fail closed before Telegram updates are consumed. Container deployments additionally probe that resolved owner route before promoting a new image.
+
 ### Webhook mode (alternative)
 
 Polling and webhook are mutually exclusive — the bridge calls `deleteWebhook` on start. If you do have a public HTTPS endpoint, disable the bridge and register the webhook:
