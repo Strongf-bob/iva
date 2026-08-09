@@ -172,6 +172,11 @@ export class ProactiveStore {
       ) STRICT;
       INSERT OR IGNORE INTO proactive_schema(version) VALUES (1);
 
+      CREATE TABLE IF NOT EXISTS proactive_meta (
+        key TEXT PRIMARY KEY,
+        value INTEGER NOT NULL
+      ) STRICT;
+
       CREATE TABLE IF NOT EXISTS report_attempts (
         kind TEXT NOT NULL,
         period_key TEXT NOT NULL,
@@ -263,6 +268,23 @@ export class ProactiveStore {
     }
   }
 
+  recoveryBaseline(nowMs: number): number {
+    return this.transaction(() => {
+      const row = rowFrom(
+        this.database.prepare(
+          "SELECT value FROM proactive_meta WHERE key = 'recovery_baseline_at'",
+        ),
+      );
+      if (row) return numberValue(row.value);
+      this.database
+        .prepare(
+          "INSERT INTO proactive_meta(key, value) VALUES ('recovery_baseline_at', ?)",
+        )
+        .run(nowMs);
+      return nowMs;
+    });
+  }
+
   claimPreparation(
     kind: ReportKind,
     periodKey: string,
@@ -319,6 +341,14 @@ export class ProactiveStore {
         input.kind,
         input.periodKey,
       );
+  }
+
+  expirePreparation(kind: ReportKind, periodKey: string): void {
+    this.database
+      .prepare(
+        "INSERT INTO report_attempts(kind, period_key, state, attempts) VALUES (?, ?, 'expired', 0) ON CONFLICT(kind, period_key) DO UPDATE SET state = CASE WHEN report_attempts.state = 'ready' THEN report_attempts.state ELSE 'expired' END, claimed_at = NULL, next_attempt_at = NULL",
+      )
+      .run(kind, periodKey);
   }
 
   saveReportVersion(input: PreparedReportVersion): StoredReportVersion {
@@ -517,7 +547,7 @@ export class ProactiveStore {
     const parsed = urgentAlertSchema.parse(alert);
     this.database
       .prepare(
-        "INSERT INTO urgent_alerts(fingerprint, severity, payload_json, state, first_seen_at, last_seen_at) VALUES (?, ?, ?, 'pending', ?, ?) ON CONFLICT(fingerprint) DO UPDATE SET severity = excluded.severity, payload_json = excluded.payload_json, last_seen_at = excluded.last_seen_at",
+        "INSERT INTO urgent_alerts(fingerprint, severity, payload_json, state, first_seen_at, last_seen_at) VALUES (?, ?, ?, 'pending', ?, ?) ON CONFLICT(fingerprint) DO UPDATE SET severity = excluded.severity, payload_json = excluded.payload_json, state = CASE WHEN urgent_alerts.state IN ('ambiguous', 'terminal') THEN urgent_alerts.state ELSE 'pending' END, last_seen_at = excluded.last_seen_at",
       )
       .run(
         parsed.fingerprint,

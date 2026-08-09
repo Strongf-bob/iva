@@ -52,9 +52,7 @@ export type ReportKind = "daily" | "weekly";
 export type AlertSeverity = "high" | "critical";
 export type NormalizedItem = z.infer<typeof normalizedItemSchema>;
 export type ProviderSnapshot = z.infer<typeof providerSnapshotSchema>;
-export type CommitmentSuggestion = z.infer<
-  typeof commitmentSuggestionSchema
->;
+export type CommitmentSuggestion = z.infer<typeof commitmentSuggestionSchema>;
 export type UrgentAlert = z.infer<typeof urgentAlertSchema>;
 
 export interface ReportPeriod {
@@ -101,6 +99,15 @@ export interface ComposedReport {
   readonly suggestions: readonly CommitmentSuggestion[];
   readonly alerts: readonly UrgentAlert[];
 }
+
+export const composedReportSchema = z
+  .object({
+    body: z.string().trim().min(1).max(MAX_REPORT_BODY),
+    sourceFingerprint: z.string().trim().min(1).max(256),
+    suggestions: z.array(commitmentSuggestionSchema).max(100),
+    alerts: z.array(urgentAlertSchema).max(100),
+  })
+  .strict();
 
 export interface ReportComposer {
   compose(input: {
