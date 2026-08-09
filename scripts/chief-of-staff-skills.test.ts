@@ -93,3 +93,18 @@ test("Telegram routes chief-of-staff commands through the bounded classifier", (
   assert.match(source, /relationship-briefing/u);
   assert.match(source, /weekly-review/u);
 });
+
+test("core instructions expose all chief-of-staff workflows", () => {
+  for (const relativePath of [
+    "agent/instructions.md",
+    "agent/instructions/10-map.md",
+  ]) {
+    const source = readFileSync(
+      new URL(`../${relativePath}`, import.meta.url),
+      "utf8",
+    );
+    assert.match(source, /chief-of-staff-today/u, relativePath);
+    assert.match(source, /relationship-briefing/u, relativePath);
+    assert.match(source, /weekly-review/u, relativePath);
+  }
+});

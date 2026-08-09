@@ -57,6 +57,7 @@ The bridge long-polls Telegram, so no public HTTPS, domain or webhook is needed.
 - **Quiet update checks** — once a day Iva checks for a newer stable release without spending model tokens. If one exists, Telegram offers **Update** or **Later** once; otherwise it says nothing.
 - **Layered memory** — remembers across months, long after the chat window has scrolled away.
 - **Personal CRM** — who your people are, what you agreed, when to follow up.
+- **Chief-of-staff briefs** — `/brief`, `/brief <person>` and `/weekly` turn tasks and current vault evidence into traceable, read-only priorities and meeting prep.
 - **Search by meaning** — BM25 plus link-graph rerank, any language; optional vector mode with one key.
 - **Decision cards** — what you chose, when and why; old versions stay in a dated History.
 - **Tasks & reminders** — priorities, due dates and a morning digest.
