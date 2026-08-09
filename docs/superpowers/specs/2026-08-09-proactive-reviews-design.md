@@ -151,7 +151,9 @@ backoff; success records a receipt before another tick can resend it.
 ## Commitment confirmation flow
 
 The report exposes `Create Google Task` and `Dismiss` for each pending
-suggestion. Callback data carries an allowlisted prefix and opaque token only.
+suggestion. Callback data carries the compact allowlisted
+`iva_commitment:(c|d):<opaque-token>` form, which stays inside Telegram's
+64-byte limit.
 The poller intercepts that namespace before model delivery, reuses its verified
 tenant routing, and accepts it only when sender ID and private chat both equal
 the owner recorded for the action.

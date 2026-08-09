@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/require-await -- Node owns test registration; async doubles preserve the I/O boundary. */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { controlCommandAllowed, handleAwaitNonText } from "./control.ts";
 
 type Event = string | [string, string, number | undefined, string | undefined];
@@ -15,6 +17,19 @@ test("ordinary users get personal conversation and usage controls", () => {
     assert.equal(controlCommandAllowed(command, "user"), false, command);
     assert.equal(controlCommandAllowed(command, "owner"), true, command);
   }
+});
+
+test("commitment callbacks are consumed before model-facing callback routes", () => {
+  const source = readFileSync(
+    fileURLToPath(new URL("./control.ts", import.meta.url)),
+    "utf8",
+  );
+  const proactive = source.indexOf("handleProactiveCommitmentCallback({");
+  const update = source.indexOf('callback.data.startsWith("iva_update:")');
+  const menu = source.indexOf('callback.data.startsWith("iva_menu:")');
+  assert.ok(proactive > 0);
+  assert.ok(proactive < update);
+  assert.ok(proactive < menu);
 });
 
 test("secret document capture deletes before download and never reaches Eve", async () => {

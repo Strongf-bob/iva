@@ -239,7 +239,7 @@ scripts/poller/tenant-routing.test.ts` and `npm run typecheck`.
 - [ ] Write failing callback tests with injected answer/store functions for
       confirm, dismiss, foreign owner, group, malformed and duplicate cases.
 - [ ] Run the focused tests; expect missing handler failures.
-- [ ] Implement strict `iva_commitment:(confirm|dismiss):<opaque-token>` parsing,
+- [ ] Implement strict `iva_commitment:(c|d):<opaque-token>` parsing,
       verified tenant gates and generic localized answers.
 - [ ] Wire the handler before menu/update callback routing in `handleControl` and
       consume every matching-prefix tap even on error.
