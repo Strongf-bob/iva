@@ -38,7 +38,7 @@ void test("importing the telegram poll shim is a silent no-op", () => {
   assert.equal(result.stderr, "");
 });
 
-void test("direct telegram poll failure keeps its fatal message and exit status", () => {
+void test("direct telegram poll failure keeps its private fatal message and exit status", () => {
   const result = spawnSync(process.execPath, [shimPath], {
     cwd: root,
     encoding: "utf8",
@@ -52,6 +52,6 @@ void test("direct telegram poll failure keeps its fatal message and exit status"
   assert.equal(result.stdout, "");
   assert.match(
     result.stderr,
-    /^telegram-poll fatal: Error: no TELEGRAM_BOT_TOKEN in \.env — nothing to poll\n/u,
+    /^telegram-poll fatal: startup or polling failed\n/u,
   );
 });
