@@ -9,7 +9,8 @@ import "./lib/ts-esm-hooks.ts";
 
 const { default: schedule } =
   await import("../agent/schedules/telegram-contact-sync.ts");
-const { contactAnalysisJob } = await import("../agent/lib/schedule-paths.ts");
+const { contactAnalysisEnabled, contactAnalysisJob } =
+  await import("../agent/lib/schedule-paths.ts");
 
 test("contact sync schedule runs every fifteen minutes", () => {
   assert.equal(schedule.cron, "*/15 * * * *");
@@ -18,6 +19,25 @@ test("contact sync schedule runs every fifteen minutes", () => {
     "utf8",
   );
   assert.match(source, /runScheduledJob\(contactAnalysisJob\(\)\)/u);
+  assert.match(source, /contactAnalysisEnabled\(\)/u);
+});
+
+test("contact sync runs only for the owner in multi-user mode", () => {
+  assert.equal(contactAnalysisEnabled({}), true);
+  assert.equal(
+    contactAnalysisEnabled({
+      ASSISTANT_MULTI_USER: "1",
+      ASSISTANT_ROLE: "owner",
+    }),
+    true,
+  );
+  assert.equal(
+    contactAnalysisEnabled({
+      ASSISTANT_MULTI_USER: "1",
+      ASSISTANT_ROLE: "user",
+    }),
+    false,
+  );
 });
 
 test("contact analysis schedule uses the shared lock, status and bounded guards", () => {

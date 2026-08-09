@@ -156,11 +156,16 @@ export async function runContactAnalysisCommand(
       writeOutput("telegram_contact_analysis_requires_read_only");
       return 1;
     }
+    const tokenPath =
+      env.ASSISTANT_MULTI_USER === "1" && env.ASSISTANT_ROLE === "owner"
+        ? join(env.ASSISTANT_APP_DIR ?? root, "data", "telegram-userbot.token")
+        : undefined;
     const report = await withLockImpl(root, () =>
       runContactAnalysisImpl({
         root,
         dataDir: env.ASSISTANT_DATA_DIR ?? "data",
         vault: env.ASSISTANT_VAULT_DIR,
+        ...(tokenPath ? { tokenPath } : {}),
       }),
     );
     writeOutput(json ? JSON.stringify(report) : compactReport(report));

@@ -85,3 +85,39 @@ test("sync runs under the shared pipeline lock and prints a bounded report", asy
   ]);
   assert.deepEqual(JSON.parse(output[0]!), report);
 });
+
+test("multi-user owner keeps personal checkpoints but reads the shared userbot token", async () => {
+  let received;
+  const code = await runContactAnalysisCommand(["sync"], {
+    env: {
+      TELEGRAM_EXPOSED_TOOLS: "read-only",
+      ASSISTANT_MULTI_USER: "1",
+      ASSISTANT_ROLE: "owner",
+      ASSISTANT_APP_DIR: "/srv/iva",
+      ASSISTANT_DATA_DIR: "/srv/iva-users/7/data",
+      ASSISTANT_VAULT_DIR: "/srv/iva-users/7/vault",
+    },
+    root: "/srv/iva",
+    writeOutput: () => {},
+    withLockImpl: async (_root, operation) => operation(),
+    runContactAnalysisImpl: async (options) => {
+      received = options;
+      return {
+        completedChats: 0,
+        pendingChats: 0,
+        blockedChats: 0,
+        failedChats: 0,
+        processedMessages: 0,
+        unsupportedMedia: 0,
+      };
+    },
+  });
+
+  assert.equal(code, 0);
+  assert.deepEqual(received, {
+    root: "/srv/iva",
+    dataDir: "/srv/iva-users/7/data",
+    vault: "/srv/iva-users/7/vault",
+    tokenPath: "/srv/iva/data/telegram-userbot.token",
+  });
+});

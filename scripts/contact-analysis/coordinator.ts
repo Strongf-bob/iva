@@ -95,6 +95,7 @@ export interface ContactAnalysisReport {
 export interface RunContactAnalysisOptions {
   root?: string;
   dataDir?: string;
+  tokenPath?: string;
   vault?: string;
   client?: TelegramAnalysisClient;
   concurrency?: number;
@@ -224,8 +225,9 @@ function allowedSubjects(
 export async function runContactAnalysis({
   root = process.cwd(),
   dataDir = "data",
+  tokenPath,
   vault = process.env.ASSISTANT_VAULT_DIR ?? `${root}/vault`,
-  client = createTelegramAnalysisClient({ root, dataDir }),
+  client = createTelegramAnalysisClient({ root, dataDir, tokenPath }),
   concurrency = 3,
   analyzePageImpl = analyzePage,
   reduceBatchImpl = reduceBatch,

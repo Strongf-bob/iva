@@ -38,6 +38,9 @@ void test("bootstrap fixes personal cwd and filters the child environment", asyn
       PATH: "/usr/bin",
       OPENCODE_API_KEY: "shared-provider-key",
       TELEGRAM_BOT_TOKEN: "bot-token",
+      TELEGRAM_EXPOSED_TOOLS: "read-only",
+      TELEGRAM_MCP_URL: "http://telegram-userbot:8724/mcp",
+      TELEGRAM_MCP_TOKEN: "must-not-leak",
       TELEGRAM_API_HASH: "must-not-leak",
       RANDOM_PRIVATE_SECRET: "must-not-leak",
       ASSISTANT_DATA_DIR: "/wrong/shared/data",
@@ -60,6 +63,12 @@ void test("bootstrap fixes personal cwd and filters the child environment", asyn
   );
   assert.equal(prepared.env.TELEGRAM_ALLOWED_USER_IDS, "123");
   assert.equal(prepared.env.OPENCODE_API_KEY, "shared-provider-key");
+  assert.equal(prepared.env.TELEGRAM_EXPOSED_TOOLS, "read-only");
+  assert.equal(
+    prepared.env.TELEGRAM_MCP_URL,
+    "http://telegram-userbot:8724/mcp",
+  );
+  assert.equal(prepared.env.TELEGRAM_MCP_TOKEN, undefined);
   assert.equal(prepared.env.TELEGRAM_API_HASH, undefined);
   assert.equal(prepared.env.RANDOM_PRIVATE_SECRET, undefined);
   assert.equal(prepared.env.HOME, join(paths.usersDir, "123"));

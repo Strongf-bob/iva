@@ -67,3 +67,9 @@ export function contactAnalysisJob() {
     },
   };
 }
+
+export function contactAnalysisEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env.ASSISTANT_MULTI_USER !== "1" || env.ASSISTANT_ROLE === "owner";
+}

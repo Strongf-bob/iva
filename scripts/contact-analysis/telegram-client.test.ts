@@ -152,3 +152,24 @@ test("client enforces a bounded timeout", async () => {
 
   await assert.rejects(fastClient.account(), /telegram_analysis_timeout/u);
 });
+
+test("client can read a shared token independently from personal state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "iva-contact-shared-token-"));
+  const tokenPath = join(root, "shared", "telegram-userbot.token");
+  await mkdir(join(root, "shared"), { recursive: true });
+  await writeFile(tokenPath, "shared-secret\n", { mode: 0o600 });
+  let authorization = "";
+  const client = createTelegramAnalysisClient({
+    root,
+    dataDir: join(root, "personal-data"),
+    tokenPath,
+    port: 9124,
+    fetchImpl: async (_input, init) => {
+      authorization = new Headers(init?.headers).get("authorization") ?? "";
+      return jsonResponse({ userId: 7, displayName: "Owner", username: null });
+    },
+  });
+
+  await client.account();
+  assert.equal(authorization, "Bearer shared-secret");
+});

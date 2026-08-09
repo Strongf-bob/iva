@@ -59,6 +59,7 @@ export interface TelegramAnalysisClient {
 export interface TelegramAnalysisClientOptions {
   root?: string;
   dataDir?: string;
+  tokenPath?: string;
   port?: string | number;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
@@ -89,16 +90,19 @@ function safeInteger(
 export function createTelegramAnalysisClient({
   root = process.cwd(),
   dataDir = "data",
+  tokenPath,
   port = process.env.TELEGRAM_MCP_PORT ?? "8724",
   timeoutMs = 30_000,
   fetchImpl = globalThis.fetch,
 }: TelegramAnalysisClientOptions = {}): TelegramAnalysisClient {
   const baseUrl = `http://127.0.0.1:${safePort(port)}/analysis/v1`;
-  const tokenPath = resolve(root, dataDir, "telegram-userbot.token");
+  const resolvedTokenPath = tokenPath
+    ? resolve(root, tokenPath)
+    : resolve(root, dataDir, "telegram-userbot.token");
   safeInteger(timeoutMs, "timeout", 1, 120_000);
 
   async function request<T>(path: string, schema: z.ZodType<T>): Promise<T> {
-    const token = (await readFile(tokenPath, "utf8")).trim();
+    const token = (await readFile(resolvedTokenPath, "utf8")).trim();
     if (!token) throw new Error("telegram_analysis_token_missing");
     const signal = AbortSignal.timeout(timeoutMs);
     let response: Response;
