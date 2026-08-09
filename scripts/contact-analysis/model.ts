@@ -1,4 +1,4 @@
-import { streamObject, type LanguageModel } from "ai";
+import { generateObject, type LanguageModel } from "ai";
 
 import { createTextModel } from "../../agent/provider.ts";
 import {
@@ -18,7 +18,7 @@ export interface ModelAnalysisInput {
   messages: TelegramMessage[];
 }
 
-interface StreamObjectInput {
+interface GenerateObjectInput {
   model: LanguageModel;
   schema: typeof AnalysisBatchSchema;
   system: string;
@@ -28,19 +28,21 @@ interface StreamObjectInput {
   maxRetries: number;
 }
 
-interface StreamObjectResultLike {
-  object: PromiseLike<unknown>;
+interface GenerateObjectResultLike {
+  object: unknown;
 }
 
-type StreamObjectImpl = (input: StreamObjectInput) => StreamObjectResultLike;
+type GenerateObjectImpl = (
+  input: GenerateObjectInput,
+) => PromiseLike<GenerateObjectResultLike>;
 
 export interface AnalyzeStructuredDependencies {
   model?: LanguageModel;
-  streamObjectImpl?: StreamObjectImpl;
+  generateObjectImpl?: GenerateObjectImpl;
   timeoutMs?: number;
 }
 
-const runStreamObject: StreamObjectImpl = (input) => streamObject(input);
+const runGenerateObject: GenerateObjectImpl = (input) => generateObject(input);
 const DEFAULT_MODEL_TIMEOUT_MS = 5 * 60_000;
 const MAX_OUTPUT_TOKENS = 16_384;
 
@@ -53,7 +55,7 @@ export async function analyzeStructured(
     TelegramMessageSchema.parse(message),
   );
   const model = dependencies.model ?? createTextModel();
-  const run = dependencies.streamObjectImpl ?? runStreamObject;
+  const run = dependencies.generateObjectImpl ?? runGenerateObject;
   const timeoutMs = dependencies.timeoutMs ?? DEFAULT_MODEL_TIMEOUT_MS;
   if (
     !Number.isSafeInteger(timeoutMs) ||
@@ -83,43 +85,46 @@ export async function analyzeStructured(
     timeoutMs,
   );
   try {
-    const result = run({
-      model,
-      schema: AnalysisBatchSchema,
-      system: input.skillText,
-      prompt,
-      abortSignal: controller.signal,
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
-      maxRetries: 0,
-    });
-    const object = await new Promise<unknown>((resolve, reject) => {
-      const onAbort = () =>
-        reject(
-          controller.signal.reason instanceof Error
-            ? controller.signal.reason
-            : new Error("Contact analysis model call aborted"),
-        );
-      if (controller.signal.aborted) {
-        onAbort();
-        return;
-      }
-      controller.signal.addEventListener("abort", onAbort, { once: true });
-      Promise.resolve(result.object).then(
-        (value) => {
-          controller.signal.removeEventListener("abort", onAbort);
-          resolve(value);
-        },
-        (error: unknown) => {
-          controller.signal.removeEventListener("abort", onAbort);
+    const result = await new Promise<GenerateObjectResultLike>(
+      (resolve, reject) => {
+        const onAbort = () =>
           reject(
-            error instanceof Error
-              ? error
-              : new Error("Contact analysis model call failed"),
+            controller.signal.reason instanceof Error
+              ? controller.signal.reason
+              : new Error("Contact analysis model call aborted"),
           );
-        },
-      );
-    });
-    return AnalysisBatchSchema.parse(object);
+        if (controller.signal.aborted) {
+          onAbort();
+          return;
+        }
+        controller.signal.addEventListener("abort", onAbort, { once: true });
+        Promise.resolve(
+          run({
+            model,
+            schema: AnalysisBatchSchema,
+            system: input.skillText,
+            prompt,
+            abortSignal: controller.signal,
+            maxOutputTokens: MAX_OUTPUT_TOKENS,
+            maxRetries: 0,
+          }),
+        ).then(
+          (value) => {
+            controller.signal.removeEventListener("abort", onAbort);
+            resolve(value);
+          },
+          (error: unknown) => {
+            controller.signal.removeEventListener("abort", onAbort);
+            reject(
+              error instanceof Error
+                ? error
+                : new Error("Contact analysis model call failed"),
+            );
+          },
+        );
+      },
+    );
+    return AnalysisBatchSchema.parse(result.object);
   } finally {
     clearTimeout(deadline);
   }
