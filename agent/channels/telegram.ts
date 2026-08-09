@@ -47,6 +47,7 @@ import { humanizeProviderError } from "../lib/error-humanizer.js";
 import {
   chatKeyOf,
   getChatStatus,
+  RUN_STALE_MS,
   setChatStatus,
   setChatStatusIf,
 } from "../lib/run-status.js";
@@ -962,40 +963,10 @@ const telegram = telegramChannel({
       await finishStatus(channel, ctx.session.id, "cancelled");
     },
     // Страховка: если терминальное turn-событие потерялось (краш), парковка сессии
-    // всё равно снимает busy-флаг — мост не должен буферизовать вечно.
+    // всё равно снимает busy-флаг И удаляет осиротевший «Работаю…» — та же уборка, что у
+    // turn.completed. После обычного финала CAS по sessionId не совпадает — no-op.
     async "session.waiting"(_data, channel, ctx) {
-      const tg = channel.telegram;
-      const key = chatKeyOf(tg.chatId, tg.messageThreadId);
-      const st = getChatStatus(key);
-      if (st?.status === "running" && st.sessionId === ctx.session.id) {
-        const quotaControlDir = process.env.IVA_USER_CONTROL_DIR;
-        const quotaUserId = parseTelegramUserId(process.env.ASSISTANT_USER_ID);
-        if (quotaControlDir && quotaUserId) {
-          try {
-            await releaseUserTurn(quotaControlDir, quotaUserId);
-          } catch (error) {
-            console.error(
-              "[telegram] не удалось освободить квоту ожидающей сессии:",
-              error,
-            );
-          }
-        }
-      }
-      setChatStatusIf(
-        key,
-        { status: "running", sessionId: ctx.session.id },
-        {
-          status: "idle",
-          continuationToken: toChannelLocalToken(channel.continuationToken),
-          turnId: null,
-          ingressId: null,
-          ingressAt: null,
-          statusAt: null,
-          turnAt: null,
-          firstOutputAt: null,
-          latencyLogged: null,
-        },
-      );
+      await finishStatus(channel, ctx.session.id, "completed");
     },
     "message.appended"(_data, channel, ctx) {
       markTelegramFirstOutput({
@@ -1212,7 +1183,8 @@ const telegram = telegramChannel({
     const earlyKey = chatKeyOf(message.chat.id, message.messageThreadId);
     const earlyIngressId = await publishTelegramEarlyStatus({
       chatKey: earlyKey,
-      setStatusImpl: setChatStatus,
+      staleMs: RUN_STALE_MS,
+      getStatusImpl: getChatStatus,
       setStatusIfImpl: setChatStatusIf,
       sendWorkingStatusImpl: (options) =>
         sendWorkingStatus(ctx.telegram, options),
