@@ -12,8 +12,8 @@ type State = {
 type Context = {
   deps: {
     dataDir: string;
-    deliver: (update: Record<string, unknown>) => Promise<unknown> | unknown;
-    reply: (chatId: number, text: string) => Promise<unknown> | unknown;
+    deliver: (update: Record<string, unknown>) => unknown;
+    reply: (chatId: number, text: string) => unknown;
   };
   flows: {
     end: (state: State, text: string) => Promise<void>;

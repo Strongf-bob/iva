@@ -26,7 +26,8 @@ type WebhookRoute = {
   ) => Promise<Response>;
 };
 
-globalThis.fetch = async () => Response.json({ ok: true, result: true });
+globalThis.fetch = () =>
+  Promise.resolve(Response.json({ ok: true, result: true }));
 
 const telegramTestModule =
   "../agent/channels/telegram.ts?person-memory-route-test";
@@ -62,9 +63,9 @@ async function dispatch(text: string, userId = 9): Promise<SendCall[]> {
       }),
     }),
     {
-      send: async (...args: SendCall) => {
+      send: (...args: SendCall) => {
         sends.push(args);
-        return {};
+        return Promise.resolve({});
       },
       waitUntil: (promise: Promise<unknown>) => pending.push(promise),
     },

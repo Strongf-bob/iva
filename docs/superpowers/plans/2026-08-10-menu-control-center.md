@@ -23,6 +23,7 @@
 ### Task 1: Action-first root and grouped settings
 
 **Files:**
+
 - Modify: `scripts/lib/menu/root.ts`
 - Create: `scripts/lib/menu/settings.ts`
 - Create: `scripts/lib/menu/settings-ai.ts`
@@ -35,6 +36,7 @@
 - Test: `scripts/lib/menu/menu-screens.test.ts`
 
 **Interfaces:**
+
 - Consumes: existing `MenuState` role/personalRoot fields and `MenuContext` navigation helpers.
 - Produces: registered screen IDs `set`, `sai`, `scon`, `sper`, and `ssys`; existing screens return to their owning settings group.
 
@@ -65,6 +67,7 @@ Commit title: `feat(menu): introduce the action-first control center`
 ### Task 2: Today, inbox, tasks and automation hubs
 
 **Files:**
+
 - Create: `scripts/lib/menu/handoff.ts`
 - Create: `scripts/lib/menu/today.ts`
 - Create: `scripts/lib/menu/inbox.ts`
@@ -76,6 +79,7 @@ Commit title: `feat(menu): introduce the action-first control center`
 - Test: `scripts/lib/menu/menu-index.test.ts`
 
 **Interfaces:**
+
 - Consumes: `deps.deliver`, `deps.reply`, `flows.end`, `openTaskCount`, user ID, role and personalRoot.
 - Produces: `handoffText(st, ctx, text, copy)` and registered screen IDs `td`, `in`, `tsk`, `auto`; model handoffs end the menu before dispatch.
 
@@ -106,6 +110,7 @@ Commit title: `feat(menu): expose daily work and automation hubs`
 ### Task 3: Person memory view and supplement workflow
 
 **Files:**
+
 - Create: `scripts/lib/menu/people.ts`
 - Modify: `scripts/lib/menu/index.ts`
 - Modify: `agent/lib/i18n.ts`
@@ -119,6 +124,7 @@ Commit title: `feat(menu): expose daily work and automation hubs`
 - Modify: `scripts/chief-of-staff-skills.test.ts`
 
 **Interfaces:**
+
 - Consumes: menu text intake, existing `memory_search`, `read_file`, `write_card`, inbound sanitization and Telegram auth/routing.
 - Produces: public `/person <name>` view route; internal strict `/person_update <json>` route; skill modes `view` and `supplement`.
 
@@ -163,6 +169,7 @@ Commit title: `feat(people): add safe person memory workflows`
 ### Task 4: Command discoverability and documentation
 
 **Files:**
+
 - Modify: `agent/lib/i18n.ts`
 - Modify: `agent/lib/i18n.test.ts`
 - Modify: `docs/menu.md`
@@ -171,6 +178,7 @@ Commit title: `feat(people): add safe person memory workflows`
 - Modify: `README.ru.md`
 
 **Interfaces:**
+
 - Consumes: the single bilingual `COMMANDS` catalog.
 - Produces: an explicit `telegramMenu` visibility property; complete `/help`; concise public Telegram command menu.
 
@@ -201,10 +209,12 @@ Commit title: `docs(menu): document the control center workflows`
 ### Task 5: Full verification, review and publication
 
 **Files:**
+
 - Review: complete diff from fresh `origin/main`
 - Update only if needed: files with reproducible review findings
 
 **Interfaces:**
+
 - Consumes: completed feature branch.
 - Produces: reviewed, verified branch and protected-main PR/release evidence.
 

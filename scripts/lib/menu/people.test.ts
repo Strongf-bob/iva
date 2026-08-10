@@ -81,9 +81,8 @@ function people(): PeopleScreen {
 }
 
 function deliveredText(delivery: Record<string, unknown>): string {
-  return String(
-    (delivery.message as Record<string, unknown> | undefined)?.text ?? "",
-  );
+  const value = (delivery.message as Record<string, unknown> | undefined)?.text;
+  return typeof value === "string" ? value : "";
 }
 
 test("People is owner-only and callbacks never contain personal data", () => {

@@ -100,9 +100,8 @@ function screen(id: string): Screen {
 }
 
 function deliveredText(delivery: Record<string, unknown>): string {
-  return String(
-    (delivery.message as Record<string, unknown> | undefined)?.text ?? "",
-  );
+  const value = (delivery.message as Record<string, unknown> | undefined)?.text;
+  return typeof value === "string" ? value : "";
 }
 
 test("Today shows the open task count and explicitly hands off brief actions", async () => {
