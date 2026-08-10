@@ -185,13 +185,13 @@ function buildView(
   ];
   const rows = [
     [ctx.btn(T("🔄 Refresh", "🔄 Обновить"), "iva_menu:st:rf")],
-    ctx.backRow("r"),
+    ctx.backRow("ssys"),
   ];
   return { text: lines.join("\n"), rows };
 }
 
 export default {
-  parent: "r",
+  parent: "ssys",
   async render(st: StatusState, ctx: MenuContext) {
     const env = (await readEnvValues(ctx.deps.envPath)) as Env;
     const d = fastFields(env, ctx, st);

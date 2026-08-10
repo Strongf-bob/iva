@@ -32,6 +32,11 @@ import crons from "./crons.ts";
 import skills from "./skills.ts";
 import status from "./status.ts";
 import service from "./service.ts";
+import settings from "./settings.ts";
+import settingsAi from "./settings-ai.ts";
+import settingsConnections from "./settings-connections.ts";
+import settingsPersonalization from "./settings-personalization.ts";
+import settingsSystem from "./settings-system.ts";
 
 type MaybePromise<T> = T | Promise<T>;
 type MenuButton = { text: string; callback_data: string };
@@ -151,6 +156,11 @@ export const SCREENS = {
   sk: skills,
   st: status,
   svc: service,
+  set: settings,
+  sai: settingsAi,
+  scon: settingsConnections,
+  sper: settingsPersonalization,
+  ssys: settingsSystem,
 };
 
 const PREFIX = "iva_menu:";

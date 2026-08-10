@@ -161,7 +161,7 @@ void test("core render handles an empty vault and trims an oversized CORE excerp
   const state = makeState();
 
   const empty = await core.render(state, context);
-  assert.equal(core.parent, "r");
+  assert.equal(core.parent, "sper");
   assert.match(empty.text, /Ядро памяти пусто/);
   assert.deepEqual(empty.rows[0][0], {
     text: "Пройти интервью",

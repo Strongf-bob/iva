@@ -278,7 +278,7 @@ function idleView(
         ctx.btn(label("mem", T), "iva_menu:svc:c:mem"),
         ctx.btn(T("🔄 Update", "🔄 Обновление"), "iva_menu:svc:up"),
       ],
-      ctx.backRow("r"),
+      ctx.backRow("ssys"),
     ],
   };
 }
@@ -309,7 +309,7 @@ async function startCommand(
           "⬆️ An update is in progress — try again after it finishes.",
           "⬆️ Идёт обновление — попробуй после его завершения.",
         ),
-        [ctx.backRow("r")],
+        [ctx.backRow("ssys")],
       );
     }
     releaseUpdateLock(lock);
@@ -361,7 +361,7 @@ async function startCommand(
 }
 
 const service = {
-  parent: "r",
+  parent: "ssys",
   // eslint-disable-next-line @typescript-eslint/require-await -- async preserves the original synchronous run snapshot before returning a Promise.
   async render(
     st: MenuServiceState,
@@ -408,7 +408,7 @@ const service = {
             "This container cannot safely update itself during a chat. The normal production path is to merge a verified PR into main and wait for the CI and Deploy workflows. An authorized operator may invoke the configured restricted SSH endpoint with: deploy <40-character main SHA>. The deployment path selects the immutable image and verifies container health.",
             "Контейнер не может безопасно обновить себя во время диалога. Штатный production-путь — влить проверенный PR в main и дождаться workflows CI и Deploy. Авторизованный оператор может вызвать настроенный ограниченный SSH endpoint командой: deploy <40-символьный SHA main>. Этот путь выбирает immutable image и проверяет health контейнеров.",
           ),
-          [ctx.backRow("r")],
+          [ctx.backRow("ssys")],
         );
       }
       return ctx.deps.handleUpdateCheck?.(st.chatId);

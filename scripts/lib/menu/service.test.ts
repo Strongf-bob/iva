@@ -13,7 +13,7 @@ import service, {
   type MenuServiceState,
   type MenuServiceView,
 } from "./service.ts";
-import root from "./root.ts";
+import settingsSystem from "./settings-system.ts";
 import {
   LOADERS,
   cancelRun,
@@ -172,16 +172,19 @@ const fastRun = {
   pollMs: 5,
 } satisfies Partial<RunOptions>;
 
-test("svc зарегистрирован в движке, root ведёт на него, Закрыть в своём ряду", () => {
+test("svc зарегистрирован в движке и доступен из системных настроек", () => {
   assert.equal(SCREENS.svc, service);
-  const view = root.render(newState({ screen: "r" }), makeCtx().ctx);
+  const view = settingsSystem.render(
+    newState({ screen: "ssys", role: "owner" }),
+    makeCtx().ctx,
+  );
   const flat = view.rows.flat();
   assert.ok(flat.some((b) => b.callback_data === "iva_menu:svc:o"));
-  const closeRow = view.rows.find((r) =>
-    r.some((b) => b.callback_data === "iva_menu:r:x"),
+  const backRow = view.rows.find((r) =>
+    r.some((b) => b.callback_data === "iva_menu:r:o"),
   );
-  assert.ok(closeRow);
-  assert.equal(closeRow.length, 1);
+  assert.ok(backRow);
+  assert.equal(backRow.length, 1);
 });
 
 test("render idle: четыре команды и Назад, ru/en", async () => {
