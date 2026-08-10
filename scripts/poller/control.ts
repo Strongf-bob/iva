@@ -90,6 +90,13 @@ export type ControlTenantContext = {
 };
 const PERSONAL_MENU_PREFIXES = [
   "iva_menu:r:",
+  "iva_menu:td:",
+  "iva_menu:tsk:",
+  "iva_menu:auto:",
+  "iva_menu:set:",
+  "iva_menu:scon:",
+  "iva_menu:ssys:",
+  "iva_menu:st:",
   "iva_menu:gws:",
   "iva_menu:cron:",
 ];
