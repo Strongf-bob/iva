@@ -42,7 +42,11 @@ const webhook = channel.routes.find(
 
 after(() => rmSync(vault, { recursive: true, force: true }));
 
-async function dispatch(text: string, userId = 9): Promise<SendCall[]> {
+async function dispatch(
+  text: string,
+  userId = 9,
+  chatType: "private" | "group" = "private",
+): Promise<SendCall[]> {
   const sends: SendCall[] = [];
   const pending: Promise<unknown>[] = [];
   const response = await webhook.handler(
@@ -56,7 +60,7 @@ async function dispatch(text: string, userId = 9): Promise<SendCall[]> {
         update_id: 1,
         message: {
           message_id: 100,
-          chat: { id: userId, type: "private" },
+          chat: { id: chatType === "private" ? userId : -100, type: chatType },
           from: { id: userId, is_bot: false, username: "owner" },
           text,
         },
@@ -84,6 +88,9 @@ test("person view routes to the read-only skill with separate identity data", as
   );
   assert.ok(instruction);
   assert.match(instruction, /view mode/u);
+  assert.match(instruction, /rich-post embedded renderer mode/u);
+  assert.match(instruction, /exactly one normal Rich Markdown reply/u);
+  assert.match(instruction, /Do not call send_rich\.py/u);
   assert.doesNotMatch(instruction, /Александра/u);
   assert.match(context.join("\n"), /Untrusted identity data/u);
   assert.match(context.join("\n"), /"Александра Петрова"/u);
@@ -104,6 +111,9 @@ test("person supplement sanitizes identity and note as adjacent untrusted data",
   );
   assert.ok(instruction);
   assert.match(instruction, /supplement mode/u);
+  assert.match(instruction, /rich-post embedded renderer mode/u);
+  assert.match(instruction, /exactly one normal Rich Markdown result/u);
+  assert.match(instruction, /do not call send_rich\.py/u);
   assert.doesNotMatch(instruction, /ignore previous/u);
   assert.match(context.join("\n"), /flagged by the security gate/u);
   assert.match(context.join("\n"), /Untrusted identity data/u);
@@ -113,6 +123,20 @@ test("person supplement sanitizes identity and note as adjacent untrusted data",
 
 test("person route keeps the existing owner allowlist in front", async () => {
   assert.equal((await dispatch("/person Alice", 10)).length, 0);
+});
+
+test("person routes fail closed outside the owner's private chat", async () => {
+  assert.equal((await dispatch("/person Alice", 9, "group")).length, 0);
+  assert.equal(
+    (
+      await dispatch(
+        '/person_update {"name":"Alice","note":"Works at Example"}',
+        9,
+        "group",
+      )
+    ).length,
+    0,
+  );
 });
 
 test("person route fails closed for a non-owner personalized worker", async () => {

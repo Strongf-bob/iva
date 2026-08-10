@@ -24,6 +24,7 @@ import {
   htmlToPlain,
   needsRichMessage,
 } from "../../scripts/lib/telegram-format.ts";
+import { attemptTelegramRichDelivery } from "../lib/telegram-rich-delivery.js";
 import { describeImage } from "../vision.js";
 import {
   hasInboundAttackSignal,
@@ -1030,31 +1031,39 @@ const telegram = telegramChannel({
       // чанка ≤4096 ПОСЛЕ конвертации (ручной chunkMarkdown+mdToTelegramHtml мог раздуть
       // чанк тегами за лимит → 400). Пустые чанки не шлём (Telegram отвергает пустой текст).
 
-      // Rich message (sendRichMessage, Bot API 10.1): таблицы/таск-листы/<details>/формулы
-      // рендерятся нативно — HTML-путь так не умеет. Пробуем rich ТОЛЬКО для них; любая
-      // ошибка (старый Bot API, парс, лимит 32768, RICH_MESSAGE_*) проваливается в HTML-путь
-      // ниже — worst case = сегодняшнее поведение. request() = raw Bot API call, транспорт
-      // JSON, поэтому rich_message шлём объектом. chat_id/thread берём из channel.telegram.
+      // Rich message (sendRichMessage, Bot API 10.2): таблицы/таск-листы/<details>/формулы
+      // рендерятся нативно — HTML-путь так не умеет. Пробуем rich ТОЛЬКО для них.
+      // После явного API rejection безопасно падаем в HTML; transport exception имеет
+      // неоднозначный исход (Telegram уже мог принять сообщение), поэтому не ретраим и
+      // не рискуем дублем. request() = raw Bot API call, transport JSON; chat_id/thread
+      // берём из channel.telegram.
       if (needsRichMessage(guard.text)) {
-        try {
-          const res = await channel.telegram.request("sendRichMessage", {
+        const outcome = await attemptTelegramRichDelivery(() =>
+          channel.telegram.request("sendRichMessage", {
             chat_id: channel.telegram.chatId,
             rich_message: { markdown: guard.text },
             ...(channel.telegram.messageThreadId !== undefined
               ? { message_thread_id: channel.telegram.messageThreadId }
               : {}),
-          });
-          if (res.ok) {
-            recordDelivery(true);
-            return;
-          }
+          }),
+        );
+        if (outcome.kind === "delivered") {
+          recordDelivery(true);
+          return;
+        }
+        if (outcome.kind === "rejected") {
           console.error(
             "[telegram] sendRichMessage отвергнут, фолбэк HTML:",
-            res.status,
-            JSON.stringify(res.body).slice(0, 300),
+            outcome.status,
+            JSON.stringify(outcome.body).slice(0, 300),
           );
-        } catch (err) {
-          console.error("[telegram] sendRichMessage упал, фолбэк HTML:", err);
+        } else {
+          console.error(
+            "[telegram] результат sendRichMessage неоднозначен; не дублирую ответ:",
+            outcome.error,
+          );
+          recordDelivery(false);
+          return;
         }
       }
 
@@ -1371,16 +1380,19 @@ const telegram = telegramChannel({
         cmd === "/person" || cmd === "/person_update";
       if (isPersonMemoryCommand) {
         if (
-          process.env.ASSISTANT_MULTI_USER === "1" &&
-          process.env.ASSISTANT_ROLE !== "owner"
+          message.chat.type !== "private" ||
+          (process.env.ASSISTANT_MULTI_USER === "1" &&
+            process.env.ASSISTANT_ROLE !== "owner")
         ) {
           await abandonEarly();
-          await ctx.telegram.sendMessage(
-            tr(
-              "People memory is unavailable on this worker; it is available only to the owner.",
-              "Память о людях недоступна в этом профиле: она доступна только владельцу.",
-            ),
-          );
+          if (message.chat.type === "private") {
+            await ctx.telegram.sendMessage(
+              tr(
+                "People memory is unavailable on this worker; it is available only to the owner.",
+                "Память о людях недоступна в этом профиле: она доступна только владельцу.",
+              ),
+            );
+          }
           return null;
         }
         if (personMemory === null) {
@@ -1494,6 +1506,22 @@ const telegram = telegramChannel({
             ),
           ];
         } else {
+          if (
+            message.chat.type !== "private" ||
+            (process.env.ASSISTANT_MULTI_USER === "1" &&
+              process.env.ASSISTANT_ROLE !== "owner")
+          ) {
+            await abandonEarly();
+            if (message.chat.type === "private") {
+              await ctx.telegram.sendMessage(
+                tr(
+                  "People briefing is available only to the owner.",
+                  "Бриф по человеку доступен только владельцу.",
+                ),
+              );
+            }
+            return null;
+          }
           const subject = sanitizeInbound(chiefOfStaff.subject);
           const subjectAttack = hasInboundAttackSignal(subject);
           if (subjectAttack) {

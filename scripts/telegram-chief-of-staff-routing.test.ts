@@ -108,6 +108,9 @@ test("daily, person and weekly commands reach their exact skill contexts", async
   assert.equal(person.length, 1);
   const personContext = person[0][0].context.join("\n");
   assert.match(personContext, /relationship-briefing/u);
+  assert.match(personContext, /rich-post embedded renderer mode/u);
+  assert.match(personContext, /exactly one normal Rich Markdown reply/u);
+  assert.match(personContext, /do not call send_rich\.py/u);
   assert.match(personContext, /"Александра Петрова"/u);
   assert.doesNotMatch(personContext, /flagged by the security gate/u);
 
@@ -127,4 +130,20 @@ test("allowlist and bot-target dispatch gates remain in front of the route", asy
     ).length,
     0,
   );
+});
+
+test("person brief fails closed outside the owner's private worker", async () => {
+  assert.equal(
+    (await dispatch({ text: "/brief Alice", chatType: "group" })).length,
+    0,
+  );
+
+  process.env.ASSISTANT_MULTI_USER = "1";
+  process.env.ASSISTANT_ROLE = "user";
+  try {
+    assert.equal((await dispatch({ text: "/brief Alice" })).length, 0);
+  } finally {
+    delete process.env.ASSISTANT_MULTI_USER;
+    delete process.env.ASSISTANT_ROLE;
+  }
 });

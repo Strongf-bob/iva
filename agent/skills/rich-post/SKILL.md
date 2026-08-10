@@ -1,20 +1,22 @@
 ---
 description: >-
-  Send Telegram rich-media posts and reports via the bot (Bot API 10.1 sendRichMessage) - text, inline images, tables, headings, lists, quotes, collapsible blocks, formulas, collages/slideshows ALL in one message bubble. This is the REQUIRED transport for reports (see the red-banner rule in the persona). Also use when asked for a rich post, a message with images between text, a post with a table, "rich message", "картинка в середине текста". NOT for plain text replies (just answer) or simple albums.
+  Send Telegram rich-media posts and reports via the bot (Bot API 10.2 sendRichMessage) - text, inline images, tables, headings, lists, quotes, collapsible blocks, formulas, collages/slideshows ALL in one message bubble. This is the REQUIRED transport for reports (see the red-banner rule in the persona). Also use when asked for a rich post, a message with images between text, a post with a table, "rich message", "картинка в середине текста". NOT for plain text replies (just answer) or simple albums.
 ---
 
 # rich-post — Telegram rich messages via the bot
 
 Send ONE message that mixes text, inline images, tables, headings, lists,
 block quotes, collapsible blocks and formulas. This is `sendRichMessage`
-(Bot API 10.1, June 2026), not an album.
+(Bot API 10.2), not an album.
 
 Album (sendMediaGroup) = up to 10 media, ONE caption, no text between images.
 Rich message = up to 50 media, text/tables/blocks interleaved in a single
 bubble. If the user wants "картинка в середине текста" or "таблица в посте" —
 this skill.
 
-## Quick start
+## Standalone delivery quick start
+
+Skip this section entirely in embedded renderer mode.
 
 All paths are relative to the repo root (the agent's working directory).
 
@@ -71,7 +73,9 @@ Because of that:
 Telegram fetches and caches the media at send time, so the temp URL expiring
 afterwards is fine.
 
-## Workflow
+## Standalone delivery workflow
+
+Skip this section entirely in embedded renderer mode.
 
 1. **Write content** in markdown (see syntax below) to a temp file.
 2. **`--dry-run`** to verify layout and image paths (offline).

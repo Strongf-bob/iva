@@ -70,6 +70,11 @@ test("relationship briefing preserves identity ambiguity and evidence", () => {
   assert.match(skill.body, /telegram:message/u);
   assert.match(skill.body, /every memory-derived claim/iu);
   assert.match(skill.body, /do not create, modify, or send/iu);
+  assert.match(skill.body, /Owner gate/u);
+  assert.match(skill.body, /role `owner`|роль `owner`/u);
+  assert.match(skill.body, /private|приватн/iu);
+  assert.match(skill.body, /absent|отсутствующ/iu);
+  assert.match(skill.body, /ambiguous|неоднознач/iu);
   assertEmbeddedRichOutput(skill);
 });
 
@@ -91,6 +96,7 @@ test("person memory separates read-only viewing from explicit safe supplements",
   assert.match(skill.body, /vault-relative/u);
   assert.match(skill.body, /telegram:message/u);
   assert.match(skill.body, /`write_card`/u);
+  assert.match(skill.body, /NOOP/u);
   assert.match(skill.body, /UPDATE/u);
   assert.match(skill.body, /SUPERSEDE/u);
   assert.match(skill.body, /history_entry/u);
@@ -98,6 +104,9 @@ test("person memory separates read-only viewing from explicit safe supplements",
   assert.match(skill.body, /do not use `write_file`/iu);
   assert.match(skill.body, /do not create a new contact/iu);
   assert.match(skill.body, /do not create.*task|do not send/iu);
+  assert.match(skill.body, /ошибк.*запис|write failure/iu);
+  assert.match(skill.body, /not found|не найдена/iu);
+  assert.match(skill.body, /ambiguous|неоднознач/iu);
   assertEmbeddedRichOutput(skill);
 });
 
