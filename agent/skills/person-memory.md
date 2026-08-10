@@ -82,3 +82,40 @@ Do not use `write_file` for contact cards. После `write_card` провер�
 Этот workflow не расширяет действие пользователя: do not create a task, calendar
 event, draft, file, reminder, or another contact, and do not send messages or other
 external actions.
+
+## Rich response contract
+
+Для каждого terminal outcome загрузи `rich-post` и используй его **embedded renderer mode**.
+Верни exactly one normal reply в Rich Markdown. Не создавай
+временный файл, не вызывай `send_rich.py` и не отправляй второе подтверждение.
+
+View mode начинает ответ с `# 👤 <каноническое имя>` и использует этот каркас:
+
+```md
+| Поле        | Текущее значение |
+| ----------- | ---------------- |
+| Связь       | ...              |
+| Уверенность | ...              |
+
+## Подтверждённые факты
+
+- ... [Источник: vault-relative/path.md]
+
+## Договорённости и неизвестное
+
+- ... [Источник: vault-relative/path.md]
+
+<details><summary>Источники и история</summary>
+Реально прочитанные vault-relative пути, evidence locators и только релевантная
+история.
+</details>
+```
+
+Supplement mode после проверки результата `write_card` показывает небольшую таблицу
+с операцией `NOOP`, `UPDATE` или `SUPERSEDE`, переданным фактом и проверенным
+vault-relative путём. Ошибка записи не может выглядеть как успех.
+
+Если карточка не найдена или identity неоднозначна, всё равно верни one normal reply:
+heading, таблицу со статусом и `<details>` с реально проверенными candidates/путями.
+Ничего не записывай. Таблица или `<details>` обязательны в каждом исходе, чтобы
+штатный Telegram renderer выбрал native `sendRichMessage`.

@@ -22,10 +22,12 @@
 ### Task 1: Lock the rich People response contract with failing tests
 
 **Files:**
+
 - Modify: `scripts/chief-of-staff-skills.test.ts`
 - Modify: `scripts/lib/telegram-rich.test.ts`
 
 **Interfaces:**
+
 - Consumes: `needsRichMessage(md: unknown): boolean` from `scripts/lib/telegram-format.ts`.
 - Produces: regression assertions for the three People response paths and the embedded renderer contract.
 
@@ -77,6 +79,7 @@ not documented yet; existing detector assertions continue to pass.
 ### Task 2: Implement embedded rich renderer mode for People
 
 **Files:**
+
 - Modify: `agent/skills/rich-post/SKILL.md`
 - Modify: `agent/skills/person-memory.md`
 - Modify: `agent/skills/relationship-briefing.md`
@@ -84,6 +87,7 @@ not documented yet; existing detector assertions continue to pass.
 - Modify: `agent/channels/telegram.ts`
 
 **Interfaces:**
+
 - Consumes: the existing `message.completed` rich detector and HTML/plain fallback.
 - Produces: a single Rich Markdown reply contract for view, supplement, ambiguity,
   missing-contact, and relationship-brief paths.
@@ -112,10 +116,10 @@ verified card path. Missing or ambiguous identities use the same single-message
 contract without writing.
 
 ```md
-| Поле | Текущее значение |
-|---|---|
-| Связь | ... |
-| Уверенность | ... |
+| Поле        | Текущее значение |
+| ----------- | ---------------- |
+| Связь       | ...              |
+| Уверенность | ...              |
 
 <details><summary>Источники и история</summary>
 ...
@@ -154,9 +158,11 @@ git commit -m "feat(people): render memory cards as rich messages" -m "Use the e
 ### Task 3: Verify, review, document, and publish
 
 **Files:**
+
 - Modify only if audit proves needed: `README.md`, `README.ru.md`
 
 **Interfaces:**
+
 - Consumes: the completed feature diff against fresh `origin/main`.
 - Produces: verified PR, protected-main merge, deployed immutable image, and healthy runtime evidence.
 

@@ -10,6 +10,15 @@ type Skill = {
   body: string;
 };
 
+function assertEmbeddedRichOutput(skill: Skill): void {
+  assert.match(skill.body, /rich-post/u);
+  assert.match(skill.body, /embedded renderer mode/iu);
+  assert.match(skill.body, /send_rich\.py/u);
+  assert.match(skill.body, /\|[ \t]*---/u);
+  assert.match(skill.body, /<details>/u);
+  assert.match(skill.body, /one (?:normal )?reply/iu);
+}
+
 function readSkill(name: string): Skill {
   const path = fileURLToPath(
     new URL(`../agent/skills/${name}.md`, import.meta.url),
@@ -61,6 +70,7 @@ test("relationship briefing preserves identity ambiguity and evidence", () => {
   assert.match(skill.body, /telegram:message/u);
   assert.match(skill.body, /every memory-derived claim/iu);
   assert.match(skill.body, /do not create, modify, or send/iu);
+  assertEmbeddedRichOutput(skill);
 });
 
 test("person memory separates read-only viewing from explicit safe supplements", () => {
@@ -88,6 +98,7 @@ test("person memory separates read-only viewing from explicit safe supplements",
   assert.match(skill.body, /do not use `write_file`/iu);
   assert.match(skill.body, /do not create a new contact/iu);
   assert.match(skill.body, /do not create.*task|do not send/iu);
+  assertEmbeddedRichOutput(skill);
 });
 
 test("weekly review is honest about coverage and tracks decision arcs", () => {
@@ -151,6 +162,8 @@ test("core instructions expose all chief-of-staff workflows", () => {
     /обычным ответом через штатный Telegram renderer/u,
   );
   assert.match(rootInstructions, /НЕ вызывай `send_rich\.py`/u);
+  assert.match(rootInstructions, /Rich Markdown/u);
+  assert.match(rootInstructions, /embedded renderer mode/iu);
   assert.match(rootInstructions, /только owner/u);
 
   const dynamicInstructions = readFileSync(

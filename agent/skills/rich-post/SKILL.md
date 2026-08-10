@@ -35,6 +35,18 @@ python3 agent/skills/rich-post/scripts/send_rich.py --md-file /tmp/post.md
 - Token: `$TELEGRAM_BOT_TOKEN` or the repo `.env`. There is NO `--token` flag
   (argv is visible in the process list) — don't put the token on the command line.
 
+## Embedded renderer mode
+
+Another skill may explicitly select **embedded renderer mode** when it already owns
+the current Eve reply. In that mode, return exactly one normal reply containing
+Rich Markdown. Include at least one native-rich construct — a table, task list,
+`<details>` block, or block formula — so the Telegram channel selects
+`sendRichMessage`.
+
+Do not create a temporary file and do not call `send_rich.py` in embedded renderer
+mode. Do not send a second confirmation. The current Eve turn owns delivery,
+outbound redaction, success accounting, and the HTML/plain fallback.
+
 ## Local images — read before using
 
 Telegram accepts ONLY public URLs for rich-message media (`attach://` and
@@ -127,8 +139,9 @@ HTML-only extras: <u>underline</u> <sub>x</sub> <sup>x</sup>
 - Use `rich_message.markdown` OR `rich_message.html`, exactly one.
 - Channels/groups: the bot must be admin with permission to send media (and
   the target still has to be allowlisted).
-- The host does NOT call sendRichMessage on normal replies — this script is
-  the way to send rich posts.
+- The host promotes a normal reply only when it contains a native-rich construct.
+  Standalone rich posts still use this script; workflows in embedded renderer mode
+  return their Rich Markdown through the current Eve turn instead.
 
 ## Example
 

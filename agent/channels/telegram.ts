@@ -1415,12 +1415,12 @@ const telegram = telegramChannel({
         const context = [
           personMemory.mode === "view"
             ? tr(
-                "Load the person-memory skill in view mode. Resolve exactly one contact and report only evidence-backed current knowledge.",
-                "Загрузи скилл person-memory в режиме просмотра. Определи ровно один контакт и покажи только подтверждённые актуальные знания.",
+                "Load the person-memory skill in view mode and its rich-post embedded renderer mode. Resolve exactly one contact and return exactly one normal Rich Markdown reply with only evidence-backed current knowledge. Do not call send_rich.py or send a second confirmation.",
+                "Загрузи скилл person-memory в режиме просмотра и rich-post в embedded renderer mode. Определи ровно один контакт и верни ровно один обычный Rich Markdown ответ только с подтверждёнными актуальными знаниями. Не вызывай send_rich.py и не отправляй второе подтверждение.",
               )
             : tr(
-                "Load the person-memory skill in supplement mode. Resolve exactly one existing contact, then safely add or explicitly correct only the supplied fact.",
-                "Загрузи скилл person-memory в режиме дополнения. Определи ровно один существующий контакт, затем безопасно добавь или явно исправь только переданный факт.",
+                "Load the person-memory skill in supplement mode and its rich-post embedded renderer mode. Resolve exactly one existing contact, then safely add or explicitly correct only the supplied fact. Return exactly one normal Rich Markdown result; do not call send_rich.py or send a second confirmation.",
+                "Загрузи скилл person-memory в режиме дополнения и rich-post в embedded renderer mode. Определи ровно один существующий контакт, затем безопасно добавь или явно исправь только переданный факт. Верни ровно один обычный Rich Markdown результат; не вызывай send_rich.py и не отправляй второе подтверждение.",
               ),
           ...(flagged ? [inboundInjectionWarning()] : []),
           tr(
@@ -1505,8 +1505,8 @@ const telegram = telegramChannel({
           }
           context = [
             tr(
-              "Load the relationship-briefing skill and prepare me for a conversation with the person in the adjacent identity-data item.",
-              "Загрузи скилл relationship-briefing и подготовь меня к разговору с человеком из соседнего элемента с данными личности.",
+              "Load the relationship-briefing skill and its rich-post embedded renderer mode, then prepare me for a conversation with the person in the adjacent identity-data item. Return exactly one normal Rich Markdown reply; do not call send_rich.py or send a second confirmation.",
+              "Загрузи скилл relationship-briefing и rich-post в embedded renderer mode, затем подготовь меня к разговору с человеком из соседнего элемента с данными личности. Верни ровно один обычный Rich Markdown ответ; не вызывай send_rich.py и не отправляй второе подтверждение.",
             ),
             ...(subjectAttack ? [inboundInjectionWarning()] : []),
             tr(
