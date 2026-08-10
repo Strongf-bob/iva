@@ -3,18 +3,19 @@ import { z } from "zod";
 
 import { executeReminderCommand } from "../../scripts/reminder-scheduler.ts";
 
+const ReminderSchedule = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("once"), at: z.string().min(1).max(64) }),
+  z.strictObject({
+    kind: z.literal("cron"),
+    expression: z.string().min(1).max(128),
+  }),
+]);
 const CreateAction = z.strictObject({
   action: z.literal("create"),
   idempotencyKey: z.string().min(1).max(128),
   message: z.string().min(1).max(4000),
   timezone: z.string().min(1).max(128),
-  schedule: z.discriminatedUnion("kind", [
-    z.strictObject({ kind: z.literal("once"), at: z.string().min(1).max(64) }),
-    z.strictObject({
-      kind: z.literal("cron"),
-      expression: z.string().min(1).max(128),
-    }),
-  ]),
+  schedule: ReminderSchedule,
 });
 const ReminderAction = z.discriminatedUnion("action", [
   CreateAction,
@@ -26,6 +27,22 @@ const ReminderAction = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("cancel"), id: z.uuid() }),
   z.strictObject({ action: z.literal("status") }),
 ]);
+
+export const reminderToolInputSchema = z.strictObject({
+  action: z.enum(["create", "list", "get", "cancel", "status"]),
+  idempotencyKey: z.string().min(1).max(128).optional(),
+  message: z.string().min(1).max(4000).optional(),
+  timezone: z.string().min(1).max(128).optional(),
+  schedule: z
+    .strictObject({
+      kind: z.enum(["once", "cron"]),
+      at: z.string().min(1).max(64).optional(),
+      expression: z.string().min(1).max(128).optional(),
+    })
+    .optional(),
+  includeInactive: z.boolean().optional(),
+  id: z.uuid().optional(),
+});
 
 export async function executeReminderTool(
   value: unknown,
@@ -62,6 +79,6 @@ export async function executeReminderTool(
 export default defineTool({
   description:
     "Создать, показать, проверить или отменить личное напоминание. Доставка всегда идёт в приватный чат текущего пользователя; произвольный chat_id не поддерживается.",
-  inputSchema: ReminderAction,
+  inputSchema: reminderToolInputSchema,
   execute: (input) => executeReminderTool(input),
 });

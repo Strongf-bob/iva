@@ -3,8 +3,19 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { z } from "zod";
 
-import { executeReminderTool } from "../agent/tools/reminders.ts";
+import {
+  executeReminderTool,
+  reminderToolInputSchema,
+} from "../agent/tools/reminders.ts";
+
+void test("reminders exposes an OpenAI-compatible object tool schema", () => {
+  const schema = z.toJSONSchema(reminderToolInputSchema, { target: "draft-7" });
+
+  assert.equal(schema.type, "object");
+  assert.equal(JSON.stringify(schema).includes('"oneOf"'), false);
+});
 
 void test("reminders tool creates a scoped job without accepting a destination", async () => {
   const root = await mkdtemp(join(tmpdir(), "iva-reminder-tool-"));
