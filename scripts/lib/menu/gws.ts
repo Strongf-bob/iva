@@ -22,7 +22,7 @@ import {
 } from "./gws-auth.ts";
 
 const SID = "gws";
-const PARENT = "r";
+const PARENT = "scon";
 const CACHE_TTL_MS = 60_000;
 const SCOPES = AUTH_SERVICES.split(",").join(", ");
 type AuthStatus = "missing" | "unauth" | "ok";

@@ -45,7 +45,7 @@ test("skills reports an unavailable summary for missing and corrupt files", () =
     assert.match(view.text, /Skill list is unavailable/);
     assert.match(view.text, /agent-summary\.json not found/);
     assert.deepEqual(view.rows, [
-      [{ text: "back", callback_data: "iva_menu:r:o" }],
+      [{ text: "back", callback_data: "iva_menu:ssys:o" }],
     ]);
   }
 });
@@ -58,7 +58,7 @@ test("skills distinguishes an empty registered list from an unavailable summary"
 
   assert.equal(view.text, "🧩 Скиллы\n\nСкиллов не зарегистрировано.");
   assert.deepEqual(view.rows, [
-    [{ text: "back", callback_data: "iva_menu:r:o" }],
+    [{ text: "back", callback_data: "iva_menu:ssys:o" }],
   ]);
 });
 
@@ -70,7 +70,7 @@ test("skills adds paging only after eight entries and keeps callback rows bounde
   assert.match(eight.text, /^🧩 Skills \(8\)/);
   assert.equal(eight.text.match(/^• /gm)?.length, 8);
   assert.deepEqual(eight.rows, [
-    [{ text: "back", callback_data: "iva_menu:r:o" }],
+    [{ text: "back", callback_data: "iva_menu:ssys:o" }],
   ]);
 
   const nineRoot = makeRoot();
@@ -87,7 +87,7 @@ test("skills adds paging only after eight entries and keeps callback rows bounde
       { text: "1/2", callback_data: "iva_menu:sk:pg:0" },
       { text: "›", callback_data: "iva_menu:sk:pg:1" },
     ],
-    [{ text: "back", callback_data: "iva_menu:r:o" }],
+    [{ text: "back", callback_data: "iva_menu:ssys:o" }],
   ]);
   assert.deepEqual(second.rows, [
     [
@@ -95,7 +95,7 @@ test("skills adds paging only after eight entries and keeps callback rows bounde
       { text: "2/2", callback_data: "iva_menu:sk:pg:1" },
       { text: "›", callback_data: "iva_menu:sk:pg:1" },
     ],
-    [{ text: "back", callback_data: "iva_menu:r:o" }],
+    [{ text: "back", callback_data: "iva_menu:ssys:o" }],
   ]);
 });
 

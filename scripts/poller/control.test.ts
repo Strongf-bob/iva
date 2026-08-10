@@ -23,9 +23,18 @@ test("ordinary users get personal conversation and usage controls", () => {
   }
 });
 
-test("ordinary user callback gate admits personal Google and Timers routes", () => {
+test("ordinary user callback gate admits every visible personal menu route", () => {
   for (const callback of [
     "iva_menu:r:o",
+    "iva_menu:td:o",
+    "iva_menu:td:brief",
+    "iva_menu:tsk:o",
+    "iva_menu:tsk:add",
+    "iva_menu:auto:o",
+    "iva_menu:set:o",
+    "iva_menu:scon:o",
+    "iva_menu:ssys:o",
+    "iva_menu:st:o",
     "iva_menu:gws:o",
     "iva_menu:cron:o",
     "iva_menu:cron:pg:1",
@@ -36,6 +45,12 @@ test("ordinary user callback gate admits personal Google and Timers routes", () 
     "iva_update:yes",
     "iva_model:pick",
     "iva_think:pick",
+    "iva_menu:in:o",
+    "iva_menu:ppl:o",
+    "iva_menu:sai:o",
+    "iva_menu:sper:o",
+    "iva_menu:ub:o",
+    "iva_menu:sk:o",
     "iva_menu:svc:o",
   ]) {
     assert.equal(controlCallbackAllowed(callback, "user"), false, callback);

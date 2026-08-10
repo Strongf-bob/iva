@@ -28,63 +28,34 @@ export default {
       state.role === "user"
         ? [
             [
-              b(T("🔗 Google", "🔗 Google"), "iva_menu:gws:o"),
-              b(T("⏰ Timers", "⏰ Кроны"), "iva_menu:cron:o"),
+              b(T("✨ Today", "✨ Сегодня"), "iva_menu:td:o"),
+              b(T("✅ Tasks", "✅ Задачи"), "iva_menu:tsk:o"),
+            ],
+            [
+              b(T("🔔 Automation", "🔔 Автоматизация"), "iva_menu:auto:o"),
+              b(T("⚙️ Settings", "⚙️ Настройки"), "iva_menu:set:o"),
             ],
             [b(T("✖ Close", "✖ Закрыть"), "iva_menu:r:x")],
           ]
-        : state.personalRoot
-          ? [
-              [
-                b(T("🧠 Model", "🧠 Модель"), "iva_menu:mdl"),
-                b(T("🤔 Thinking", "🤔 Размышления"), "iva_menu:thk"),
-              ],
-              [
-                b(T("🔍 Search", "🔍 Поиск"), "iva_menu:srch:o"),
-                b(T("📡 Userbot", "📡 Userbot"), "iva_menu:ub:o"),
-              ],
-              [
-                b(T("🔗 Google", "🔗 Google"), "iva_menu:gws:o"),
-                b(T("⏰ Timers", "⏰ Кроны"), "iva_menu:cron:o"),
-              ],
-              [b(T("🧩 Skills", "🧩 Скиллы"), "iva_menu:sk:o")],
-              [
-                b(T("📊 Status", "📊 Статус"), "iva_menu:st:o"),
-                b(T("🛠 Maintenance", "🛠 Обслуживание"), "iva_menu:svc:o"),
-              ],
-              [b(T("✖ Close", "✖ Закрыть"), "iva_menu:r:x")],
-            ]
-          : [
-              [
-                b(T("🧠 Model", "🧠 Модель"), "iva_menu:mdl"),
-                b(T("🤔 Thinking", "🤔 Размышления"), "iva_menu:thk"),
-              ],
-              [
-                b(T("🔍 Search", "🔍 Поиск"), "iva_menu:srch:o"),
-                b(T("🌐 Language", "🌐 Язык"), "iva_menu:lang:o"),
-              ],
-              [
-                b(T("🎭 Character", "🎭 Характер"), "iva_menu:chr:o"),
-                b(T("💾 Memory", "💾 Память"), "iva_menu:core:o"),
-              ],
-              [
-                b(T("📡 Userbot", "📡 Userbot"), "iva_menu:ub:o"),
-                b(T("🔗 Google", "🔗 Google"), "iva_menu:gws:o"),
-              ],
-              [
-                b(T("⏰ Timers", "⏰ Кроны"), "iva_menu:cron:o"),
-                b(T("🧩 Skills", "🧩 Скиллы"), "iva_menu:sk:o"),
-              ],
-              [
-                b(T("📊 Status", "📊 Статус"), "iva_menu:st:o"),
-                b(T("🛠 Maintenance", "🛠 Обслуживание"), "iva_menu:svc:o"),
-              ],
-              [b(T("✖ Close", "✖ Закрыть"), "iva_menu:r:x")],
-            ];
+        : [
+            [
+              b(T("✨ Today", "✨ Сегодня"), "iva_menu:td:o"),
+              b(T("📥 Inbox", "📥 Входящие"), "iva_menu:in:o"),
+            ],
+            [
+              b(T("👥 People", "👥 Люди"), "iva_menu:ppl:o"),
+              b(T("✅ Tasks", "✅ Задачи"), "iva_menu:tsk:o"),
+            ],
+            [
+              b(T("🔔 Automation", "🔔 Автоматизация"), "iva_menu:auto:o"),
+              b(T("⚙️ Settings", "⚙️ Настройки"), "iva_menu:set:o"),
+            ],
+            [b(T("✖ Close", "✖ Закрыть"), "iva_menu:r:x")],
+          ];
     return {
       text: T(
-        "⚙️ Settings\n\nPick a section.",
-        "⚙️ Настройки\n\nВыбери раздел.",
+        "Iva\n\nChoose what you want to do.",
+        "Ива\n\nЧто хочешь сделать?",
       ),
       rows,
     };

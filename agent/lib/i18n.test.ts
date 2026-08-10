@@ -6,7 +6,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { chiefOfStaffCommand } from "./i18n.ts";
+import { chiefOfStaffCommand, personMemoryCommand } from "./i18n.ts";
 
 // getLang() читает env/файл на импорте и кэширует язык на ~2с, поэтому каждый сценарий
 // гоняем в СВЕЖЕМ процессе: чистый модуль, чистое окно кэша, свои env/settings.json.
@@ -98,19 +98,20 @@ test("COMMANDS is the single source: menu first, all control commands present", 
   assert.equal(commands[0], "menu");
   const expected = [
     "menu",
-    "help",
-    "stop",
+    "brief",
+    "person",
+    "tasks",
+    "weekly",
     "new",
+    "stop",
+    "help",
+    "task",
+    "digest",
     "restart",
     "update",
     "model",
     "think",
     "usage",
-    "task",
-    "tasks",
-    "digest",
-    "brief",
-    "weekly",
   ];
   assert.deepEqual(commands, expected);
 });
@@ -118,11 +119,11 @@ test("COMMANDS is the single source: menu first, all control commands present", 
 test("helpText renders /menu and respects the language", () => {
   const en = probe({ agentLanguage: "en" }).help;
   assert.match(en, /^Iva commands:/);
-  assert.match(en, /\/menu — settings menu/);
+  assert.match(en, /\/menu — main menu/);
   assert.match(en, /\/help — this list/);
   const ru = probe({ language: "ru" }).help;
   assert.match(ru, /^Команды Iva:/);
-  assert.match(ru, /\/menu — меню настроек/);
+  assert.match(ru, /\/menu — главное меню/);
   assert.match(ru, /\/help — этот список/);
 });
 
@@ -141,10 +142,16 @@ test("helpText keeps the argument hints from the original help", () => {
 
 test("botCommands returns Telegram command objects per language", () => {
   const { botEn, botRu } = probe();
-  assert.equal(botEn.length, 14);
-  assert.equal(botEn[0].command, "menu");
-  assert.equal(botEn[0].description, "settings menu");
-  assert.equal(botRu[0].description, "меню настроек");
+  assert.deepEqual(
+    botEn.map((command) => command.command),
+    ["menu", "brief", "person", "tasks", "weekly", "new", "stop", "help"],
+  );
+  assert.equal(botEn[0].description, "main menu");
+  assert.equal(botRu[0].description, "главное меню");
+  assert.equal(
+    botEn.some((command) => command.command === "person_update"),
+    false,
+  );
   for (const c of botEn) {
     assert.doesNotMatch(c.command, /\//); // имя команды без ведущего слэша
     assert.ok(c.description.length >= 1 && c.description.length <= 256);
@@ -171,4 +178,40 @@ test("chiefOfStaffCommand classifies only supported exact commands", () => {
   assert.equal(chiefOfStaffCommand("/weekly unexpected"), null);
   assert.equal(chiefOfStaffCommand("ordinary text"), null);
   assert.equal(chiefOfStaffCommand("/briefing"), null);
+});
+
+test("personMemoryCommand accepts one bounded identity or one strict supplement", () => {
+  assert.deepEqual(personMemoryCommand("/person  Александра Петрова "), {
+    mode: "view",
+    name: "Александра Петрова",
+  });
+  assert.deepEqual(
+    personMemoryCommand(
+      `/person_update ${JSON.stringify({
+        name: "Александра Петрова",
+        note: "Предпочитает встречи после обеда",
+      })}`,
+    ),
+    {
+      mode: "supplement",
+      name: "Александра Петрова",
+      note: "Предпочитает встречи после обеда",
+    },
+  );
+  assert.equal(personMemoryCommand("/person"), null);
+  assert.equal(personMemoryCommand(`/person ${"🙂".repeat(161)}`), null);
+  assert.equal(
+    personMemoryCommand(
+      `/person_update ${JSON.stringify({ name: "Alice", note: "x".repeat(2001) })}`,
+    ),
+    null,
+  );
+  assert.equal(
+    personMemoryCommand(
+      `/person_update ${JSON.stringify({ name: "Alice", note: "fact", operation: "SUPERSEDE" })}`,
+    ),
+    null,
+  );
+  assert.equal(personMemoryCommand("/person_update {broken"), null);
+  assert.equal(personMemoryCommand("ordinary text"), null);
 });

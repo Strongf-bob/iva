@@ -13,56 +13,32 @@ function makeCtx(lang: string) {
 
 const englishRows = [
   [
-    ["🧠 Model", "iva_menu:mdl"],
-    ["🤔 Thinking", "iva_menu:thk"],
+    ["✨ Today", "iva_menu:td:o"],
+    ["📥 Inbox", "iva_menu:in:o"],
   ],
   [
-    ["🔍 Search", "iva_menu:srch:o"],
-    ["🌐 Language", "iva_menu:lang:o"],
+    ["👥 People", "iva_menu:ppl:o"],
+    ["✅ Tasks", "iva_menu:tsk:o"],
   ],
   [
-    ["🎭 Character", "iva_menu:chr:o"],
-    ["💾 Memory", "iva_menu:core:o"],
-  ],
-  [
-    ["📡 Userbot", "iva_menu:ub:o"],
-    ["🔗 Google", "iva_menu:gws:o"],
-  ],
-  [
-    ["⏰ Timers", "iva_menu:cron:o"],
-    ["🧩 Skills", "iva_menu:sk:o"],
-  ],
-  [
-    ["📊 Status", "iva_menu:st:o"],
-    ["🛠 Maintenance", "iva_menu:svc:o"],
+    ["🔔 Automation", "iva_menu:auto:o"],
+    ["⚙️ Settings", "iva_menu:set:o"],
   ],
   [["✖ Close", "iva_menu:r:x"]],
 ];
 
 const russianRows = [
   [
-    ["🧠 Модель", "iva_menu:mdl"],
-    ["🤔 Размышления", "iva_menu:thk"],
+    ["✨ Сегодня", "iva_menu:td:o"],
+    ["📥 Входящие", "iva_menu:in:o"],
   ],
   [
-    ["🔍 Поиск", "iva_menu:srch:o"],
-    ["🌐 Язык", "iva_menu:lang:o"],
+    ["👥 Люди", "iva_menu:ppl:o"],
+    ["✅ Задачи", "iva_menu:tsk:o"],
   ],
   [
-    ["🎭 Характер", "iva_menu:chr:o"],
-    ["💾 Память", "iva_menu:core:o"],
-  ],
-  [
-    ["📡 Userbot", "iva_menu:ub:o"],
-    ["🔗 Google", "iva_menu:gws:o"],
-  ],
-  [
-    ["⏰ Кроны", "iva_menu:cron:o"],
-    ["🧩 Скиллы", "iva_menu:sk:o"],
-  ],
-  [
-    ["📊 Статус", "iva_menu:st:o"],
-    ["🛠 Обслуживание", "iva_menu:svc:o"],
+    ["🔔 Автоматизация", "iva_menu:auto:o"],
+    ["⚙️ Настройки", "iva_menu:set:o"],
   ],
   [["✖ Закрыть", "iva_menu:r:x"]],
 ];
@@ -79,7 +55,7 @@ test("root preserves English row order, callbacks, and close action", () => {
   const state = { page: 3 };
   const view = root.render(state, makeCtx("en"));
 
-  assert.equal(view.text, "⚙️ Settings\n\nPick a section.");
+  assert.equal(view.text, "Iva\n\nChoose what you want to do.");
   assert.deepEqual(compact(view.rows), englishRows);
   assert.deepEqual(state, { page: 3 });
 });
@@ -87,7 +63,7 @@ test("root preserves English row order, callbacks, and close action", () => {
 test("root translates labels without changing callback routing", () => {
   const view = root.render({}, makeCtx("ru"));
 
-  assert.equal(view.text, "⚙️ Настройки\n\nВыбери раздел.");
+  assert.equal(view.text, "Ива\n\nЧто хочешь сделать?");
   assert.deepEqual(compact(view.rows), russianRows);
   assert.deepEqual(
     compact(view.rows)
@@ -102,29 +78,25 @@ test("root exposes the top-level screen contract", () => {
   assert.equal(root.on("ignored", [], {}, makeCtx("en")), undefined);
 });
 
-test("ordinary user root exposes personal Google setup and reminders", () => {
+test("ordinary user root exposes only personal action hubs", () => {
   const view = root.render({ role: "user" }, makeCtx("en"));
   assert.deepEqual(compact(view.rows), [
     [
-      ["🔗 Google", "iva_menu:gws:o"],
-      ["⏰ Timers", "iva_menu:cron:o"],
+      ["✨ Today", "iva_menu:td:o"],
+      ["✅ Tasks", "iva_menu:tsk:o"],
+    ],
+    [
+      ["🔔 Automation", "iva_menu:auto:o"],
+      ["⚙️ Settings", "iva_menu:set:o"],
     ],
     [["✖ Close", "iva_menu:r:x"]],
   ]);
 });
 
-test("personalized owner menu never opens legacy-path personal settings", () => {
+test("personalized owner retains all owner action hubs", () => {
   const view = root.render(
     { role: "owner", personalRoot: "/srv/iva/data/users/101" },
     makeCtx("en"),
   );
-  const callbacks = compact(view.rows)
-    .flat()
-    .map(([, callback]) => callback);
-  assert.equal(callbacks.includes("iva_menu:lang:o"), false);
-  assert.equal(callbacks.includes("iva_menu:chr:o"), false);
-  assert.equal(callbacks.includes("iva_menu:core:o"), false);
-  assert.equal(callbacks.includes("iva_menu:cron:o"), true);
-  assert.equal(callbacks.includes("iva_menu:gws:o"), true);
-  assert.equal(callbacks.includes("iva_menu:ub:o"), true);
+  assert.deepEqual(compact(view.rows), englishRows);
 });

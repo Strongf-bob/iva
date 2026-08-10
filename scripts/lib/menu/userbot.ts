@@ -83,7 +83,7 @@ type Exec = (
 const errorMessage = (error: unknown) => (error as ErrorLike).message;
 
 const SID = "ub";
-const PARENT = "r";
+const PARENT = "scon";
 const SVC = "iva-telegram-userbot.service";
 const LOGIN_TTL_MS = 5 * 60 * 1000;
 

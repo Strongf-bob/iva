@@ -4,24 +4,27 @@ Iva has two control surfaces: slash commands in Telegram and the `iva` command o
 
 ## Telegram commands
 
-| Command           | What it does                                                                                                                |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `/menu`           | The settings hub — model, search, language, character, memory, userbot, Google and more in one message ([menu.md](menu.md)) |
-| `/help`           | This list                                                                                                                   |
-| `/stop`           | Interrupt the current turn — same as tapping the **⏹ Стоп** button                                                          |
-| `/task <text>`    | Add a task; without text, Iva asks what to add                                                                              |
-| `/tasks`          | Show the task list                                                                                                          |
-| `/digest`         | Morning digest built by the morning-digest skill                                                                            |
-| `/brief [person]` | Today's attention brief; with a person, prepare for that conversation from vault evidence                                   |
-| `/weekly`         | Weekly review of themes, decision changes, commitments and next priorities                                                  |
-| `/new`            | Start over — reset the current conversation                                                                                 |
-| `/restart`        | Reset the current conversation, then restart the agent process                                                              |
-| `/update`         | Check for a new version; if there is one, tap **Update** to install it                                                      |
-| `/usage [window]` | Token spend — variants below                                                                                                |
+| Command            | What it does                                                                                                        |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `/menu`            | The action-first control center — Today, Inbox, People, Tasks, Automation and grouped settings ([menu.md](menu.md)) |
+| `/help`            | This list                                                                                                           |
+| `/stop`            | Interrupt the current turn — same as tapping the **⏹ Стоп** button                                                  |
+| `/task <text>`     | Add a task; without text, Iva asks what to add                                                                      |
+| `/tasks`           | Show the task list                                                                                                  |
+| `/digest`          | Morning digest built by the morning-digest skill                                                                    |
+| `/brief [person]`  | Today's attention brief; with a person, prepare for that conversation from vault evidence                           |
+| `/person <person>` | Show current evidence-backed knowledge about one resolved contact                                                   |
+| `/weekly`          | Weekly review of themes, decision changes, commitments and next priorities                                          |
+| `/new`             | Start over — reset the current conversation                                                                         |
+| `/restart`         | Reset the current conversation, then restart the agent process                                                      |
+| `/update`          | Check for a new version; if there is one, tap **Update** to install it                                              |
+| `/usage [window]`  | Token spend — variants below                                                                                        |
 
-Two kinds here. `/task`, `/tasks`, `/digest`, `/brief` and `/weekly` route into the agent and need it running.
+Two kinds here. `/task`, `/tasks`, `/digest`, `/brief`, `/person` and `/weekly` route into the agent and need it running.
 
-`/brief`, `/brief <person>` and `/weekly` are read-only synthesis commands. They use the current task list and vault sources, cite memory-backed claims, preserve uncertainty and never send messages or create follow-up tasks on their own.
+`/brief`, `/brief <person>`, `/person <person>` and `/weekly` are read-only synthesis commands. They use the current task list and vault sources, cite memory-backed claims, preserve uncertainty and never send messages or create follow-up tasks on their own. The owner-only **People → Add a detail** menu action uses a separate hidden structured command to update one unambiguous existing contact; it is intentionally absent from `/help` and Telegram's command list.
+
+Telegram's blue command menu keeps only the everyday entry points: `/menu`, `/brief`, `/person`, `/tasks`, `/weekly`, `/new`, `/stop`, and `/help`. The full command set remains available in `/help` and continues to work when typed directly.
 
 Every turn starts with a status message carrying a **⏹ Стоп** button — tap it (or send `/stop`) to abort the turn mid-flight, Claude-Code style: completed work stays in the conversation history, the unfinished step is dropped. Messages sent while a turn is running are not processed immediately: the bridge queues them (you get a 👀 reaction), and they join the context of the next turn — triggered by your next message. `/menu`, `/help`, `/usage`, `/restart`, `/new` and `/update` never reach the agent — the long-poll bridge handles them itself, out-of-band. `/menu` in particular is a whole settings surface that stays responsive even while a turn is running — its map and what applies instantly versus on restart live in [menu.md](menu.md).
 

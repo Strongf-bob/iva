@@ -19,7 +19,7 @@ type MenuContext = {
 };
 
 export default {
-  parent: "r",
+  parent: "sper",
   render(_st: MenuState, ctx: MenuContext) {
     const cur = ctx.getLang();
     const mark = (v: Lang) => (cur === v ? " ✓" : "");
@@ -28,7 +28,7 @@ export default {
         ctx.btn(`Русский${mark("ru")}`, "iva_menu:lang:set:ru"),
         ctx.btn(`English${mark("en")}`, "iva_menu:lang:set:en"),
       ],
-      ctx.backRow("r"),
+      ctx.backRow("sper"),
     ];
     return {
       text: ctx.tr("🌐 Interface language", "🌐 Язык интерфейса"),

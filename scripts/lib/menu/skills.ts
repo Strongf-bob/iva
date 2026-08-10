@@ -50,7 +50,7 @@ function displayText(value: unknown, fallback: string): string {
 }
 
 export default {
-  parent: "r",
+  parent: "ssys",
   render(st: SkillsState, ctx: SkillsContext) {
     const T = ctx.tr;
     let skills: unknown[] | null;
@@ -69,7 +69,7 @@ export default {
           "🧩 Skills\n\nSkill list is unavailable — .eve/agent-summary.json not found (it appears after a build).",
           "🧩 Скиллы\n\nСписок недоступен — .eve/agent-summary.json не найден (появляется после сборки).",
         ),
-        rows: [ctx.backRow("r")],
+        rows: [ctx.backRow("ssys")],
       };
     }
     if (skills.length === 0) {
@@ -78,7 +78,7 @@ export default {
           "🧩 Skills\n\nNo skills registered.",
           "🧩 Скиллы\n\nСкиллов не зарегистрировано.",
         ),
-        rows: [ctx.backRow("r")],
+        rows: [ctx.backRow("ssys")],
       };
     }
     const pages = Math.ceil(skills.length / PER_PAGE);
@@ -107,7 +107,7 @@ export default {
         ),
       ]);
     }
-    rows.push(ctx.backRow("r"));
+    rows.push(ctx.backRow("ssys"));
     return {
       text: `${T(`🧩 Skills (${skills.length})`, `🧩 Скиллы (${skills.length})`)}\n\n${body}`,
       rows,

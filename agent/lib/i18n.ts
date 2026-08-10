@@ -27,6 +27,7 @@ type Command = {
   readonly command: string;
   readonly en: string;
   readonly ru: string;
+  readonly telegramMenu?: true;
   readonly args?: { readonly en: string; readonly ru: string };
 };
 
@@ -34,6 +35,14 @@ export type ChiefOfStaffCommand =
   | { readonly skill: "chief-of-staff-today"; readonly subject: null }
   | { readonly skill: "relationship-briefing"; readonly subject: string }
   | { readonly skill: "weekly-review"; readonly subject: null };
+
+export type PersonMemoryCommand =
+  | { readonly mode: "view"; readonly name: string }
+  | {
+      readonly mode: "supplement";
+      readonly name: string;
+      readonly note: string;
+    };
 
 const cache: { lang: Language | null; mtimeMs: number; checkedAt: number } = {
   lang: null,
@@ -70,23 +79,57 @@ export function getLang(): Language {
 export const tr = (en: string, ru: string): string =>
   getLang() === "ru" ? ru : en;
 
-// ЕДИНЫЙ список команд для helpText() и setMyCommands. Порядок = порядок в /help и
-// в синем меню. args (опц.) — подсказка аргументов: попадает только в /help, не в
-// описание команды Telegram (там аргументов быть не должно). Никаких /clear и /compact —
-// как в текущем HELP.
+// ЕДИНЫЙ список команд для helpText() и setMyCommands. /help показывает весь список,
+// а синее меню Telegram — только повседневные действия с telegramMenu. args (опц.)
+// попадает только в /help, не в описание команды Telegram. Никаких /clear и /compact.
 export const COMMANDS: ReadonlyArray<Command> = [
-  { command: "menu", en: "settings menu", ru: "меню настроек" },
-  { command: "help", en: "this list", ru: "этот список" },
+  { command: "menu", en: "main menu", ru: "главное меню", telegramMenu: true },
   {
-    command: "stop",
-    en: "interrupt the current turn (same as the ⏹ Stop button)",
-    ru: "прервать текущий ход (как кнопка ⏹ Стоп)",
+    command: "brief",
+    en: "daily brief or meeting prep",
+    ru: "бриф дня или подготовка к разговору",
+    telegramMenu: true,
+    args: { en: "<person>", ru: "<человек>" },
+  },
+  {
+    command: "person",
+    en: "show what Iva knows about a person",
+    ru: "показать, что Ива знает о человеке",
+    telegramMenu: true,
+    args: { en: "<person>", ru: "<человек>" },
+  },
+  {
+    command: "tasks",
+    en: "show tasks",
+    ru: "показать задачи",
+    telegramMenu: true,
+  },
+  {
+    command: "weekly",
+    en: "weekly review",
+    ru: "недельный обзор",
+    telegramMenu: true,
   },
   {
     command: "new",
     en: "start over (reset the current conversation)",
     ru: "начать диалог заново",
+    telegramMenu: true,
   },
+  {
+    command: "stop",
+    en: "interrupt the current turn (same as the ⏹ Stop button)",
+    ru: "прервать текущий ход (как кнопка ⏹ Стоп)",
+    telegramMenu: true,
+  },
+  { command: "help", en: "this list", ru: "этот список", telegramMenu: true },
+  {
+    command: "task",
+    en: "add a task",
+    ru: "добавить задачу",
+    args: { en: "<text>", ru: "<текст>" },
+  },
+  { command: "digest", en: "morning digest", ru: "утренний дайджест" },
   {
     command: "restart",
     en: "restart the agent if it's stuck",
@@ -116,25 +159,6 @@ export const COMMANDS: ReadonlyArray<Command> = [
       ru: "[today|week|month|by-model|by-source]",
     },
   },
-  {
-    command: "task",
-    en: "add a task",
-    ru: "добавить задачу",
-    args: { en: "<text>", ru: "<текст>" },
-  },
-  { command: "tasks", en: "show tasks", ru: "показать задачи" },
-  { command: "digest", en: "morning digest", ru: "утренний дайджест" },
-  {
-    command: "brief",
-    en: "daily brief or meeting prep",
-    ru: "бриф дня или подготовка к разговору",
-    args: { en: "<person>", ru: "<человек>" },
-  },
-  {
-    command: "weekly",
-    en: "weekly review",
-    ru: "недельный обзор",
-  },
 ];
 
 export function chiefOfStaffCommand(text: string): ChiefOfStaffCommand | null {
@@ -156,6 +180,52 @@ export function chiefOfStaffCommand(text: string): ChiefOfStaffCommand | null {
     : { skill: "relationship-briefing", subject };
 }
 
+const boundedText = (
+  value: unknown,
+  maxCodePoints: number,
+  collapseWhitespace = false,
+): string | null => {
+  if (typeof value !== "string") return null;
+  const normalized = collapseWhitespace
+    ? value.trim().replace(/\s+/gu, " ")
+    : value.trim();
+  const length = [...normalized].length;
+  return length >= 1 && length <= maxCodePoints ? normalized : null;
+};
+
+export function personMemoryCommand(text: string): PersonMemoryCommand | null {
+  const view = /^\/person(?:@[A-Za-z0-9_]+)?\s+(?<name>[\s\S]*?)\s*$/iu.exec(
+    text.trim(),
+  );
+  if (view) {
+    const name = boundedText(view.groups?.name, 160, true);
+    return name === null ? null : { mode: "view", name };
+  }
+
+  const supplement =
+    /^\/person_update(?:@[A-Za-z0-9_]+)?\s+(?<payload>[\s\S]+)$/iu.exec(
+      text.trim(),
+    );
+  if (!supplement) return null;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(supplement.groups?.payload ?? "");
+  } catch {
+    return null;
+  }
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload))
+    return null;
+  const record = payload as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  if (keys.length !== 2 || keys[0] !== "name" || keys[1] !== "note")
+    return null;
+  const name = boundedText(record.name, 160, true);
+  const note = boundedText(record.note, 2000);
+  return name === null || note === null
+    ? null
+    : { mode: "supplement", name, note };
+}
+
 // Текст /help на текущем языке. Генерится на каждый вызов (язык мог смениться).
 export function helpText(): string {
   const isRu = getLang() === "ru";
@@ -174,8 +244,10 @@ export function botCommands(
   lang: string,
 ): Array<{ command: string; description: string }> {
   const isRu = lang === "ru";
-  return COMMANDS.map((c) => ({
-    command: c.command,
-    description: isRu ? c.ru : c.en,
-  }));
+  return COMMANDS.filter((command) => command.telegramMenu === true).map(
+    (c) => ({
+      command: c.command,
+      description: isRu ? c.ru : c.en,
+    }),
+  );
 }

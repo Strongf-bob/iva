@@ -181,7 +181,7 @@ export function openTaskCount(dataDir: string): number {
 }
 
 export default {
-  parent: "r",
+  parent: "auto",
   async render(st: MenuState, ctx: MenuContext) {
     const T = ctx.tr;
     if (isContainerRuntime(ctx.deps.runtime ?? process.env.IVA_RUNTIME)) {
@@ -213,7 +213,7 @@ export default {
       const dataDir = personalData ?? ctx.deps.dataDir;
       return {
         text: `${T("⏰ Personal reminders", "⏰ Личные напоминания")}\n\n${body}\n\n${T(`Tasks in queue: ${openTaskCount(dataDir)}`, `Задач в очереди: ${openTaskCount(dataDir)}`)}\n\n${schedulesBlock(dataDir, T)}`,
-        rows: [ctx.backRow("r")],
+        rows: [ctx.backRow("auto")],
       };
     }
     const timers = await loadTimers();
@@ -227,7 +227,7 @@ export default {
     if (timers.length === 0) {
       return {
         text: `${head}\n\n${T("No Iva timers found.", "Таймеров Iva не найдено.")}\n${taskLine}\n\n${schedules}`,
-        rows: [ctx.backRow("r")],
+        rows: [ctx.backRow("auto")],
       };
     }
     const pages = Math.ceil(timers.length / PER_PAGE);
@@ -248,7 +248,7 @@ export default {
         ),
       ]);
     }
-    rows.push(ctx.backRow("r"));
+    rows.push(ctx.backRow("auto"));
     return { text: `${head}\n\n${body}\n\n${taskLine}\n\n${schedules}`, rows };
   },
   on() {},
