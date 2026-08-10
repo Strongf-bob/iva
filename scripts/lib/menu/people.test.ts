@@ -40,7 +40,7 @@ function harness() {
     deps: {
       deliver: (update: Record<string, unknown>) => {
         deliveries.push(update);
-        return Promise.resolve();
+        return Promise.resolve(true);
       },
       reply: () => Promise.resolve(),
     },

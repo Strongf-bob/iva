@@ -2,7 +2,7 @@
 
 `/menu` opens Iva's action-first control center in one Telegram message. Daily work is at the top level; configuration is grouped under **Settings** instead of competing with routine actions. It exists because remembering commands or configuring an agent by hand — editing `.env`, running CLI wizards, pasting keys over SSH — is exactly where people get stuck.
 
-The menu lives in the long-poll bridge, not the agent. That has three consequences: it **works while Iva is mid-turn** (out-of-band — nothing is queued behind a running reply), it **costs zero model tokens** (the one exception is the memory interview, which hands your answers to Iva to distill), and deploying a change to it is a bridge restart, not a rebuild. Only user IDs on the allowlist can open it; taps from anyone else are silently dropped. Everything is bilingual (ru/en) and follows the **🌐 Language** button live.
+The menu lives in the long-poll bridge, not the agent. That has three consequences: it **works while Iva is mid-turn** (out-of-band — nothing is queued behind a running reply), local navigation, counts, and snapshots **cost zero model tokens**, while an explicitly chosen agent-backed action consumes a normal model turn, and deploying a bridge-only change does not require an agent rebuild. Only user IDs on the allowlist can open it; taps from anyone else are silently dropped. Everything is bilingual (ru/en) and follows the **🌐 Language** button live.
 
 ## The map
 
@@ -24,7 +24,7 @@ On personalized multi-user workers, ordinary users see **Today**, **Tasks**, **A
 ## Daily actions
 
 - **✨ Today** shows the current open-task count and starts either the daily attention brief or weekly review through the existing authenticated command route.
-- **📥 Inbox** shows a bounded snapshot of urgent and reply-needed items from the owner's isolated unified-inbox state. Missing or corrupt snapshots are reported honestly; the screen does not collect new data or send anything.
+- **📥 Inbox** shows a bounded snapshot of urgent and reply-needed items from the owner's isolated unified-inbox state. **Review privately** hands the existing snapshot to Iva for an evidence-backed read-only review; it never recollects sources or performs proposed actions. Missing or corrupt snapshots are reported honestly.
 - **✅ Tasks** shows the open count, lists tasks through `/tasks`, or captures one 1–500-character task and hands it to `/task`.
 - **🔔 Automation** opens personal reminders, schedules, and their health information.
 

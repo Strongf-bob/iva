@@ -19,13 +19,6 @@ export async function handoffText<State extends HandoffState>(
 ): Promise<void> {
   const chatId = Number(state.chatId);
   const userId = Number(state.userId);
-  await context.flows.end(
-    state,
-    context.tr(
-      "Passed to Iva — working on it.",
-      "Передал Иве — она уже работает.",
-    ),
-  );
   const message = {
     message_id: Date.now(),
     date: Math.floor(Date.now() / 1000),
@@ -37,7 +30,15 @@ export async function handoffText<State extends HandoffState>(
     text,
   };
   try {
-    await context.deps.deliver({ update_id: 0, message });
+    const delivered = await context.deps.deliver({ update_id: 0, message });
+    if (delivered === false) throw new Error("handoff rejected");
+    await context.flows.end(
+      state,
+      context.tr(
+        "Passed to Iva — working on it.",
+        "Передал Иве — она уже работает.",
+      ),
+    );
   } catch {
     await context.deps.reply(
       chatId,

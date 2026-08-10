@@ -1367,15 +1367,28 @@ const telegram = telegramChannel({
       const cmd = cmdText.split(/\s+/)[0].replace(/@\w+$/, "").toLowerCase();
       const rest = cmdText.slice(cmdText.split(/\s+/)[0].length).trim();
       const personMemory = personMemoryCommand(cmdText);
-      if (personMemory !== null) {
+      const isPersonMemoryCommand =
+        cmd === "/person" || cmd === "/person_update";
+      if (isPersonMemoryCommand) {
         if (
           process.env.ASSISTANT_MULTI_USER === "1" &&
           process.env.ASSISTANT_ROLE !== "owner"
         ) {
+          await abandonEarly();
           await ctx.telegram.sendMessage(
             tr(
-              "People memory is available only to the owner.",
-              "Память о людях доступна только владельцу.",
+              "People memory is unavailable on this worker; it is available only to the owner.",
+              "Память о людях недоступна в этом профиле: она доступна только владельцу.",
+            ),
+          );
+          return null;
+        }
+        if (personMemory === null) {
+          await abandonEarly();
+          await ctx.telegram.sendMessage(
+            tr(
+              "Invalid People command. Use /person <name>, or reopen People in /menu and try again.",
+              "Некорректная команда раздела «Люди». Используй /person <имя> или снова открой «Люди» через /menu.",
             ),
           );
           return null;
@@ -1434,6 +1447,32 @@ const telegram = telegramChannel({
           if (supplementNotice) context.push(supplementNotice);
         }
         return withPre({ auth: buildAuth(message), context });
+      }
+      if (cmd === "/inbox") {
+        if (
+          rest.length > 0 ||
+          (process.env.ASSISTANT_MULTI_USER === "1" &&
+            process.env.ASSISTANT_ROLE !== "owner")
+        ) {
+          await abandonEarly();
+          await ctx.telegram.sendMessage(
+            tr(
+              "Private inbox review is available only to the owner from /menu.",
+              "Приватный разбор входящих доступен только владельцу через /menu.",
+            ),
+          );
+          return null;
+        }
+        await ctx.telegram.startTyping();
+        return withPre({
+          auth: buildAuth(message),
+          context: [
+            tr(
+              "Privately review the existing unified inbox snapshot. Read only $ASSISTANT_DATA_DIR/unified-inbox/owner-$ASSISTANT_USER_ID/state.json, summarize urgent and reply-needed items with their supplied evidence locators, state when the snapshot is missing, stale, partial, or unhealthy, and suggest next steps without performing them. This workflow is read-only: do not recollect sources, send messages, create Gmail drafts, mark items read, or create or modify tasks, files, or calendar events.",
+              "Приватно разбери существующий снимок unified inbox. Прочитай только $ASSISTANT_DATA_DIR/unified-inbox/owner-$ASSISTANT_USER_ID/state.json, кратко покажи срочные пункты и то, что требует ответа, с указанными evidence locator; явно скажи, если снимок отсутствует, устарел, частичный или источники нездоровы; предложи следующие шаги, но не выполняй их. Этот workflow только для чтения: не собирай источники заново, не отправляй сообщения, не создавай черновики Gmail, не отмечай прочитанным и не создавай или изменяй задачи, файлы и события календаря.",
+            ),
+          ],
+        });
       }
       const chiefOfStaff = chiefOfStaffCommand(cmdText);
       if (chiefOfStaff !== null) {

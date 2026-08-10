@@ -3,16 +3,23 @@ import { join } from "node:path";
 
 import { InboxStateSchema } from "../../unified-inbox/state.ts";
 import { truncateCodePoints } from "../../unified-inbox/types.ts";
+import { handoffText } from "./handoff.ts";
 import { personalDataDir } from "./personal-data.ts";
 
 type Button = { text: string; callback_data: string };
 type State = {
+  chatId: string | number;
   userId: string | number;
   role?: "owner" | "user";
   personalRoot?: string;
 };
 type Context = {
-  deps: { dataDir: string };
+  deps: {
+    dataDir: string;
+    deliver: (update: Record<string, unknown>) => unknown;
+    reply: (chatId: number, text: string) => unknown;
+  };
+  flows: { end: (state: State, text: string) => Promise<void> };
   tr: (english: string, russian: string) => string;
   btn: (text: string, callbackData: string) => Button;
   backRow: (screen: string) => Button[];
@@ -114,10 +121,29 @@ export default {
     return {
       text: `${T("📥 Inbox", "📥 Входящие")}\n\n${summary}\n\n${body}`,
       rows: [
+        [
+          context.btn(
+            T("Review privately", "Разобрать приватно"),
+            "iva_menu:in:review",
+          ),
+        ],
         [context.btn(T("Refresh", "Обновить"), "iva_menu:in:rf")],
         context.backRow("r"),
       ],
     };
   },
-  on() {},
+  async on(verb: string, _args: string[], state: State, context: Context) {
+    if (verb !== "review") return;
+    if (state.role === "user") {
+      await context.deps.reply(
+        Number(state.chatId),
+        context.tr(
+          "This private inbox is available only to the owner.",
+          "Этот приватный inbox доступен только владельцу.",
+        ),
+      );
+      return;
+    }
+    await handoffText(state, context, "/inbox");
+  },
 };

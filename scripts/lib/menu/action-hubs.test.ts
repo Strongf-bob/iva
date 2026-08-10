@@ -66,7 +66,7 @@ function makeContext(dataDir = mkdtempSync(join(tmpdir(), "iva-menu-hubs-"))) {
       root: process.cwd(),
       deliver: (update: Record<string, unknown>) => {
         deliveries.push(update);
-        return Promise.resolve();
+        return Promise.resolve(true);
       },
       reply: (_chatId: number, text: string) => {
         replies.push(text);
@@ -130,7 +130,7 @@ test("Today shows the open task count and explicitly hands off brief actions", a
   assert.deepEqual(deliveries.map(deliveredText), ["/brief", "/weekly"]);
 });
 
-test("Inbox renders only bounded owner data and fails closed for ordinary users", async () => {
+test("Inbox renders bounded owner data and offers a private review handoff", async () => {
   const dataDir = mkdtempSync(join(tmpdir(), "iva-menu-inbox-"));
   const ownerDir = join(dataDir, "unified-inbox", "owner-20");
   mkdirSync(ownerDir, { recursive: true });
@@ -185,7 +185,7 @@ test("Inbox renders only bounded owner data and fails closed for ordinary users"
       },
     }),
   );
-  const { context } = makeContext(dataDir);
+  const { context, deliveries } = makeContext(dataDir);
   const inbox = screen("in");
 
   const ownerView = await inbox.render(state({ screen: "in" }), context);
@@ -193,6 +193,13 @@ test("Inbox renders only bounded owner data and fails closed for ordinary users"
   assert.match(ownerView.text, /Contract approval/u);
   assert.equal(ownerView.text.includes("secret tail"), false);
   assert.ok(ownerView.text.length < 1600);
+  assert.deepEqual(
+    ownerView.rows.flat().map((button) => button.callback_data),
+    ["iva_menu:in:review", "iva_menu:in:rf", "iva_menu:r:o"],
+  );
+
+  await inbox.on("review", [], state({ screen: "in" }), context);
+  assert.equal(deliveredText(deliveries[0]), "/inbox");
 
   const userView = await inbox.render(
     state({ screen: "in", role: "user" }),
@@ -200,6 +207,23 @@ test("Inbox renders only bounded owner data and fails closed for ordinary users"
   );
   assert.match(userView.text, /available only to the owner/u);
   assert.equal(userView.text.includes("Contract approval"), false);
+});
+
+test("handoff reports resolved-false and thrown delivery failures truthfully", async () => {
+  const { context, deliveries, replies } = makeContext();
+  const today = screen("td");
+  const rejected = state({ screen: "td" });
+  context.deps.deliver = (update: Record<string, unknown>) => {
+    deliveries.push(update);
+    return Promise.resolve(false);
+  };
+  await today.on("brief", [], rejected, context);
+  assert.match(replies.at(-1) ?? "", /Couldn't pass/u);
+  assert.doesNotMatch(rejected._last?.text ?? "", /Passed to Iva/u);
+
+  context.deps.deliver = () => Promise.reject(new Error("queue unavailable"));
+  await today.on("weekly", [], state({ screen: "td" }), context);
+  assert.match(replies.at(-1) ?? "", /Couldn't pass/u);
 });
 
 test("Inbox reports missing or corrupt state honestly", async () => {

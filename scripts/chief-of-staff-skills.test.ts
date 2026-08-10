@@ -123,6 +123,7 @@ test("Telegram routes chief-of-staff commands through the bounded classifier", (
   assert.match(source, /relationship-briefing/u);
   assert.match(source, /weekly-review/u);
   assert.match(source, /personMemoryCommand\(cmdText\)/u);
+  assert.match(source, /People memory is unavailable/u);
   assert.match(source, /person-memory/u);
 });
 
@@ -150,4 +151,11 @@ test("core instructions expose all chief-of-staff workflows", () => {
     /обычным ответом через штатный Telegram renderer/u,
   );
   assert.match(rootInstructions, /НЕ вызывай `send_rich\.py`/u);
+  assert.match(rootInstructions, /только owner/u);
+
+  const dynamicInstructions = readFileSync(
+    new URL("../agent/instructions/now.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(dynamicInstructions, /Trusted worker role/u);
 });

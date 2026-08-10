@@ -42,10 +42,15 @@ function nowMarkdown(): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date());
+  const role =
+    process.env.ASSISTANT_MULTI_USER === "1" &&
+    process.env.ASSISTANT_ROLE !== "owner"
+      ? "user"
+      : "owner";
 
   return lang === "en"
-    ? `Current user date and time: ${formatted}, timezone ${TIMEZONE}.`
-    : `Текущая дата и время пользователя: ${formatted}, часовой пояс ${TIMEZONE}.`;
+    ? `Current user date and time: ${formatted}, timezone ${TIMEZONE}. Trusted worker role: ${role}.`
+    : `Текущая дата и время пользователя: ${formatted}, часовой пояс ${TIMEZONE}. Доверенная роль worker: ${role}.`;
 }
 
 export default defineDynamic({

@@ -125,3 +125,38 @@ test("person route fails closed for a non-owner personalized worker", async () =
     delete process.env.ASSISTANT_ROLE;
   }
 });
+
+test("malformed and oversized person commands are consumed before the model", async () => {
+  assert.equal((await dispatch("/person_update {broken")).length, 0);
+  assert.equal((await dispatch(`/person ${"x".repeat(161)}`)).length, 0);
+});
+
+test("malformed person commands remain owner-gated on ordinary workers", async () => {
+  process.env.ASSISTANT_MULTI_USER = "1";
+  process.env.ASSISTANT_ROLE = "user";
+  try {
+    assert.equal((await dispatch("/person_update {broken")).length, 0);
+  } finally {
+    delete process.env.ASSISTANT_MULTI_USER;
+    delete process.env.ASSISTANT_ROLE;
+  }
+});
+
+test("private inbox review has a fixed owner-only read-only route", async () => {
+  const sends = await dispatch("/inbox");
+  assert.equal(sends.length, 1);
+  assert.match(
+    sends[0][0].context.join("\n"),
+    /existing unified inbox snapshot/u,
+  );
+  assert.match(sends[0][0].context.join("\n"), /read-only/u);
+
+  process.env.ASSISTANT_MULTI_USER = "1";
+  process.env.ASSISTANT_ROLE = "user";
+  try {
+    assert.equal((await dispatch("/inbox")).length, 0);
+  } finally {
+    delete process.env.ASSISTANT_MULTI_USER;
+    delete process.env.ASSISTANT_ROLE;
+  }
+});
