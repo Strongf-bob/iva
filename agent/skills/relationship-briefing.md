@@ -8,6 +8,14 @@ description: Use when the user wants to prepare for a meeting, call, negotiation
 Подготовь короткий бриф о конкретном человеке. Не объединяй похожие имена и не
 достраивай отношения по общим знаниям.
 
+## Owner gate
+
+Начинай workflow только если доверенная динамическая инструкция текущего turn явно
+указывает роль `owner`, а доверенный `<telegram_context>` отдельно указывает
+`chat_type: private`. При роли `user`, неприватном чате или при отсутствии любого из
+этих доверенных значений остановись: не вызывай инструменты, не ищи и не читай contact
+cards.
+
 ## Установи личность
 
 1. Выполни `memory_search` по имени и возможным идентификаторам человека.
@@ -46,3 +54,33 @@ For every memory-derived claim, включая каждый talking point, до�
 
 This workflow is read-only: do not create, modify, or send tasks, cards, files,
 messages, calendar events, or other external actions.
+
+## Rich response contract
+
+Загрузи `rich-post` и используй его **embedded renderer mode**. Верни exactly one normal reply
+в Rich Markdown; не создавай временный файл, не вызывай `send_rich.py`
+и не отправляй отдельное подтверждение.
+
+Начни с `# 🤝 <каноническое имя>`, затем покажи краткий контекст:
+
+```md
+| Поле        | Текущее значение |
+| ----------- | ---------------- |
+| Отношения   | ...              |
+| Уверенность | ...              |
+```
+
+После таблицы сохрани пять разделов из этого скилла и предел в 5 talking points.
+Каждая memory-derived claim по-прежнему получает соседний источник. Реально
+прочитанные пути, evidence locators и релевантную историю сгруппируй в конце:
+
+```md
+<details><summary>Источники и история</summary>
+...
+</details>
+```
+
+Для отсутствующего или неоднозначного контакта верни тот же one-message rich
+diagnostic с таблицей статуса и `<details>` с candidates/проверенными путями, затем
+остановись. Таблица или `<details>` обязательны, чтобы штатный Telegram renderer
+выбрал native `sendRichMessage`.

@@ -10,6 +10,22 @@ type Skill = {
   body: string;
 };
 
+function assertEmbeddedRichOutput(skill: Skill): void {
+  const marker = "## Rich response contract";
+  const markerIndex = skill.body.indexOf(marker);
+  assert.ok(
+    markerIndex >= 0,
+    `${skill.frontmatter.name} rich contract missing`,
+  );
+  const contract = skill.body.slice(markerIndex);
+  assert.match(contract, /rich-post/u);
+  assert.match(contract, /embedded renderer mode/iu);
+  assert.match(contract, /send_rich\.py/u);
+  assert.match(contract, /\|[ \t]*---/u);
+  assert.match(contract, /<details>/u);
+  assert.match(contract, /one (?:normal )?reply/iu);
+}
+
 function readSkill(name: string): Skill {
   const path = fileURLToPath(
     new URL(`../agent/skills/${name}.md`, import.meta.url),
@@ -61,6 +77,14 @@ test("relationship briefing preserves identity ambiguity and evidence", () => {
   assert.match(skill.body, /telegram:message/u);
   assert.match(skill.body, /every memory-derived claim/iu);
   assert.match(skill.body, /do not create, modify, or send/iu);
+  assert.match(skill.body, /Owner gate/u);
+  assert.match(skill.body, /role `owner`|роль `owner`/u);
+  assert.match(skill.body, /private|приватн/iu);
+  assert.match(skill.body, /absent|отсутствующ/iu);
+  assert.match(skill.body, /ambiguous|неоднознач/iu);
+  assert.match(skill.body, /<telegram_context>/u);
+  assert.match(skill.body, /chat_type: private/u);
+  assertEmbeddedRichOutput(skill);
 });
 
 test("person memory separates read-only viewing from explicit safe supplements", () => {
@@ -81,6 +105,7 @@ test("person memory separates read-only viewing from explicit safe supplements",
   assert.match(skill.body, /vault-relative/u);
   assert.match(skill.body, /telegram:message/u);
   assert.match(skill.body, /`write_card`/u);
+  assert.match(skill.body, /NOOP/u);
   assert.match(skill.body, /UPDATE/u);
   assert.match(skill.body, /SUPERSEDE/u);
   assert.match(skill.body, /history_entry/u);
@@ -88,6 +113,23 @@ test("person memory separates read-only viewing from explicit safe supplements",
   assert.match(skill.body, /do not use `write_file`/iu);
   assert.match(skill.body, /do not create a new contact/iu);
   assert.match(skill.body, /do not create.*task|do not send/iu);
+  assert.match(skill.body, /ошибк.*запис|write failure/iu);
+  assert.match(skill.body, /not found|не найдена/iu);
+  assert.match(skill.body, /ambiguous|неоднознач/iu);
+  assertEmbeddedRichOutput(skill);
+  const richContract = skill.body.slice(
+    skill.body.indexOf("## Rich response contract"),
+  );
+  for (const outcome of [
+    /NOOP/u,
+    /UPDATE/u,
+    /SUPERSEDE/u,
+    /ошибк.*запис|write failure/iu,
+    /not found|не найдена/iu,
+    /ambiguous|неоднознач/iu,
+  ]) {
+    assert.match(richContract, outcome);
+  }
 });
 
 test("weekly review is honest about coverage and tracks decision arcs", () => {
@@ -151,6 +193,8 @@ test("core instructions expose all chief-of-staff workflows", () => {
     /обычным ответом через штатный Telegram renderer/u,
   );
   assert.match(rootInstructions, /НЕ вызывай `send_rich\.py`/u);
+  assert.match(rootInstructions, /Rich Markdown/u);
+  assert.match(rootInstructions, /embedded renderer mode/iu);
   assert.match(rootInstructions, /только owner/u);
 
   const dynamicInstructions = readFileSync(

@@ -5,7 +5,6 @@ import {
   type TelegramContext,
   type TelegramHandle,
   type TelegramMessage,
-  type TelegramMessageBody,
 } from "eve/channels/telegram";
 import { POST } from "eve/channels";
 import {
@@ -16,19 +15,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-// Разметка Telegram — ЕДИНЫЙ источник правды (тот же модуль, что у cron-скриптов).
-// toTelegramHtmlChunks: markdown → массив готовых, сбалансированных HTML-чанков ≤limit
-// (гарантирует длину ПОСЛЕ конвертации). htmlToPlain: декодирующий plain-фолбэк.
-import {
-  toTelegramHtmlChunks,
-  htmlToPlain,
-  needsRichMessage,
-} from "../../scripts/lib/telegram-format.ts";
+import { deliverTelegramCompletedMessage } from "../lib/telegram-rich-delivery.js";
 import { describeImage } from "../vision.js";
 import {
   hasInboundAttackSignal,
   sanitizeInbound,
-  scanOutbound,
 } from "../lib/security-gate.js";
 import {
   mediaFromRaw,
@@ -1016,81 +1007,11 @@ const telegram = telegramChannel({
           getStatusImpl: getChatStatus,
           setStatusIfImpl: setChatStatusIf,
         });
-      // Outbound security-гейт: редактим утёкшие секреты/эксфил-URL ДО отправки. Fail-open —
-      // если гейт что-то нашёл, шлём отредактированное и громко логируем (блокировать ответ
-      // целиком хуже редкой утечки для единственного владельца).
-      const guard = scanOutbound(data.message);
-      if (!guard.clean) {
-        console.error(
-          "[security] outbound leak redacted:",
-          guard.findings.map((f) => `${f.type}:${f.name}`).join(", "),
-        );
-      }
-      // toTelegramHtmlChunks режет на чанки И конвертирует, гарантируя длину каждого
-      // чанка ≤4096 ПОСЛЕ конвертации (ручной chunkMarkdown+mdToTelegramHtml мог раздуть
-      // чанк тегами за лимит → 400). Пустые чанки не шлём (Telegram отвергает пустой текст).
-
-      // Rich message (sendRichMessage, Bot API 10.1): таблицы/таск-листы/<details>/формулы
-      // рендерятся нативно — HTML-путь так не умеет. Пробуем rich ТОЛЬКО для них; любая
-      // ошибка (старый Bot API, парс, лимит 32768, RICH_MESSAGE_*) проваливается в HTML-путь
-      // ниже — worst case = сегодняшнее поведение. request() = raw Bot API call, транспорт
-      // JSON, поэтому rich_message шлём объектом. chat_id/thread берём из channel.telegram.
-      if (needsRichMessage(guard.text)) {
-        try {
-          const res = await channel.telegram.request("sendRichMessage", {
-            chat_id: channel.telegram.chatId,
-            rich_message: { markdown: guard.text },
-            ...(channel.telegram.messageThreadId !== undefined
-              ? { message_thread_id: channel.telegram.messageThreadId }
-              : {}),
-          });
-          if (res.ok) {
-            recordDelivery(true);
-            return;
-          }
-          console.error(
-            "[telegram] sendRichMessage отвергнут, фолбэк HTML:",
-            res.status,
-            JSON.stringify(res.body).slice(0, 300),
-          );
-        } catch (err) {
-          console.error("[telegram] sendRichMessage упал, фолбэк HTML:", err);
-        }
-      }
-
-      let attemptedDelivery = false;
-      let allChunksDelivered = true;
-      for (const html of toTelegramHtmlChunks(guard.text, 4096)) {
-        if (!html) continue;
-        attemptedDelivery = true;
-        let chunkDelivered = false;
-        try {
-          // eve's TelegramMessageBody type omits parse_mode, но рантайм
-          // (normalizeTelegramMessageBody) спредит тело прямо в sendMessage —
-          // поле доходит до Telegram, и от него зависит наш HTML-рендер. Расширяем тип локально.
-          await channel.telegram.post({
-            text: html,
-            parse_mode: "HTML",
-          } as TelegramMessageBody & { parse_mode: "HTML" });
-          chunkDelivered = true;
-        } catch (err) {
-          console.error(
-            "[telegram] HTML отвергнут, шлю plain:",
-            err,
-            "| HTML:",
-            html.slice(0, 300),
-          );
-          try {
-            // htmlToPlain декодирует сущности (&amp;→&), иначе они утекли бы литералами.
-            await channel.telegram.post(htmlToPlain(html));
-            chunkDelivered = true;
-          } catch (e2) {
-            console.error("[telegram] plain-фолбэк тоже упал:", e2);
-          }
-        }
-        if (!chunkDelivered) allChunksDelivered = false;
-      }
-      if (attemptedDelivery && allChunksDelivered) recordDelivery(true);
+      await deliverTelegramCompletedMessage(
+        data.message,
+        channel.telegram,
+        recordDelivery,
+      );
     },
     // Ход упал: статус прибираем по CAS, но сообщение об ошибке от него не гейтим —
     // позднее terminal-событие всё равно должно объяснить пользователю, что произошло.
@@ -1371,16 +1292,19 @@ const telegram = telegramChannel({
         cmd === "/person" || cmd === "/person_update";
       if (isPersonMemoryCommand) {
         if (
-          process.env.ASSISTANT_MULTI_USER === "1" &&
-          process.env.ASSISTANT_ROLE !== "owner"
+          message.chat.type !== "private" ||
+          (process.env.ASSISTANT_MULTI_USER === "1" &&
+            process.env.ASSISTANT_ROLE !== "owner")
         ) {
           await abandonEarly();
-          await ctx.telegram.sendMessage(
-            tr(
-              "People memory is unavailable on this worker; it is available only to the owner.",
-              "Память о людях недоступна в этом профиле: она доступна только владельцу.",
-            ),
-          );
+          if (message.chat.type === "private") {
+            await ctx.telegram.sendMessage(
+              tr(
+                "People memory is unavailable on this worker; it is available only to the owner.",
+                "Память о людях недоступна в этом профиле: она доступна только владельцу.",
+              ),
+            );
+          }
           return null;
         }
         if (personMemory === null) {
@@ -1415,12 +1339,12 @@ const telegram = telegramChannel({
         const context = [
           personMemory.mode === "view"
             ? tr(
-                "Load the person-memory skill in view mode. Resolve exactly one contact and report only evidence-backed current knowledge.",
-                "Загрузи скилл person-memory в режиме просмотра. Определи ровно один контакт и покажи только подтверждённые актуальные знания.",
+                "Load the person-memory skill in view mode and its rich-post embedded renderer mode. Resolve exactly one contact and return exactly one normal Rich Markdown reply with only evidence-backed current knowledge. Do not call send_rich.py or send a second confirmation.",
+                "Загрузи скилл person-memory в режиме просмотра и rich-post в embedded renderer mode. Определи ровно один контакт и верни ровно один обычный Rich Markdown ответ только с подтверждёнными актуальными знаниями. Не вызывай send_rich.py и не отправляй второе подтверждение.",
               )
             : tr(
-                "Load the person-memory skill in supplement mode. Resolve exactly one existing contact, then safely add or explicitly correct only the supplied fact.",
-                "Загрузи скилл person-memory в режиме дополнения. Определи ровно один существующий контакт, затем безопасно добавь или явно исправь только переданный факт.",
+                "Load the person-memory skill in supplement mode and its rich-post embedded renderer mode. Resolve exactly one existing contact, then safely add or explicitly correct only the supplied fact. Return exactly one normal Rich Markdown result; do not call send_rich.py or send a second confirmation.",
+                "Загрузи скилл person-memory в режиме дополнения и rich-post в embedded renderer mode. Определи ровно один существующий контакт, затем безопасно добавь или явно исправь только переданный факт. Верни ровно один обычный Rich Markdown результат; не вызывай send_rich.py и не отправляй второе подтверждение.",
               ),
           ...(flagged ? [inboundInjectionWarning()] : []),
           tr(
@@ -1494,6 +1418,22 @@ const telegram = telegramChannel({
             ),
           ];
         } else {
+          if (
+            message.chat.type !== "private" ||
+            (process.env.ASSISTANT_MULTI_USER === "1" &&
+              process.env.ASSISTANT_ROLE !== "owner")
+          ) {
+            await abandonEarly();
+            if (message.chat.type === "private") {
+              await ctx.telegram.sendMessage(
+                tr(
+                  "People briefing is available only to the owner.",
+                  "Бриф по человеку доступен только владельцу.",
+                ),
+              );
+            }
+            return null;
+          }
           const subject = sanitizeInbound(chiefOfStaff.subject);
           const subjectAttack = hasInboundAttackSignal(subject);
           if (subjectAttack) {
@@ -1505,8 +1445,8 @@ const telegram = telegramChannel({
           }
           context = [
             tr(
-              "Load the relationship-briefing skill and prepare me for a conversation with the person in the adjacent identity-data item.",
-              "Загрузи скилл relationship-briefing и подготовь меня к разговору с человеком из соседнего элемента с данными личности.",
+              "Load the relationship-briefing skill and its rich-post embedded renderer mode, then prepare me for a conversation with the person in the adjacent identity-data item. Return exactly one normal Rich Markdown reply; do not call send_rich.py or send a second confirmation.",
+              "Загрузи скилл relationship-briefing и rich-post в embedded renderer mode, затем подготовь меня к разговору с человеком из соседнего элемента с данными личности. Верни ровно один обычный Rich Markdown ответ; не вызывай send_rich.py и не отправляй второе подтверждение.",
             ),
             ...(subjectAttack ? [inboundInjectionWarning()] : []),
             tr(
