@@ -5,7 +5,6 @@ import {
   type TelegramContext,
   type TelegramHandle,
   type TelegramMessage,
-  type TelegramMessageBody,
 } from "eve/channels/telegram";
 import { POST } from "eve/channels";
 import {
@@ -16,20 +15,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-// Разметка Telegram — ЕДИНЫЙ источник правды (тот же модуль, что у cron-скриптов).
-// toTelegramHtmlChunks: markdown → массив готовых, сбалансированных HTML-чанков ≤limit
-// (гарантирует длину ПОСЛЕ конвертации). htmlToPlain: декодирующий plain-фолбэк.
-import {
-  toTelegramHtmlChunks,
-  htmlToPlain,
-  needsRichMessage,
-} from "../../scripts/lib/telegram-format.ts";
-import { attemptTelegramRichDelivery } from "../lib/telegram-rich-delivery.js";
+import { deliverTelegramCompletedMessage } from "../lib/telegram-rich-delivery.js";
 import { describeImage } from "../vision.js";
 import {
   hasInboundAttackSignal,
   sanitizeInbound,
-  scanOutbound,
 } from "../lib/security-gate.js";
 import {
   mediaFromRaw,
@@ -1017,89 +1007,11 @@ const telegram = telegramChannel({
           getStatusImpl: getChatStatus,
           setStatusIfImpl: setChatStatusIf,
         });
-      // Outbound security-гейт: редактим утёкшие секреты/эксфил-URL ДО отправки. Fail-open —
-      // если гейт что-то нашёл, шлём отредактированное и громко логируем (блокировать ответ
-      // целиком хуже редкой утечки для единственного владельца).
-      const guard = scanOutbound(data.message);
-      if (!guard.clean) {
-        console.error(
-          "[security] outbound leak redacted:",
-          guard.findings.map((f) => `${f.type}:${f.name}`).join(", "),
-        );
-      }
-      // toTelegramHtmlChunks режет на чанки И конвертирует, гарантируя длину каждого
-      // чанка ≤4096 ПОСЛЕ конвертации (ручной chunkMarkdown+mdToTelegramHtml мог раздуть
-      // чанк тегами за лимит → 400). Пустые чанки не шлём (Telegram отвергает пустой текст).
-
-      // Rich message (sendRichMessage, Bot API 10.2): таблицы/таск-листы/<details>/формулы
-      // рендерятся нативно — HTML-путь так не умеет. Пробуем rich ТОЛЬКО для них.
-      // После явного API rejection безопасно падаем в HTML; transport exception имеет
-      // неоднозначный исход (Telegram уже мог принять сообщение), поэтому не ретраим и
-      // не рискуем дублем. request() = raw Bot API call, transport JSON; chat_id/thread
-      // берём из channel.telegram.
-      if (needsRichMessage(guard.text)) {
-        const outcome = await attemptTelegramRichDelivery(() =>
-          channel.telegram.request("sendRichMessage", {
-            chat_id: channel.telegram.chatId,
-            rich_message: { markdown: guard.text },
-            ...(channel.telegram.messageThreadId !== undefined
-              ? { message_thread_id: channel.telegram.messageThreadId }
-              : {}),
-          }),
-        );
-        if (outcome.kind === "delivered") {
-          recordDelivery(true);
-          return;
-        }
-        if (outcome.kind === "rejected") {
-          console.error(
-            "[telegram] sendRichMessage отвергнут, фолбэк HTML:",
-            outcome.status,
-            JSON.stringify(outcome.body).slice(0, 300),
-          );
-        } else {
-          console.error(
-            "[telegram] результат sendRichMessage неоднозначен; не дублирую ответ:",
-            outcome.error,
-          );
-          recordDelivery(false);
-          return;
-        }
-      }
-
-      let attemptedDelivery = false;
-      let allChunksDelivered = true;
-      for (const html of toTelegramHtmlChunks(guard.text, 4096)) {
-        if (!html) continue;
-        attemptedDelivery = true;
-        let chunkDelivered = false;
-        try {
-          // eve's TelegramMessageBody type omits parse_mode, но рантайм
-          // (normalizeTelegramMessageBody) спредит тело прямо в sendMessage —
-          // поле доходит до Telegram, и от него зависит наш HTML-рендер. Расширяем тип локально.
-          await channel.telegram.post({
-            text: html,
-            parse_mode: "HTML",
-          } as TelegramMessageBody & { parse_mode: "HTML" });
-          chunkDelivered = true;
-        } catch (err) {
-          console.error(
-            "[telegram] HTML отвергнут, шлю plain:",
-            err,
-            "| HTML:",
-            html.slice(0, 300),
-          );
-          try {
-            // htmlToPlain декодирует сущности (&amp;→&), иначе они утекли бы литералами.
-            await channel.telegram.post(htmlToPlain(html));
-            chunkDelivered = true;
-          } catch (e2) {
-            console.error("[telegram] plain-фолбэк тоже упал:", e2);
-          }
-        }
-        if (!chunkDelivered) allChunksDelivered = false;
-      }
-      if (attemptedDelivery && allChunksDelivered) recordDelivery(true);
+      await deliverTelegramCompletedMessage(
+        data.message,
+        channel.telegram,
+        recordDelivery,
+      );
     },
     // Ход упал: статус прибираем по CAS, но сообщение об ошибке от него не гейтим —
     // позднее terminal-событие всё равно должно объяснить пользователю, что произошло.

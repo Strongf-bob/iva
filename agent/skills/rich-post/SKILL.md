@@ -147,7 +147,9 @@ HTML-only extras: <u>underline</u> <sub>x</sub> <sup>x</sup>
   Standalone rich posts still use this script; workflows in embedded renderer mode
   return their Rich Markdown through the current Eve turn instead.
 
-## Example
+## Standalone delivery example
+
+Skip this section entirely in embedded renderer mode.
 
 ```bash
 cat > /tmp/post.md <<'EOF'

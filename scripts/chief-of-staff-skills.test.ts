@@ -11,12 +11,19 @@ type Skill = {
 };
 
 function assertEmbeddedRichOutput(skill: Skill): void {
-  assert.match(skill.body, /rich-post/u);
-  assert.match(skill.body, /embedded renderer mode/iu);
-  assert.match(skill.body, /send_rich\.py/u);
-  assert.match(skill.body, /\|[ \t]*---/u);
-  assert.match(skill.body, /<details>/u);
-  assert.match(skill.body, /one (?:normal )?reply/iu);
+  const marker = "## Rich response contract";
+  const markerIndex = skill.body.indexOf(marker);
+  assert.ok(
+    markerIndex >= 0,
+    `${skill.frontmatter.name} rich contract missing`,
+  );
+  const contract = skill.body.slice(markerIndex);
+  assert.match(contract, /rich-post/u);
+  assert.match(contract, /embedded renderer mode/iu);
+  assert.match(contract, /send_rich\.py/u);
+  assert.match(contract, /\|[ \t]*---/u);
+  assert.match(contract, /<details>/u);
+  assert.match(contract, /one (?:normal )?reply/iu);
 }
 
 function readSkill(name: string): Skill {
@@ -75,6 +82,8 @@ test("relationship briefing preserves identity ambiguity and evidence", () => {
   assert.match(skill.body, /private|приватн/iu);
   assert.match(skill.body, /absent|отсутствующ/iu);
   assert.match(skill.body, /ambiguous|неоднознач/iu);
+  assert.match(skill.body, /<telegram_context>/u);
+  assert.match(skill.body, /chat_type: private/u);
   assertEmbeddedRichOutput(skill);
 });
 
@@ -108,6 +117,19 @@ test("person memory separates read-only viewing from explicit safe supplements",
   assert.match(skill.body, /not found|не найдена/iu);
   assert.match(skill.body, /ambiguous|неоднознач/iu);
   assertEmbeddedRichOutput(skill);
+  const richContract = skill.body.slice(
+    skill.body.indexOf("## Rich response contract"),
+  );
+  for (const outcome of [
+    /NOOP/u,
+    /UPDATE/u,
+    /SUPERSEDE/u,
+    /ошибк.*запис|write failure/iu,
+    /not found|не найдена/iu,
+    /ambiguous|неоднознач/iu,
+  ]) {
+    assert.match(richContract, outcome);
+  }
 });
 
 test("weekly review is honest about coverage and tracks decision arcs", () => {

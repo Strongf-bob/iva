@@ -30,3 +30,94 @@ export async function attemptTelegramRichDelivery(
     return { kind: "ambiguous", error };
   }
 }
+
+type TelegramReplyHandle = Pick<
+  TelegramHandle,
+  "chatId" | "messageThreadId" | "request" | "post"
+>;
+
+export async function deliverTelegramCompletedMessage(
+  message: string,
+  telegram: TelegramReplyHandle,
+  recordDelivery: (delivered: boolean) => void,
+): Promise<void> {
+  const guard = scanOutbound(message);
+  if (!guard.clean) {
+    console.error(
+      "[security] outbound leak redacted:",
+      guard.findings
+        .map((finding) => `${finding.type}:${finding.name}`)
+        .join(", "),
+    );
+  }
+
+  if (needsRichMessage(guard.text)) {
+    const outcome = await attemptTelegramRichDelivery(() =>
+      telegram.request("sendRichMessage", {
+        chat_id: telegram.chatId,
+        rich_message: { markdown: guard.text },
+        ...(telegram.messageThreadId !== undefined
+          ? { message_thread_id: telegram.messageThreadId }
+          : {}),
+      }),
+    );
+    if (outcome.kind === "delivered") {
+      recordDelivery(true);
+      return;
+    }
+    if (outcome.kind === "rejected") {
+      console.error(
+        "[telegram] sendRichMessage отвергнут, фолбэк HTML:",
+        outcome.status,
+        JSON.stringify(outcome.body).slice(0, 300),
+      );
+    } else {
+      console.error(
+        "[telegram] результат sendRichMessage неоднозначен; не дублирую ответ:",
+        outcome.error,
+      );
+      recordDelivery(false);
+      return;
+    }
+  }
+
+  let attemptedDelivery = false;
+  let allChunksDelivered = true;
+  for (const html of toTelegramHtmlChunks(guard.text, 4096)) {
+    if (!html) continue;
+    attemptedDelivery = true;
+    let chunkDelivered = false;
+    try {
+      await telegram.post({
+        text: html,
+        parse_mode: "HTML",
+      } as TelegramMessageBody & { parse_mode: "HTML" });
+      chunkDelivered = true;
+    } catch (error) {
+      console.error(
+        "[telegram] HTML отвергнут, шлю plain:",
+        error,
+        "| HTML:",
+        html.slice(0, 300),
+      );
+      try {
+        await telegram.post(htmlToPlain(html));
+        chunkDelivered = true;
+      } catch (plainError) {
+        console.error("[telegram] plain-фолбэк тоже упал:", plainError);
+      }
+    }
+    if (!chunkDelivered) allChunksDelivered = false;
+  }
+  if (attemptedDelivery && allChunksDelivered) recordDelivery(true);
+}
+import type {
+  TelegramHandle,
+  TelegramMessageBody,
+} from "eve/channels/telegram";
+import {
+  htmlToPlain,
+  needsRichMessage,
+  toTelegramHtmlChunks,
+} from "../../scripts/lib/telegram-format.ts";
+import { scanOutbound } from "./security-gate.js";
