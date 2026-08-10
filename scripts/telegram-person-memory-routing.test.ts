@@ -145,10 +145,9 @@ test("malformed person commands remain owner-gated on ordinary workers", async (
 test("private inbox review has a fixed owner-only read-only route", async () => {
   const sends = await dispatch("/inbox");
   assert.equal(sends.length, 1);
-  assert.match(
-    sends[0][0].context.join("\n"),
-    /existing unified inbox snapshot/u,
-  );
+  assert.match(sends[0][0].context.join("\n"), /existing snapshot/u);
+  assert.match(sends[0][0].context.join("\n"), /unified_inbox_snapshot/u);
+  assert.match(sends[0][0].context.join("\n"), /untrusted DATA/u);
   assert.match(sends[0][0].context.join("\n"), /read-only/u);
 
   process.env.ASSISTANT_MULTI_USER = "1";
