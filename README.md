@@ -60,6 +60,7 @@ The bridge long-polls Telegram, so no public HTTPS, domain or webhook is needed.
 - **Unified inbox** — bounded, read-only Gmail, Calendar and personal Telegram collection turns current evidence into prioritized actions and meeting prep without delivering anything on its own.
 - **Proactive reviews** — opt-in daily and weekly briefings prepare immutable reports, deduplicate alerts and require the owner to confirm every proposed Google Task.
 - **Chief-of-staff briefs** — `/brief`, `/brief <person>` and `/weekly` turn tasks and current vault evidence into traceable, read-only priorities and meeting prep.
+- **People memory** — `/person <person>` shows evidence-backed current knowledge; the owner-only menu can safely add or explicitly correct one fact without duplicating contacts or losing History.
 - **Search by meaning** — BM25 plus link-graph rerank, any language; optional vector mode with one key.
 - **Decision cards** — what you chose, when and why; old versions stay in a dated History.
 - **Tasks & reminders** — priorities, due dates and a morning digest.

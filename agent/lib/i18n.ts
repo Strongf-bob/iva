@@ -27,6 +27,7 @@ type Command = {
   readonly command: string;
   readonly en: string;
   readonly ru: string;
+  readonly telegramMenu?: true;
   readonly args?: { readonly en: string; readonly ru: string };
 };
 
@@ -78,23 +79,57 @@ export function getLang(): Language {
 export const tr = (en: string, ru: string): string =>
   getLang() === "ru" ? ru : en;
 
-// ЕДИНЫЙ список команд для helpText() и setMyCommands. Порядок = порядок в /help и
-// в синем меню. args (опц.) — подсказка аргументов: попадает только в /help, не в
-// описание команды Telegram (там аргументов быть не должно). Никаких /clear и /compact —
-// как в текущем HELP.
+// ЕДИНЫЙ список команд для helpText() и setMyCommands. /help показывает весь список,
+// а синее меню Telegram — только повседневные действия с telegramMenu. args (опц.)
+// попадает только в /help, не в описание команды Telegram. Никаких /clear и /compact.
 export const COMMANDS: ReadonlyArray<Command> = [
-  { command: "menu", en: "settings menu", ru: "меню настроек" },
-  { command: "help", en: "this list", ru: "этот список" },
+  { command: "menu", en: "main menu", ru: "главное меню", telegramMenu: true },
   {
-    command: "stop",
-    en: "interrupt the current turn (same as the ⏹ Stop button)",
-    ru: "прервать текущий ход (как кнопка ⏹ Стоп)",
+    command: "brief",
+    en: "daily brief or meeting prep",
+    ru: "бриф дня или подготовка к разговору",
+    telegramMenu: true,
+    args: { en: "<person>", ru: "<человек>" },
+  },
+  {
+    command: "person",
+    en: "show what Iva knows about a person",
+    ru: "показать, что Ива знает о человеке",
+    telegramMenu: true,
+    args: { en: "<person>", ru: "<человек>" },
+  },
+  {
+    command: "tasks",
+    en: "show tasks",
+    ru: "показать задачи",
+    telegramMenu: true,
+  },
+  {
+    command: "weekly",
+    en: "weekly review",
+    ru: "недельный обзор",
+    telegramMenu: true,
   },
   {
     command: "new",
     en: "start over (reset the current conversation)",
     ru: "начать диалог заново",
+    telegramMenu: true,
   },
+  {
+    command: "stop",
+    en: "interrupt the current turn (same as the ⏹ Stop button)",
+    ru: "прервать текущий ход (как кнопка ⏹ Стоп)",
+    telegramMenu: true,
+  },
+  { command: "help", en: "this list", ru: "этот список", telegramMenu: true },
+  {
+    command: "task",
+    en: "add a task",
+    ru: "добавить задачу",
+    args: { en: "<text>", ru: "<текст>" },
+  },
+  { command: "digest", en: "morning digest", ru: "утренний дайджест" },
   {
     command: "restart",
     en: "restart the agent if it's stuck",
@@ -123,25 +158,6 @@ export const COMMANDS: ReadonlyArray<Command> = [
       en: "[today|week|month|by-model|by-source]",
       ru: "[today|week|month|by-model|by-source]",
     },
-  },
-  {
-    command: "task",
-    en: "add a task",
-    ru: "добавить задачу",
-    args: { en: "<text>", ru: "<текст>" },
-  },
-  { command: "tasks", en: "show tasks", ru: "показать задачи" },
-  { command: "digest", en: "morning digest", ru: "утренний дайджест" },
-  {
-    command: "brief",
-    en: "daily brief or meeting prep",
-    ru: "бриф дня или подготовка к разговору",
-    args: { en: "<person>", ru: "<человек>" },
-  },
-  {
-    command: "weekly",
-    en: "weekly review",
-    ru: "недельный обзор",
   },
 ];
 
@@ -228,8 +244,10 @@ export function botCommands(
   lang: string,
 ): Array<{ command: string; description: string }> {
   const isRu = lang === "ru";
-  return COMMANDS.map((c) => ({
-    command: c.command,
-    description: isRu ? c.ru : c.en,
-  }));
+  return COMMANDS.filter((command) => command.telegramMenu === true).map(
+    (c) => ({
+      command: c.command,
+      description: isRu ? c.ru : c.en,
+    }),
+  );
 }

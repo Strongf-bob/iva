@@ -1,23 +1,51 @@
-# The settings menu (`/menu`)
+# The control center (`/menu`)
 
-`/menu` opens one Telegram message with a nested inline keyboard that gathers **every** Iva setting in one place — model, web search, language, a character test, a memory interview, the personal userbot, Google Workspace, timers, skills and a live status card. It exists because configuring an agent by hand — editing `.env`, running CLI wizards, pasting keys over SSH — is exactly where people get stuck.
+`/menu` opens Iva's action-first control center in one Telegram message. Daily work is at the top level; configuration is grouped under **Settings** instead of competing with routine actions. It exists because remembering commands or configuring an agent by hand — editing `.env`, running CLI wizards, pasting keys over SSH — is exactly where people get stuck.
 
 The menu lives in the long-poll bridge, not the agent. That has three consequences: it **works while Iva is mid-turn** (out-of-band — nothing is queued behind a running reply), it **costs zero model tokens** (the one exception is the memory interview, which hands your answers to Iva to distill), and deploying a change to it is a bridge restart, not a rebuild. Only user IDs on the allowlist can open it; taps from anyone else are silently dropped. Everything is bilingual (ru/en) and follows the **🌐 Language** button live.
 
 ## The map
 
 ```
-⚙️ Settings
-[🧠 Model]     [🤔 Thinking]
-[🔍 Search]    [🌐 Language]
-[🎭 Character] [💾 Memory]
-[📡 Userbot]   [🔗 Google]
-[⏰ Timers]    [🧩 Skills]
-[📊 Status]    [🛠 Maintenance]
+Iva
+[✨ Today]      [📥 Inbox]
+[👥 People]     [✅ Tasks]
+[🔔 Automation] [⚙️ Settings]
 [✖ Close]
+
+Settings
+[🧠 AI] [🔗 Connections]
+[🎨 Personalization]
+[🛠 System]
 ```
 
-**🧠 Model** and **🤔 Thinking** hand off to the existing `/model` and `/think` wizards, rendered into the same message; a **‹ Menu** button walks you back. Every other sub-screen has a **‹ Back** button; **✖ Close** drops the menu and strips the keyboard.
+On personalized multi-user workers, ordinary users see **Today**, **Tasks**, **Automation**, and **Settings**. **Inbox** and **People** remain owner-only because they expose private cross-service and relationship context. **✖ Close** drops the menu and strips the keyboard.
+
+## Daily actions
+
+- **✨ Today** shows the current open-task count and starts either the daily attention brief or weekly review through the existing authenticated command route.
+- **📥 Inbox** shows a bounded snapshot of urgent and reply-needed items from the owner's isolated unified-inbox state. Missing or corrupt snapshots are reported honestly; the screen does not collect new data or send anything.
+- **✅ Tasks** shows the open count, lists tasks through `/tasks`, or captures one 1–500-character task and hands it to `/task`.
+- **🔔 Automation** opens personal reminders, schedules, and their health information.
+
+## People
+
+**👥 People** is an owner-only personal CRM surface with three actions:
+
+- **What do we know?** asks for a name and runs `/person <name>`. Iva resolves one contact, reads at most three directly linked supporting cards, separates current truth from History, preserves confidence labels, and cites vault-relative evidence.
+- **Relationship brief** hands the same bounded identity to `/brief <name>` for conversation preparation.
+- **Add a detail** asks for a name and one factual note. The note is passed as structured untrusted data to the hidden supplement workflow; it never appears in `callback_data`.
+
+Supplements update only one unambiguously resolved existing contact card through `write_card`. Compatible facts use `UPDATE`; a contradiction uses `SUPERSEDE` only when the owner explicitly states a correction, preserving the displaced fact in History. Ambiguous or missing contacts cause no write, and the workflow never creates tasks, messages, calendar events, drafts, or a new contact as a side effect.
+
+## Settings groups
+
+- **🧠 AI** — model, thinking effort, and web search.
+- **🔗 Connections** — personal read-only Telegram userbot and Google Workspace.
+- **🎨 Personalization** — language, character, and the CORE memory interview.
+- **🛠 System** — status, skills, and maintenance.
+
+**🧠 Model** and **🤔 Thinking** hand off to the existing `/model` and `/think` wizards, rendered into the same message; a **‹ Menu** button walks you back. Every other sub-screen has a **‹ Back** button.
 
 ## What applies when
 
