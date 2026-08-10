@@ -30,6 +30,7 @@ const { SCREENS } = (await import("./index.ts")) as {
 
 type TestState = MenuServiceState & {
   flow: "menu";
+  role?: "owner" | "user";
   page: number;
   awaitText: null;
   data: Record<string, unknown>;

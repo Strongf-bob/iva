@@ -37,6 +37,10 @@ import settingsAi from "./settings-ai.ts";
 import settingsConnections from "./settings-connections.ts";
 import settingsPersonalization from "./settings-personalization.ts";
 import settingsSystem from "./settings-system.ts";
+import today from "./today.ts";
+import inbox from "./inbox.ts";
+import tasks from "./tasks.ts";
+import automation from "./automation.ts";
 
 type MaybePromise<T> = T | Promise<T>;
 type MenuButton = { text: string; callback_data: string };
@@ -161,6 +165,10 @@ export const SCREENS = {
   scon: settingsConnections,
   sper: settingsPersonalization,
   ssys: settingsSystem,
+  td: today,
+  in: inbox,
+  tsk: tasks,
+  auto: automation,
 };
 
 const PREFIX = "iva_menu:";
