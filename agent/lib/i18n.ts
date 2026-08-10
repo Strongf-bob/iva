@@ -35,6 +35,14 @@ export type ChiefOfStaffCommand =
   | { readonly skill: "relationship-briefing"; readonly subject: string }
   | { readonly skill: "weekly-review"; readonly subject: null };
 
+export type PersonMemoryCommand =
+  | { readonly mode: "view"; readonly name: string }
+  | {
+      readonly mode: "supplement";
+      readonly name: string;
+      readonly note: string;
+    };
+
 const cache: { lang: Language | null; mtimeMs: number; checkedAt: number } = {
   lang: null,
   mtimeMs: -1,
@@ -154,6 +162,52 @@ export function chiefOfStaffCommand(text: string): ChiefOfStaffCommand | null {
   return subject.length === 0
     ? { skill: "chief-of-staff-today", subject: null }
     : { skill: "relationship-briefing", subject };
+}
+
+const boundedText = (
+  value: unknown,
+  maxCodePoints: number,
+  collapseWhitespace = false,
+): string | null => {
+  if (typeof value !== "string") return null;
+  const normalized = collapseWhitespace
+    ? value.trim().replace(/\s+/gu, " ")
+    : value.trim();
+  const length = [...normalized].length;
+  return length >= 1 && length <= maxCodePoints ? normalized : null;
+};
+
+export function personMemoryCommand(text: string): PersonMemoryCommand | null {
+  const view = /^\/person(?:@[A-Za-z0-9_]+)?\s+(?<name>[\s\S]*?)\s*$/iu.exec(
+    text.trim(),
+  );
+  if (view) {
+    const name = boundedText(view.groups?.name, 160, true);
+    return name === null ? null : { mode: "view", name };
+  }
+
+  const supplement =
+    /^\/person_update(?:@[A-Za-z0-9_]+)?\s+(?<payload>[\s\S]+)$/iu.exec(
+      text.trim(),
+    );
+  if (!supplement) return null;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(supplement.groups?.payload ?? "");
+  } catch {
+    return null;
+  }
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload))
+    return null;
+  const record = payload as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  if (keys.length !== 2 || keys[0] !== "name" || keys[1] !== "note")
+    return null;
+  const name = boundedText(record.name, 160, true);
+  const note = boundedText(record.note, 2000);
+  return name === null || note === null
+    ? null
+    : { mode: "supplement", name, note };
 }
 
 // Текст /help на текущем языке. Генерится на каждый вызов (язык мог смениться).

@@ -41,6 +41,7 @@ import today from "./today.ts";
 import inbox from "./inbox.ts";
 import tasks from "./tasks.ts";
 import automation from "./automation.ts";
+import people from "./people.ts";
 
 type MaybePromise<T> = T | Promise<T>;
 type MenuButton = { text: string; callback_data: string };
@@ -169,6 +170,7 @@ export const SCREENS = {
   in: inbox,
   tsk: tasks,
   auto: automation,
+  ppl: people,
 };
 
 const PREFIX = "iva_menu:";

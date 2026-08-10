@@ -63,6 +63,33 @@ test("relationship briefing preserves identity ambiguity and evidence", () => {
   assert.match(skill.body, /do not create, modify, or send/iu);
 });
 
+test("person memory separates read-only viewing from explicit safe supplements", () => {
+  const skill = readSkill("person-memory");
+
+  assert.equal(skill.frontmatter.name, "person-memory");
+  assert.match(skill.frontmatter.description, /^Use when /u);
+  assert.match(skill.body, /view mode/iu);
+  assert.match(skill.body, /supplement mode/iu);
+  assert.match(skill.body, /`memory_search`/u);
+  assert.match(skill.body, /`read_file`/u);
+  assert.match(skill.body, /candidate|candidates/iu);
+  assert.match(skill.body, /exactly one|ровно одна/iu);
+  assert.match(skill.body, /(?:three|3) linked supporting cards/iu);
+  assert.match(skill.body, /EXTRACTED/u);
+  assert.match(skill.body, /INFERRED/u);
+  assert.match(skill.body, /AMBIGUOUS/u);
+  assert.match(skill.body, /vault-relative/u);
+  assert.match(skill.body, /telegram:message/u);
+  assert.match(skill.body, /`write_card`/u);
+  assert.match(skill.body, /UPDATE/u);
+  assert.match(skill.body, /SUPERSEDE/u);
+  assert.match(skill.body, /history_entry/u);
+  assert.match(skill.body, /explicit correction|явн.*исправ/iu);
+  assert.match(skill.body, /do not use `write_file`/iu);
+  assert.match(skill.body, /do not create a new contact/iu);
+  assert.match(skill.body, /do not create.*task|do not send/iu);
+});
+
 test("weekly review is honest about coverage and tracks decision arcs", () => {
   const skill = readSkill("weekly-review");
 
@@ -95,6 +122,8 @@ test("Telegram routes chief-of-staff commands through the bounded classifier", (
   assert.match(source, /chief-of-staff-today/u);
   assert.match(source, /relationship-briefing/u);
   assert.match(source, /weekly-review/u);
+  assert.match(source, /personMemoryCommand\(cmdText\)/u);
+  assert.match(source, /person-memory/u);
 });
 
 test("core instructions expose all chief-of-staff workflows", () => {
@@ -109,12 +138,16 @@ test("core instructions expose all chief-of-staff workflows", () => {
     assert.match(source, /chief-of-staff-today/u, relativePath);
     assert.match(source, /relationship-briefing/u, relativePath);
     assert.match(source, /weekly-review/u, relativePath);
+    assert.match(source, /person-memory/u, relativePath);
   }
 
   const rootInstructions = readFileSync(
     new URL("../agent/instructions.md", import.meta.url),
     "utf8",
   );
-  assert.match(rootInstructions, /read-only брифы/u);
+  assert.match(
+    rootInstructions,
+    /обычным ответом через штатный Telegram renderer/u,
+  );
   assert.match(rootInstructions, /НЕ вызывай `send_rich\.py`/u);
 });

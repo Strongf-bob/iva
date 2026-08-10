@@ -6,7 +6,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { chiefOfStaffCommand } from "./i18n.ts";
+import { chiefOfStaffCommand, personMemoryCommand } from "./i18n.ts";
 
 // getLang() читает env/файл на импорте и кэширует язык на ~2с, поэтому каждый сценарий
 // гоняем в СВЕЖЕМ процессе: чистый модуль, чистое окно кэша, свои env/settings.json.
@@ -171,4 +171,40 @@ test("chiefOfStaffCommand classifies only supported exact commands", () => {
   assert.equal(chiefOfStaffCommand("/weekly unexpected"), null);
   assert.equal(chiefOfStaffCommand("ordinary text"), null);
   assert.equal(chiefOfStaffCommand("/briefing"), null);
+});
+
+test("personMemoryCommand accepts one bounded identity or one strict supplement", () => {
+  assert.deepEqual(personMemoryCommand("/person  Александра Петрова "), {
+    mode: "view",
+    name: "Александра Петрова",
+  });
+  assert.deepEqual(
+    personMemoryCommand(
+      `/person_update ${JSON.stringify({
+        name: "Александра Петрова",
+        note: "Предпочитает встречи после обеда",
+      })}`,
+    ),
+    {
+      mode: "supplement",
+      name: "Александра Петрова",
+      note: "Предпочитает встречи после обеда",
+    },
+  );
+  assert.equal(personMemoryCommand("/person"), null);
+  assert.equal(personMemoryCommand(`/person ${"🙂".repeat(161)}`), null);
+  assert.equal(
+    personMemoryCommand(
+      `/person_update ${JSON.stringify({ name: "Alice", note: "x".repeat(2001) })}`,
+    ),
+    null,
+  );
+  assert.equal(
+    personMemoryCommand(
+      `/person_update ${JSON.stringify({ name: "Alice", note: "fact", operation: "SUPERSEDE" })}`,
+    ),
+    null,
+  );
+  assert.equal(personMemoryCommand("/person_update {broken"), null);
+  assert.equal(personMemoryCommand("ordinary text"), null);
 });
