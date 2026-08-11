@@ -68,9 +68,9 @@ The bridge long-polls Telegram, so no public HTTPS, domain or webhook is needed.
 - **Google Workspace** — Gmail drafts (never sends), Calendar events without attendees, Drive files, Sheets, Docs and owner-confirmed Tasks via the `gws` CLI; installed for you, with guided key setup right in the conversation.
 - **Skills & MCP** — drop one file to add a procedure or connect an MCP server; keys stay in `.env`.
 - **Personal Telegram — userbot (beta)** — read and search your _own_ account, not just the bot; connect by phone and Telegram code in a private menu, no terminal. This fork's production deployment enforces a server-side read-only tool allowlist. Rough and buggy — opt-in, **at your own risk**. [Details](docs/userbot.md).
-- **Telegram contact graph (read-only)** — with read-only userbot tools enabled, full accessible text
-  history incrementally builds evidence-backed people, group, project and owner cards. Three chats run
-  in parallel; numeric Telegram IDs link the same person across DMs and groups.
+- **Telegram contact graph (read-only)** — evidence-backed, human-readable profiles keep names,
+  birthdays, current age, city, study, work, contacts, useful facts and relationships together. Normal
+  sync follows recent changes; a resumable private-chat rebuild can cover the full accessible history.
 - **Safe to forward** — forwarded text, captions and voice transcripts pass an injection screen before the model reads them. A flagged message or transcript reaches the model tagged as data rather than as an instruction; for media captions the screen runs but the tag does not travel with it yet.
 - **Token accounting** — every model step is logged; `/usage` reports it for free.
 
@@ -105,7 +105,8 @@ The bot is half of Telegram. The other half is your personal account: connect th
 - **A bounded contact graph** — each sync makes at most one model request per chat using the newest
   complete messages that fit the model context, while three chats can run in parallel. Durable
   per-chat cursors, source-message evidence and a Markdown clarification worksheet support later
-  incremental runs; voice and video-note contents are not analyzed here.
+  incremental runs. A separate backup-backed, oldest-first rebuild can process complete private-chat
+  history without changing these incremental semantics; voice and video-note contents are not analyzed here.
 
 > [!WARNING]
 > Automating a personal account is against Telegram's ToS and can get the account limited or banned. The userbot is opt-in, beta, and used at your own risk — reading is far safer than sending. Details: [docs/userbot.md](docs/userbot.md).

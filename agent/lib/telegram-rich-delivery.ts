@@ -41,7 +41,7 @@ export async function deliverTelegramCompletedMessage(
   telegram: TelegramReplyHandle,
   recordDelivery: (delivered: boolean) => void,
 ): Promise<void> {
-  const guard = scanOutbound(message);
+  const guard = scanOutbound(stripInternalMemoryArtifacts(message));
   if (!guard.clean) {
     console.error(
       "[security] outbound leak redacted:",
@@ -121,3 +121,4 @@ import {
   toTelegramHtmlChunks,
 } from "../../scripts/lib/telegram-format.ts";
 import { scanOutbound } from "./security-gate.js";
+import { stripInternalMemoryArtifacts } from "./contact-memory.js";

@@ -1,18 +1,25 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import {
   acquireLock,
   loadJsonStrict,
   releaseLock,
   saveJsonAtomic,
 } from "../lib/json-store.js";
+import { parsePeopleTaskDocument } from "../lib/people-task-store.js";
 
 // Хранилище задач — простой JSON-файл на диске app-runtime (на VPS переживает рестарты).
 // Путь настраивается через ASSISTANT_DATA_DIR; по умолчанию ./data рядом с процессом.
 const DATA_DIR = process.env.ASSISTANT_DATA_DIR ?? "data";
 const FILE = join(DATA_DIR, "tasks.json");
 const LOCK = `${FILE}.lock`;
+const PEOPLE_FILE = join(
+  process.env.ASSISTANT_VAULT_DIR ?? "vault",
+  "tasks",
+  "people.md",
+);
 
 type Priority = "low" | "med" | "high";
 interface Task {
@@ -114,7 +121,26 @@ async function run({ action, text, id, priority, due, includeDone }: Args) {
     }
     case "list": {
       const items = includeDone ? tasks : tasks.filter((t) => !t.done);
-      return { ok: true, count: items.length, tasks: items };
+      const people = existsSync(PEOPLE_FILE)
+        ? parsePeopleTaskDocument(readFileSync(PEOPLE_FILE, "utf8"))
+        : [];
+      const peopleItems = people
+        .filter((task) => includeDone || task.status === "open")
+        .map((task) => ({
+          text: task.title,
+          person: task.personName,
+          direction: task.direction,
+          due: task.due,
+          done: task.status === "done",
+          cancelled: task.status === "cancelled",
+        }));
+      return {
+        ok: true,
+        count: items.length,
+        tasks: items,
+        peopleCount: peopleItems.length,
+        peopleTasks: peopleItems,
+      };
     }
     case "done": {
       if (!id) return { ok: false, error: "Для done нужен id" };

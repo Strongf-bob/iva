@@ -74,6 +74,16 @@ test("observation predicates are an exact allowlist", () => {
     "preference",
     "owner_mention",
     "external_owner_claim",
+    "city",
+    "timezone",
+    "phone",
+    "email",
+    "education",
+    "employer",
+    "interest",
+    "important_date",
+    "gift_idea",
+    "interesting_fact",
   ]);
   assert.equal(
     ObservationPredicateSchema.safeParse("diagnosis").success,
@@ -122,7 +132,6 @@ test("relationship observations carry only predicate-specific metadata", () => {
   );
   for (const invalid of [
     { value: "--02-31", confidence: "EXTRACTED" },
-    { value: "--05-17", confidence: "INFERRED" },
     { value: "2025-02-29", confidence: "EXTRACTED" },
   ]) {
     assert.equal(
@@ -136,6 +145,17 @@ test("relationship observations carry only predicate-specific metadata", () => {
       false,
     );
   }
+  assert.equal(
+    ObservationSchema.safeParse({
+      ...base,
+      kind: "fact",
+      predicate: "birthday",
+      value: "--05-17",
+      confidence: "AMBIGUOUS",
+      relationship: undefined,
+    }).success,
+    true,
+  );
 });
 
 test("material observations require bounded value or object and evidence", () => {
@@ -166,6 +186,7 @@ test("material observations require bounded value or object and evidence", () =>
   assert.equal(
     ObservationSchema.safeParse({
       ...valid,
+      predicate: "member_of",
       value: undefined,
       objectId: "telegram:chat:-1001",
     }).success,
@@ -175,6 +196,44 @@ test("material observations require bounded value or object and evidence", () =>
     ObservationSchema.safeParse({
       ...valid,
       objectId: "telegram:chat:-1001",
+    }).success,
+    false,
+  );
+});
+
+test("structured background profile values are predicate-validated", () => {
+  const base = {
+    schemaVersion: 1,
+    subjectId: "telegram:user:44",
+    kind: "fact",
+    confidence: "EXTRACTED",
+    contextChatId: -1001,
+    evidence,
+  };
+  for (const [predicate, value] of [
+    ["birthday", "зимой"],
+    ["timezone", "Mars/Olympus"],
+    ["email", "not-an-email"],
+    ["phone", "позвони маме"],
+  ] as const) {
+    assert.equal(
+      ObservationSchema.safeParse({ ...base, predicate, value }).success,
+      false,
+    );
+  }
+  assert.equal(
+    ObservationSchema.safeParse({
+      ...base,
+      predicate: "birthday",
+      value: "2004-03-18",
+    }).success,
+    true,
+  );
+  assert.equal(
+    ObservationSchema.safeParse({
+      ...base,
+      predicate: "birthday",
+      objectId: "telegram:user:55",
     }).success,
     false,
   );

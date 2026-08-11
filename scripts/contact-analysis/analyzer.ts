@@ -38,7 +38,38 @@ export function chunkMessages(
   let current: TelegramMessage[] = [];
   let currentChars = 0;
 
-  for (const message of messages) {
+  const boundedMessages = messages.flatMap((message) => {
+    if (JSON.stringify(message).length <= maxChars) return [message];
+    const markerReserve = "[fragment 999999/999999]\n";
+    const payloadBudget =
+      maxChars - JSON.stringify({ ...message, text: markerReserve }).length;
+    if (payloadBudget <= 0)
+      throw new Error("telegram_analysis_message_metadata_exceeds_context");
+    const parts: string[] = [];
+    let characters: string[] = [];
+    let partChars = 0;
+    for (const character of message.text) {
+      const serializedChars = JSON.stringify(character).length - 2;
+      if (partChars + serializedChars > payloadBudget) {
+        if (characters.length === 0)
+          throw new Error("telegram_analysis_message_metadata_exceeds_context");
+        parts.push(characters.join(""));
+        characters = [];
+        partChars = 0;
+      }
+      characters.push(character);
+      partChars += serializedChars;
+    }
+    if (characters.length > 0) parts.push(characters.join(""));
+    if (parts.length === 0 || parts.length > 999_999)
+      throw new Error("telegram_analysis_message_metadata_exceeds_context");
+    return parts.map((text, index) => ({
+      ...message,
+      text: `[fragment ${index + 1}/${parts.length}]\n${text}`,
+    }));
+  });
+
+  for (const message of boundedMessages) {
     const messageChars = JSON.stringify(message).length;
     if (current.length > 0 && currentChars + messageChars > maxChars) {
       chunks.push(current);

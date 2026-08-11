@@ -2,19 +2,230 @@ import { spawn } from "node:child_process";
 import { mkdir, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { isAbsolute, join, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import "./lib/ts-esm-hooks.ts";
 import type {
   ContactAnalysisReport,
   RunContactAnalysisOptions,
 } from "./contact-analysis/coordinator.ts";
-import { loadState, statePaths } from "./contact-analysis/state.ts";
+import type {
+  PrivateBackfillReport,
+  RunPrivateContactBackfillOptions,
+} from "./contact-analysis/backfill.ts";
+import type { BackfillState } from "./contact-analysis/backfill-state.ts";
+import {
+  loadState,
+  saveState,
+  statePaths,
+  type ContactAnalysisState,
+} from "./contact-analysis/state.ts";
 
 export interface ContactAnalysisStatus {
   accounts: number;
   completedChats: number;
   pendingChats: number;
   failedChats: number;
+}
+
+export interface PrivateBackfillStatus {
+  accounts: number;
+  runs: number;
+  running: number;
+  complete: number;
+  failed: number;
+  rolledBack: number;
+  details: Array<{
+    accountUserId: number;
+    runId: string;
+    phase: string;
+    backupDir: string;
+    completedChats: number;
+    pendingChats: number;
+    failedChats: number;
+    processedMessages: number;
+    jobs: Array<{
+      chatId: number;
+      status: string;
+      committedThrough: number;
+      highWaterId: number;
+      lastErrorCode: string | null;
+    }>;
+  }>;
+}
+
+export async function readPrivateBackfillStatus(
+  root: string,
+  dataDir = process.env.ASSISTANT_DATA_DIR ?? "data",
+): Promise<PrivateBackfillStatus> {
+  const { backfillPaths, loadBackfillState } =
+    await import("./contact-analysis/backfill-state.ts");
+  const resolvedDataDir = isAbsolute(dataDir) ? dataDir : join(root, dataDir);
+  const base = join(resolvedDataDir, "contact-analysis");
+  let entries;
+  try {
+    entries = await readdir(base, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      return {
+        accounts: 0,
+        runs: 0,
+        running: 0,
+        complete: 0,
+        failed: 0,
+        rolledBack: 0,
+        details: [],
+      };
+    throw error;
+  }
+  const states = await Promise.all(
+    entries.flatMap((entry) => {
+      const match = /^telegram-user-([1-9]\d*)$/u.exec(entry.name);
+      return entry.isDirectory() && match
+        ? [
+            loadBackfillState(
+              backfillPaths(root, resolvedDataDir, Number(match[1])),
+            ),
+          ]
+        : [];
+    }),
+  );
+  const present = states.filter((state) => state !== null);
+  return {
+    accounts: present.length,
+    runs: present.length,
+    running: present.filter((state) =>
+      ["inventory", "running"].includes(state.phase),
+    ).length,
+    complete: present.filter((state) => state.phase === "complete").length,
+    failed: present.filter((state) => state.phase === "failed").length,
+    rolledBack: present.filter((state) => state.phase === "rolled_back").length,
+    details: present.map((state) => {
+      const jobs = Object.values(state.jobs);
+      return {
+        accountUserId: state.accountUserId,
+        runId: state.runId,
+        phase: state.phase,
+        backupDir: state.backupDir,
+        completedChats: jobs.filter((job) => job.status === "complete").length,
+        pendingChats: jobs.filter((job) =>
+          ["ready", "running"].includes(job.status),
+        ).length,
+        failedChats: jobs.filter((job) => job.status === "retry").length,
+        processedMessages: jobs.reduce(
+          (total, job) => total + job.processedMessages,
+          0,
+        ),
+        jobs: jobs.map((job) => ({
+          chatId: job.chatId,
+          status: job.status,
+          committedThrough: job.committedThrough,
+          highWaterId: job.highWaterId,
+          lastErrorCode: job.lastErrorCode,
+        })),
+      };
+    }),
+  };
+}
+
+export async function rollbackPrivateBackfill(input: {
+  root: string;
+  dataDir: string;
+  vault: string;
+  backupDir: string;
+  runId: string;
+}): Promise<void> {
+  const {
+    backfillPaths,
+    loadBackfillManifest,
+    loadBackfillState,
+    restoreBackfillBackup,
+    saveBackfillState,
+  } = await import("./contact-analysis/backfill-state.ts");
+  const { runContactMemoryTransaction } =
+    await import("../agent/lib/contact-memory-transaction.ts");
+  const manifest = await loadBackfillManifest(input.backupDir);
+  const paths = backfillPaths(
+    input.root,
+    input.dataDir,
+    manifest.accountUserId,
+  );
+  const state = await loadBackfillState(paths);
+  if (!state) throw new Error("telegram_private_backfill_state_missing");
+  if (
+    state.runId !== input.runId ||
+    state.accountUserId !== manifest.accountUserId ||
+    manifest.runId !== input.runId
+  )
+    throw new Error("telegram_private_backfill_rollback_identity_mismatch");
+  if (state.backupDir !== resolve(input.backupDir))
+    throw new Error("telegram_private_backfill_backup_directory_mismatch");
+  if (state.vaultDir !== resolve(input.vault))
+    throw new Error("telegram_private_backfill_vault_directory_mismatch");
+  if (state.phase === "rolled_back")
+    throw new Error("telegram_private_backfill_already_rolled_back");
+  const files = manifest.files.map((item) => join(input.vault, item.path));
+  const incrementalPaths = statePaths(
+    input.root,
+    input.dataDir,
+    manifest.accountUserId,
+  );
+  const incrementalCurrent = await loadState(incrementalPaths);
+  const incrementalAfter = incrementalStateAfterRollback(
+    incrementalCurrent,
+    state,
+  );
+  await runContactMemoryTransaction(input.vault, files, async () => {
+    await restoreBackfillBackup({
+      root: input.root,
+      vault: input.vault,
+      backupDir: input.backupDir,
+      manifest,
+    });
+  });
+  await saveState(incrementalPaths, incrementalAfter);
+  const candidate = structuredClone(state);
+  candidate.phase = "rolled_back";
+  candidate.incrementalHandoffComplete = false;
+  await saveBackfillState(paths, candidate);
+}
+
+export function incrementalStateAfterRollback(
+  current: ContactAnalysisState,
+  backfill: BackfillState,
+): ContactAnalysisState {
+  const result = structuredClone(current);
+  for (const job of Object.values(backfill.jobs)) {
+    const key = String(job.chatId);
+    const before = backfill.incrementalStateBefore.jobs[key];
+    const present = current.jobs[key];
+    if (!backfill.incrementalHandoffComplete) {
+      if (isDeepStrictEqual(present, before)) continue;
+      if (present && present.committedThrough > (before?.committedThrough ?? 0))
+        continue;
+      throw new Error("telegram_private_backfill_incremental_state_conflict");
+    }
+    if (isDeepStrictEqual(present, before)) continue;
+    const expected = {
+      chatId: job.chatId,
+      kind: "private" as const,
+      title: job.title,
+      committedThrough: job.highWaterId,
+      contextSummary: job.contextSummary,
+      skippedMessages: before?.skippedMessages ?? 0,
+      status: "complete" as const,
+      attempts: before?.attempts ?? 0,
+      lastErrorCode: null,
+    };
+    if (isDeepStrictEqual(present, expected)) {
+      if (before) result.jobs[key] = structuredClone(before);
+      else delete result.jobs[key];
+      continue;
+    }
+    if (present && present.committedThrough > job.highWaterId) continue;
+    throw new Error("telegram_private_backfill_incremental_state_conflict");
+  }
+  return result;
 }
 
 export async function readContactAnalysisStatus(
@@ -67,6 +278,27 @@ async function defaultRunContactAnalysis(
   return runContactAnalysis(options);
 }
 
+async function defaultRunPrivateBackfill(
+  options: RunPrivateContactBackfillOptions,
+): Promise<PrivateBackfillReport> {
+  const { runPrivateContactBackfill } =
+    await import("./contact-analysis/backfill.ts");
+  return runPrivateContactBackfill(options);
+}
+
+function isOwnerEnabled(env: NodeJS.ProcessEnv): boolean {
+  return env.ASSISTANT_MULTI_USER !== "1" || env.ASSISTANT_ROLE === "owner";
+}
+
+function ownerTokenPath(
+  env: NodeJS.ProcessEnv,
+  root: string,
+): string | undefined {
+  return env.ASSISTANT_MULTI_USER === "1" && env.ASSISTANT_ROLE === "owner"
+    ? join(env.ASSISTANT_APP_DIR ?? root, "data", "telegram-userbot.token")
+    : undefined;
+}
+
 async function withAdvisoryPipelineLock<T>(
   lockRoot: string,
   operation: () => Promise<T>,
@@ -111,9 +343,23 @@ export interface ContactAnalysisCommandDependencies {
     root: string,
     dataDir?: string,
   ) => Promise<ContactAnalysisStatus>;
+  readPrivateBackfillStatusImpl?: (
+    root: string,
+    dataDir?: string,
+  ) => Promise<PrivateBackfillStatus>;
+  rollbackPrivateBackfillImpl?: (input: {
+    root: string;
+    dataDir: string;
+    vault: string;
+    backupDir: string;
+    runId: string;
+  }) => Promise<void>;
   runContactAnalysisImpl?: (
     options: RunContactAnalysisOptions,
   ) => Promise<ContactAnalysisReport>;
+  runPrivateBackfillImpl?: (
+    options: RunPrivateContactBackfillOptions,
+  ) => Promise<PrivateBackfillReport>;
   withLockImpl?: WithLock;
 }
 
@@ -126,6 +372,19 @@ function compactReport(report: ContactAnalysisReport): string {
   return `completed=${report.completedChats} pending=${report.pendingChats} failed=${report.failedChats} messages=${report.processedMessages} unsupported_media=${report.unsupportedMedia} skipped_messages=${report.skippedMessages} questions=${report.generatedQuestions}`;
 }
 
+function compactBackfillReport(report: PrivateBackfillReport): string {
+  return `private_chats=${report.privateChats} completed=${report.completedChats} failed=${report.failedChats} messages=${report.processedMessages} skipped_messages=${report.skippedMessages}`;
+}
+
+function optionValue(
+  argv: readonly string[],
+  name: string,
+): string | undefined {
+  const index = argv.indexOf(name);
+  const value = index === -1 ? undefined : argv[index + 1];
+  return value && !value.startsWith("--") ? value : undefined;
+}
+
 export async function runContactAnalysisCommand(
   argv: readonly string[],
   {
@@ -133,7 +392,10 @@ export async function runContactAnalysisCommand(
     root = process.cwd(),
     writeOutput = (line) => console.log(line),
     readStatusImpl = readContactAnalysisStatus,
+    readPrivateBackfillStatusImpl = readPrivateBackfillStatus,
+    rollbackPrivateBackfillImpl = rollbackPrivateBackfill,
     runContactAnalysisImpl = defaultRunContactAnalysis,
+    runPrivateBackfillImpl = defaultRunPrivateBackfill,
     withLockImpl = withAdvisoryPipelineLock,
   }: ContactAnalysisCommandDependencies = {},
 ): Promise<number> {
@@ -149,6 +411,100 @@ export async function runContactAnalysisCommand(
       );
       return 0;
     }
+    if (mode === "rebuild-status") {
+      const status = await readPrivateBackfillStatusImpl(
+        root,
+        env.ASSISTANT_DATA_DIR,
+      );
+      writeOutput(
+        json
+          ? JSON.stringify(status)
+          : `accounts=${status.accounts} runs=${status.runs} running=${status.running} complete=${status.complete} failed=${status.failed} rolled_back=${status.rolledBack}`,
+      );
+      return 0;
+    }
+    if (mode === "rebuild-rollback") {
+      if (env.TELEGRAM_EXPOSED_TOOLS !== "read-only") {
+        writeOutput("telegram_contact_analysis_requires_read_only");
+        return 1;
+      }
+      if (!isOwnerEnabled(env)) {
+        writeOutput("telegram_private_backfill_owner_only");
+        return 1;
+      }
+      const backupDir = optionValue(argv, "--backup-dir");
+      if (!backupDir) {
+        writeOutput("telegram_private_backfill_backup_dir_required");
+        return 1;
+      }
+      if (!isAbsolute(backupDir)) {
+        writeOutput("telegram_private_backfill_backup_dir_absolute");
+        return 1;
+      }
+      const runId = optionValue(argv, "--run-id");
+      if (!runId) {
+        writeOutput("telegram_private_backfill_run_id_required");
+        return 1;
+      }
+      const dataDir = env.ASSISTANT_DATA_DIR ?? "data";
+      const resolvedDataDir = isAbsolute(dataDir)
+        ? dataDir
+        : join(root, dataDir);
+      await withLockImpl(resolvedDataDir, async () => {
+        await rollbackPrivateBackfillImpl({
+          root,
+          dataDir,
+          vault: env.ASSISTANT_VAULT_DIR ?? join(root, "vault"),
+          backupDir,
+          runId,
+        });
+      });
+      writeOutput("telegram_private_backfill_rolled_back");
+      return 0;
+    }
+    if (mode === "rebuild-private") {
+      if (env.TELEGRAM_EXPOSED_TOOLS !== "read-only") {
+        writeOutput("telegram_contact_analysis_requires_read_only");
+        return 1;
+      }
+      if (!isOwnerEnabled(env)) {
+        writeOutput("telegram_private_backfill_owner_only");
+        return 1;
+      }
+      const dryRun = argv.includes("--dry-run");
+      const backupDir = optionValue(argv, "--backup-dir");
+      if (!dryRun && !backupDir) {
+        writeOutput("telegram_private_backfill_backup_dir_required");
+        return 1;
+      }
+      if (backupDir && !isAbsolute(backupDir)) {
+        writeOutput("telegram_private_backfill_backup_dir_absolute");
+        return 1;
+      }
+      const dataDir = env.ASSISTANT_DATA_DIR ?? "data";
+      const resolvedDataDir = isAbsolute(dataDir)
+        ? dataDir
+        : join(root, dataDir);
+      const tokenPath = ownerTokenPath(env, root);
+      const report = await withLockImpl(resolvedDataDir, () =>
+        runPrivateBackfillImpl({
+          root,
+          dataDir,
+          vault: env.ASSISTANT_VAULT_DIR,
+          backupDir:
+            backupDir ?? join(resolvedDataDir, "private-backfill-dry-run"),
+          ...(optionValue(argv, "--run-id")
+            ? { runId: optionValue(argv, "--run-id") }
+            : {}),
+          ...(tokenPath ? { tokenPath } : {}),
+          dryRun,
+        }),
+      );
+      writeOutput(
+        json ? JSON.stringify(report) : compactBackfillReport(report),
+      );
+      return report.failedChats > 0 ? 1 : 0;
+    }
     if (mode !== "sync") {
       writeOutput("contact_analysis_usage_error");
       return 1;
@@ -157,10 +513,7 @@ export async function runContactAnalysisCommand(
       writeOutput("telegram_contact_analysis_requires_read_only");
       return 1;
     }
-    const tokenPath =
-      env.ASSISTANT_MULTI_USER === "1" && env.ASSISTANT_ROLE === "owner"
-        ? join(env.ASSISTANT_APP_DIR ?? root, "data", "telegram-userbot.token")
-        : undefined;
+    const tokenPath = ownerTokenPath(env, root);
     const dataDir = env.ASSISTANT_DATA_DIR ?? "data";
     const resolvedDataDir = isAbsolute(dataDir) ? dataDir : join(root, dataDir);
     const report = await withLockImpl(resolvedDataDir, () =>

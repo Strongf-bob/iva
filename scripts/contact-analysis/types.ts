@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BirthdaySchema } from "../../agent/lib/contact-memory.ts";
 
 const TelegramIntegerSchema = z.int().refine((value) => value !== 0, {
   message: "Telegram ID must be non-zero",
@@ -49,28 +50,49 @@ export const ObservationPredicateSchema = z.enum([
   "preference",
   "owner_mention",
   "external_owner_claim",
+  "city",
+  "timezone",
+  "phone",
+  "email",
+  "education",
+  "employer",
+  "interest",
+  "important_date",
+  "gift_idea",
+  "interesting_fact",
 ]);
 export type ObservationPredicate = z.infer<typeof ObservationPredicateSchema>;
+
+const SCALAR_PREDICATES = new Set<ObservationPredicate>([
+  "display_name",
+  "username",
+  "relationship",
+  "role",
+  "communication_style",
+  "commitment",
+  "preference",
+  "owner_mention",
+  "external_owner_claim",
+  "birthday",
+  "meaningful_contact",
+  "follow_up",
+  "city",
+  "timezone",
+  "phone",
+  "email",
+  "education",
+  "employer",
+  "interest",
+  "important_date",
+  "gift_idea",
+  "interesting_fact",
+]);
 
 export const EvidenceSchema = z.strictObject({
   chatId: TelegramIntegerSchema,
   messageId: MessageIdSchema,
   timestamp: z.iso.datetime({ offset: true }),
 });
-
-function validBirthday(value: string): boolean {
-  const match = /^(?:(\d{4})-|--)(\d{2})-(\d{2})$/u.exec(value);
-  if (!match) return false;
-  const year = Number(match[1] ?? "2000");
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return (
-    date.getUTCFullYear() === year &&
-    date.getUTCMonth() === month - 1 &&
-    date.getUTCDate() === day
-  );
-}
 
 export const ObservationSchema = z
   .strictObject({
@@ -110,6 +132,16 @@ export const ObservationSchema = z
       });
     }
     if (
+      SCALAR_PREDICATES.has(observation.predicate) &&
+      observation.value === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: `${observation.predicate} observation requires value`,
+        path: ["value"],
+      });
+    }
+    if (
       observation.predicate === "external_owner_claim" &&
       observation.assertedById === undefined
     ) {
@@ -129,17 +161,30 @@ export const ObservationSchema = z
         path: ["relationship"],
       });
     }
-    if (
-      observation.predicate === "birthday" &&
-      (observation.value === undefined ||
-        observation.confidence !== "EXTRACTED" ||
-        !validBirthday(observation.value))
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "birthday must be an explicit ISO or yearless date",
-        path: ["value"],
-      });
+    if (observation.value !== undefined) {
+      const checks: Partial<Record<ObservationPredicate, () => boolean>> = {
+        birthday: () => BirthdaySchema.safeParse(observation.value).success,
+        timezone: () => {
+          try {
+            new Intl.DateTimeFormat("en", {
+              timeZone: observation.value,
+            }).format();
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        email: () => z.email().safeParse(observation.value).success,
+        phone: () => /^\+?[0-9][0-9 ()-]{5,24}$/u.test(observation.value!),
+      };
+      const check = checks[observation.predicate];
+      if (check && !check()) {
+        context.addIssue({
+          code: "custom",
+          message: `${observation.predicate} observation has an invalid value`,
+          path: ["value"],
+        });
+      }
     }
   });
 export type Observation = z.infer<typeof ObservationSchema>;

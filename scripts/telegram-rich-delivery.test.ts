@@ -73,7 +73,7 @@ test("completed rich reply sends once and redacts before transport", async () =>
   const secret = `api_key=${"x".repeat(24)}`;
   const result = await deliverWithResponse(
     "accepted",
-    `| Field | Current |\n|---|---|\n| Secret | ${secret} |`,
+    `<!-- iva:interaction:int-1 -->\n| Field | Current |\n|---|---|\n| Secret | ${secret} |\n| Person | [[cards/contacts/telegram-user-42|Alex]] |`,
   );
   assert.equal(result.requests.length, 1);
   assert.equal(result.posts.length, 0);
@@ -81,7 +81,12 @@ test("completed rich reply sends once and redacts before transport", async () =>
   assert.equal(result.requests[0].method, "sendRichMessage");
   const body = JSON.stringify(result.requests[0].body);
   assert.doesNotMatch(body, new RegExp(secret, "u"));
+  assert.doesNotMatch(
+    body,
+    /iva:interaction|telegram-user-42|cards\/contacts/u,
+  );
   assert.match(body, /\[REDACTED\]/u);
+  assert.match(body, /Alex/u);
 });
 
 test("completed rich reply uses HTML only after definitive rejection", async () => {

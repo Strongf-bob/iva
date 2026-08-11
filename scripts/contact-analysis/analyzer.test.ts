@@ -66,7 +66,7 @@ test("chat kinds route to three separate skills", () => {
   }
 });
 
-test("message chunking never samples, splits, or omits a message", () => {
+test("message chunking never samples or omits text and bounds oversized fragments", () => {
   const messages = [message(1), message(2), message(3), message(4)];
   const oneMessageSize = JSON.stringify(messages[0]).length;
   const chunks = chunkMessages(messages, oneMessageSize * 2 + 1);
@@ -78,7 +78,19 @@ test("message chunking never samples, splits, or omits a message", () => {
   assert.ok(chunks.every((chunk) => chunk.length > 0));
 
   const oversize = message(5, "x".repeat(100));
-  assert.deepEqual(chunkMessages([oversize], 10), [[oversize]]);
+  const maxChars = JSON.stringify({ ...oversize, text: "" }).length + 40;
+  const fragments = chunkMessages([oversize], maxChars).flat();
+  assert.ok(fragments.length > 1);
+  assert.ok(fragments.every((fragment) => fragment.id === oversize.id));
+  assert.ok(
+    fragments.every((fragment) => JSON.stringify(fragment).length <= maxChars),
+  );
+  assert.equal(
+    fragments
+      .map((fragment) => fragment.text.replace(/^\[fragment \d+\/\d+\]\n/u, ""))
+      .join(""),
+    oversize.text,
+  );
 });
 
 test("evidence must come from the current page and match provenance", () => {

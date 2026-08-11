@@ -60,6 +60,7 @@ export async function reduceRelationshipObservations({
         .at(-1)!;
 
       if (observation.predicate === "birthday") {
+        if (observation.confidence !== "EXTRACTED") continue;
         if (
           contact.birthday === null ||
           newest.observedAt >= contact.birthday.evidence.observedAt

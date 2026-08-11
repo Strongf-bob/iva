@@ -1,11 +1,33 @@
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/require-await, @typescript-eslint/no-unnecessary-type-assertion -- Node's test runner owns registrations; injected async boundaries intentionally use synchronous fakes. */
 import assert from "node:assert/strict";
-import { access, chmod, mkdir, mkdtemp, open, rm } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { runContactAnalysisCommand } from "./contact-analysis.ts";
+import {
+  incrementalStateAfterRollback,
+  rollbackPrivateBackfill,
+  runContactAnalysisCommand,
+} from "./contact-analysis.ts";
+const {
+  backfillPaths,
+  createBackfillBackup,
+  loadBackfillState,
+  recordBackfillPostimages,
+  saveBackfillState,
+} = await import("./contact-analysis/backfill-state.ts");
+const { loadState, saveState, statePaths } =
+  await import("./contact-analysis/state.ts");
 
 test("status reads local checkpoints without Telegram or model calls", async () => {
   const output: string[] = [];
@@ -170,4 +192,421 @@ test("multi-user owner keeps personal checkpoints but reads the shared userbot t
     vault: "/srv/iva-users/7/vault",
     tokenPath: "/srv/iva/data/telegram-userbot.token",
   });
+});
+
+test("rebuild-private requires read-only mode and an explicit backup for apply", async () => {
+  const outputs: string[] = [];
+  let calls = 0;
+  const dependencies = {
+    root: "/srv/iva",
+    writeOutput: (line: string) => outputs.push(line),
+    withLockImpl: async <T>(_root: string, operation: () => Promise<T>) =>
+      operation(),
+    runPrivateBackfillImpl: async () => {
+      calls++;
+      return {
+        privateChats: 1,
+        completedChats: 1,
+        failedChats: 0,
+        processedMessages: 2,
+        skippedMessages: 0 as const,
+      };
+    },
+  };
+
+  assert.equal(
+    await runContactAnalysisCommand(["rebuild-private"], {
+      ...dependencies,
+      env: {},
+    }),
+    1,
+  );
+  assert.equal(
+    await runContactAnalysisCommand(["rebuild-private"], {
+      ...dependencies,
+      env: { TELEGRAM_EXPOSED_TOOLS: "read-only" },
+    }),
+    1,
+  );
+  assert.equal(
+    await runContactAnalysisCommand(
+      ["rebuild-private", "--backup-dir", "relative-backup"],
+      {
+        ...dependencies,
+        env: { TELEGRAM_EXPOSED_TOOLS: "read-only" },
+      },
+    ),
+    1,
+  );
+  assert.equal(calls, 0);
+  assert.match(
+    outputs.join("\n"),
+    /requires_read_only|backup_dir_required|backup_dir_absolute/u,
+  );
+});
+
+test("rebuild-private dry-run and apply share the lock and pass bounded options", async () => {
+  const received: unknown[] = [];
+  const events: string[] = [];
+  const report = {
+    privateChats: 4,
+    completedChats: 4,
+    failedChats: 0,
+    processedMessages: 20,
+    skippedMessages: 0 as const,
+  };
+  const dependencies = {
+    env: {
+      TELEGRAM_EXPOSED_TOOLS: "read-only",
+      ASSISTANT_DATA_DIR: "/srv/state",
+      ASSISTANT_VAULT_DIR: "/srv/vault",
+    },
+    root: "/srv/iva",
+    writeOutput: () => {},
+    withLockImpl: async <T>(root: string, operation: () => Promise<T>) => {
+      events.push(root);
+      return operation();
+    },
+    runPrivateBackfillImpl: async (options: unknown) => {
+      received.push(options);
+      return report;
+    },
+  };
+
+  assert.equal(
+    await runContactAnalysisCommand(
+      ["rebuild-private", "--dry-run", "--json"],
+      dependencies,
+    ),
+    0,
+  );
+  assert.equal(
+    await runContactAnalysisCommand(
+      [
+        "rebuild-private",
+        "--backup-dir",
+        "/srv/backups/run-1",
+        "--run-id",
+        "run-1",
+      ],
+      dependencies,
+    ),
+    0,
+  );
+  assert.deepEqual(events, ["/srv/state", "/srv/state"]);
+  assert.deepEqual(received, [
+    {
+      root: "/srv/iva",
+      dataDir: "/srv/state",
+      vault: "/srv/vault",
+      backupDir: "/srv/state/private-backfill-dry-run",
+      dryRun: true,
+    },
+    {
+      root: "/srv/iva",
+      dataDir: "/srv/state",
+      vault: "/srv/vault",
+      backupDir: "/srv/backups/run-1",
+      runId: "run-1",
+      dryRun: false,
+    },
+  ]);
+});
+
+test("rebuild-status is local-only and rollback requires an explicit verified backup", async () => {
+  const events: string[] = [];
+  const output: string[] = [];
+  const dependencies = {
+    env: {
+      TELEGRAM_EXPOSED_TOOLS: "read-only",
+      ASSISTANT_DATA_DIR: "/srv/state",
+      ASSISTANT_VAULT_DIR: "/srv/vault",
+    },
+    root: "/srv/iva",
+    writeOutput: (line: string) => output.push(line),
+    readPrivateBackfillStatusImpl: async () => {
+      events.push("status");
+      return {
+        accounts: 1,
+        runs: 1,
+        running: 0,
+        complete: 1,
+        failed: 0,
+        rolledBack: 0,
+        details: [],
+      };
+    },
+    rollbackPrivateBackfillImpl: async (options: unknown) => {
+      events.push(`rollback:${JSON.stringify(options)}`);
+    },
+    withLockImpl: async <T>(root: string, operation: () => Promise<T>) => {
+      events.push(`lock:${root}`);
+      return operation();
+    },
+  };
+
+  assert.equal(
+    await runContactAnalysisCommand(["rebuild-status", "--json"], dependencies),
+    0,
+  );
+  assert.equal(
+    await runContactAnalysisCommand(["rebuild-rollback"], dependencies),
+    1,
+  );
+  assert.equal(
+    await runContactAnalysisCommand(
+      ["rebuild-rollback", "--backup-dir", "/srv/backups/run-1"],
+      dependencies,
+    ),
+    1,
+  );
+  assert.equal(
+    await runContactAnalysisCommand(
+      [
+        "rebuild-rollback",
+        "--backup-dir",
+        "/srv/backups/run-1",
+        "--run-id",
+        "run-1",
+      ],
+      dependencies,
+    ),
+    0,
+  );
+  assert.deepEqual(JSON.parse(output[0]!), {
+    accounts: 1,
+    runs: 1,
+    running: 0,
+    complete: 1,
+    failed: 0,
+    rolledBack: 0,
+    details: [],
+  });
+  assert.match(output.join("\n"), /backup_dir_required/u);
+  assert.match(output.join("\n"), /run_id_required/u);
+  assert.equal(
+    events.at(-1),
+    'rollback:{"root":"/srv/iva","dataDir":"/srv/state","vault":"/srv/vault","backupDir":"/srv/backups/run-1","runId":"run-1"}',
+  );
+  assert.ok(events.includes("lock:/srv/state"));
+});
+
+test("private rebuild and rollback reject non-owner multi-user workers", async () => {
+  let calls = 0;
+  const dependencies = {
+    env: {
+      TELEGRAM_EXPOSED_TOOLS: "read-only",
+      ASSISTANT_MULTI_USER: "1",
+      ASSISTANT_ROLE: "member",
+    },
+    root: "/srv/iva",
+    writeOutput: () => {},
+    runPrivateBackfillImpl: async () => {
+      calls++;
+      throw new Error("must not run");
+    },
+    rollbackPrivateBackfillImpl: async () => {
+      calls++;
+    },
+  };
+  assert.equal(
+    await runContactAnalysisCommand(
+      ["rebuild-private", "--backup-dir", "/srv/backups/run-1"],
+      dependencies,
+    ),
+    1,
+  );
+  assert.equal(
+    await runContactAnalysisCommand(
+      [
+        "rebuild-rollback",
+        "--backup-dir",
+        "/srv/backups/run-1",
+        "--run-id",
+        "run-1",
+      ],
+      dependencies,
+    ),
+    1,
+  );
+  assert.equal(calls, 0);
+});
+
+test("rollback validates identity before mutation and restores vault plus incremental cursor", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "iva-backfill-rollback-"));
+  const root = join(workspace, "app");
+  const vault = join(root, "vault");
+  const backupDir = join(workspace, "backups", "run-1");
+  const card = join(vault, "cards", "contacts", "telegram-user-42.md");
+  await mkdir(join(vault, "cards", "contacts"), { recursive: true });
+  await writeFile(card, "before\n");
+
+  const incrementalPaths = statePaths(root, "data", 7);
+  const incrementalBefore = {
+    schemaVersion: 1 as const,
+    accountUserId: 7,
+    jobs: {},
+  };
+  await saveState(incrementalPaths, incrementalBefore);
+  const manifest = await createBackfillBackup({
+    root,
+    vault,
+    backupDir,
+    accountUserId: 7,
+    runId: "run-1",
+    files: [card],
+  });
+  await writeFile(card, "after\n");
+  await recordBackfillPostimages({
+    root,
+    vault,
+    backupDir,
+    manifest,
+    files: [card],
+  });
+  const backfillStatePaths = backfillPaths(root, "data", 7);
+  await saveBackfillState(backfillStatePaths, {
+    schemaVersion: 1,
+    accountUserId: 7,
+    runId: "run-1",
+    phase: "complete",
+    vaultDir: vault,
+    backupDir,
+    backupReady: true,
+    inventoryComplete: true,
+    incrementalHandoffComplete: true,
+    incrementalStateBefore: incrementalBefore,
+    inventory: [{ id: 42, title: "Person", username: null }],
+    jobs: {
+      "42": {
+        chatId: 42,
+        title: "Person",
+        username: null,
+        highWaterId: 2,
+        committedThrough: 2,
+        contextSummary: "done",
+        processedMessages: 2,
+        pending: null,
+        status: "complete",
+        lastErrorCode: null,
+      },
+    },
+  });
+  await saveState(incrementalPaths, {
+    schemaVersion: 1,
+    accountUserId: 7,
+    jobs: {
+      "42": {
+        chatId: 42,
+        kind: "private",
+        title: "Person",
+        committedThrough: 2,
+        contextSummary: "done",
+        skippedMessages: 0,
+        status: "complete",
+        attempts: 0,
+        lastErrorCode: null,
+      },
+    },
+  });
+
+  await assert.rejects(
+    rollbackPrivateBackfill({
+      root,
+      dataDir: "data",
+      vault,
+      backupDir,
+      runId: "foreign-run",
+    }),
+    /identity_mismatch/u,
+  );
+  assert.equal(await readFile(card, "utf8"), "after\n");
+
+  await assert.rejects(
+    rollbackPrivateBackfill({
+      root,
+      dataDir: "data",
+      vault: join(root, "other-vault"),
+      backupDir,
+      runId: "run-1",
+    }),
+    /vault_directory_mismatch/u,
+  );
+  assert.equal(await readFile(card, "utf8"), "after\n");
+
+  await rollbackPrivateBackfill({
+    root,
+    dataDir: "data",
+    vault,
+    backupDir,
+    runId: "run-1",
+  });
+  assert.equal(await readFile(card, "utf8"), "before\n");
+  assert.deepEqual(await loadState(incrementalPaths), incrementalBefore);
+  assert.equal(
+    (await loadBackfillState(backfillStatePaths))?.phase,
+    "rolled_back",
+  );
+});
+
+test("rollback preserves incremental progress newer than the frozen high-water", () => {
+  const before = {
+    schemaVersion: 1 as const,
+    accountUserId: 7,
+    jobs: {},
+  };
+  const current = {
+    schemaVersion: 1 as const,
+    accountUserId: 7,
+    jobs: {
+      "42": {
+        chatId: 42,
+        kind: "private" as const,
+        title: "Person",
+        committedThrough: 5,
+        contextSummary: "newer sync",
+        skippedMessages: 0,
+        status: "complete" as const,
+        attempts: 0,
+        lastErrorCode: null,
+      },
+    },
+  };
+  const backfill = {
+    schemaVersion: 1 as const,
+    accountUserId: 7,
+    runId: "run-1",
+    phase: "complete" as const,
+    vaultDir: "/srv/vault",
+    backupDir: "/srv/backups/run-1",
+    backupReady: true,
+    inventoryComplete: true,
+    incrementalHandoffComplete: true,
+    incrementalStateBefore: before,
+    inventory: [{ id: 42, title: "Person", username: null }],
+    jobs: {
+      "42": {
+        chatId: 42,
+        title: "Person",
+        username: null,
+        highWaterId: 2,
+        committedThrough: 2,
+        contextSummary: "backfill",
+        processedMessages: 2,
+        pending: null,
+        status: "complete" as const,
+        lastErrorCode: null,
+      },
+    },
+  };
+
+  assert.deepEqual(incrementalStateAfterRollback(before, backfill), before);
+  assert.deepEqual(incrementalStateAfterRollback(current, backfill), current);
+  const divergent = structuredClone(current);
+  divergent.jobs["42"].committedThrough = 2;
+  divergent.jobs["42"].contextSummary = "owner edit";
+  assert.throws(
+    () => incrementalStateAfterRollback(divergent, backfill),
+    /incremental_state_conflict/u,
+  );
 });

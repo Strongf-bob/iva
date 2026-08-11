@@ -14,7 +14,8 @@ import type {
   TelegramMessage,
 } from "./types.ts";
 
-const { runContactAnalysis, runWorkerPool } = await import("./coordinator.ts");
+const { orderDialogsForAnalysis, runContactAnalysis, runWorkerPool } =
+  await import("./coordinator.ts");
 
 function dialog(id: number): TelegramDialog {
   return {
@@ -92,6 +93,32 @@ test("fixed worker pool preserves result order with bounded concurrency", async 
       result.status === "fulfilled" ? result.value : "failed",
     ),
     [2, 4, 6, 8, 10],
+  );
+});
+
+test("chat analysis prioritizes people, then shared chats, channels, and bots", () => {
+  const dialogs: TelegramDialog[] = [
+    { id: -4, kind: "channel", title: "Channel", username: null },
+    { id: 8, kind: "bot", title: "Bot", username: "bot" },
+    { id: -2, kind: "group", title: "Group", username: null },
+    { id: 9, kind: "private", title: "Person 9", username: null },
+    { id: 3, kind: "private", title: "Person 3", username: null },
+  ];
+
+  assert.deepEqual(
+    orderDialogsForAnalysis(dialogs).map((item) => [item.kind, item.id]),
+    [
+      ["private", 3],
+      ["private", 9],
+      ["group", -2],
+      ["channel", -4],
+      ["bot", 8],
+    ],
+  );
+  assert.deepEqual(
+    dialogs.map((item) => item.id),
+    [-4, 8, -2, 9, 3],
+    "ordering must not mutate the inventory",
   );
 });
 

@@ -10,9 +10,9 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   statSync,
   symlinkSync,
-  utimesSync,
   writeFileSync,
   chmodSync,
 } from "node:fs";
@@ -103,10 +103,11 @@ test("card-лок: запоздавший release вытесненного де�
   const dir = mkdtempSync(join(tmpdir(), "cardlock-"));
   const file = join(dir, "x.md");
   const staleRelease = cardLock(file);
-  // Имитация staleness-отбора: лок «протух», преемник его отобрал и держит свой.
-  const past = new Date(Date.now() - 60_000);
-  utimesSync(`${file}.lock`, past, past);
-  const successorRelease = cardLock(file); // отобрал протухший, записал СВОЙ токен
+  // Имитируем уже завершённое вытеснение: живого владельца нельзя
+  // вытеснять только по возрасту lock, но его запоздавший release всё ещё
+  // может прийти после того, как другой процесс уже записал свой токен.
+  rmSync(`${file}.lock`);
+  const successorRelease = cardLock(file);
   staleRelease(); // no-op: на диске чужой токен
   assert.ok(existsSync(`${file}.lock`), "лок преемника обязан остаться");
   successorRelease();

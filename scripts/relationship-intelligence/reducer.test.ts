@@ -39,6 +39,13 @@ test("Telegram observations become pending commitments and contact activity", as
       relationship: undefined,
     }),
     observation({
+      kind: "fact",
+      predicate: "birthday",
+      value: "--05-18",
+      confidence: "AMBIGUOUS",
+      relationship: undefined,
+    }),
+    observation({
       kind: "behavior",
       predicate: "meaningful_contact",
       value: "Discussed launch",

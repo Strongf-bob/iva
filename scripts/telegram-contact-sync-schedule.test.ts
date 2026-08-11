@@ -55,7 +55,7 @@ test("contact analysis schedule uses the shared lock, status and bounded guards"
         argv: ["scripts/contact-analysis.ts", "sync"],
         root,
         nodeBin: process.execPath,
-        lockPath: join(root, ".contact-analysis.lock"),
+        lockPath: join(root, "data", ".contact-analysis.lock"),
         statusPath: join(root, "data", "rollup-status.json"),
         timeoutMs: 24 * 60 * 60 * 1000,
         guardMs: 10 * 60 * 1000,
