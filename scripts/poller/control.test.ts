@@ -7,7 +7,14 @@ import {
   controlCallbackAllowed,
   controlCommandAllowed,
   handleAwaitNonText,
+  resolveControlRoutes,
 } from "./control.ts";
+import {
+  defaultUserLimits,
+  parseTelegramUserId,
+  type UserRegistry,
+} from "../lib/user-registry.ts";
+import type { TelegramQueueUpdate } from "../lib/telegram-queue.ts";
 
 type Event = string | [string, string, number | undefined, string | undefined];
 type CaptureMessage = { message_id?: number };
@@ -56,6 +63,39 @@ test("ordinary user callback gate admits every visible personal menu route", () 
     assert.equal(controlCallbackAllowed(callback, "user"), false, callback);
     assert.equal(controlCallbackAllowed(callback, "owner"), true, callback);
   }
+});
+
+test("menu delivery uses the trusted container route for the legacy owner", () => {
+  const ownerId = parseTelegramUserId("123")!;
+  const registry: UserRegistry = {
+    schema: "iva-users/v1",
+    revision: 1,
+    users: [
+      {
+        id: ownerId,
+        role: "owner",
+        status: "active",
+        port: 8723,
+        limits: defaultUserLimits(),
+        createdAt: "2026-08-11T00:00:00.000Z",
+      },
+    ],
+  };
+  const update: TelegramQueueUpdate = {
+    update_id: 1,
+    message: {
+      message_id: 2,
+      chat: { id: 123, type: "private" },
+      from: { id: 123, is_bot: false },
+      text: "menu action",
+    },
+  };
+
+  assert.deepEqual(resolveControlRoutes(update, registry, "http://iva:8723"), {
+    webhook: "http://iva:8723/eve/v1/telegram",
+    acceptance: "http://iva:8723/eve/v1/telegram/accepted",
+    reset: "http://iva:8723/eve/v1/telegram/reset",
+  });
 });
 
 test("commitment callbacks are consumed before model-facing callback routes", () => {
