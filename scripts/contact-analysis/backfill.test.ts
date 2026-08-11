@@ -108,7 +108,6 @@ test("a failed durable reduction keeps the cursor and resumes the same page once
     dataDir: "data",
     vault: join(root, "vault"),
     backupDir: join(root, "backup"),
-    runId: "resume-run",
     client: {
       account: async () => ({
         userId: 7,

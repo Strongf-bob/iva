@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import {
   analyzePage,
@@ -22,6 +23,7 @@ import {
 } from "./question-workbook.ts";
 import {
   reduceBatch,
+  contactCardPath,
   type ReduceBatchInput,
   type ReduceResult,
 } from "./reducer.ts";
@@ -52,6 +54,7 @@ export interface RunPrivateContactBackfillOptions {
   vault?: string;
   backupDir: string;
   backupFiles?: readonly string[];
+  dryRun?: boolean;
   runId?: string;
   client?: TelegramAnalysisClient;
   analyzePageImpl?: (input: AnalyzePageInput) => Promise<AnalysisPage>;
@@ -112,7 +115,8 @@ export async function runPrivateContactBackfill({
   vault = process.env.ASSISTANT_VAULT_DIR ?? `${root}/vault`,
   backupDir,
   backupFiles = [],
-  runId = randomUUID(),
+  dryRun = false,
+  runId: requestedRunId,
   client = createTelegramAnalysisClient({ root, dataDir, tokenPath }),
   analyzePageImpl = analyzePage,
   reduceBatchImpl = reduceBatch,
@@ -123,12 +127,22 @@ export async function runPrivateContactBackfill({
   if (!client.messages)
     throw new Error("telegram_private_backfill_messages_unavailable");
   const account = await client.account();
+  const dialogs = await inventoryPrivateDialogs(client);
+  if (dryRun) {
+    for (const dialog of dialogs) await client.messageWindow(dialog.id, 0, 1);
+    return {
+      privateChats: dialogs.length,
+      completedChats: 0,
+      failedChats: 0,
+      processedMessages: 0,
+      skippedMessages: 0,
+    };
+  }
   const paths = backfillPaths(root, dataDir, account.userId);
   const existing = await loadBackfillState(paths);
+  const runId = requestedRunId ?? existing?.runId ?? randomUUID();
   if (existing && existing.runId !== runId && existing.phase !== "complete")
     throw new Error("telegram_private_backfill_already_active");
-
-  const dialogs = await inventoryPrivateDialogs(client);
   const state: BackfillState =
     existing?.runId === runId
       ? existing
@@ -161,7 +175,14 @@ export async function runPrivateContactBackfill({
       backupDir,
       accountUserId: account.userId,
       runId,
-      files: backupFiles,
+      files:
+        backupFiles.length > 0
+          ? backupFiles
+          : [
+              ...dialogs.map((dialog) => contactCardPath(vault, dialog.id)),
+              join(vault, "tasks", "people.md"),
+              join(vault, "inbox", "contact-analysis-questions.md"),
+            ],
     });
   }
   state.phase = "running";

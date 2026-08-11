@@ -171,3 +171,170 @@ test("multi-user owner keeps personal checkpoints but reads the shared userbot t
     tokenPath: "/srv/iva/data/telegram-userbot.token",
   });
 });
+
+test("rebuild-private requires read-only mode and an explicit backup for apply", async () => {
+  const outputs: string[] = [];
+  let calls = 0;
+  const dependencies = {
+    root: "/srv/iva",
+    writeOutput: (line: string) => outputs.push(line),
+    withLockImpl: async <T>(_root: string, operation: () => Promise<T>) =>
+      operation(),
+    runPrivateBackfillImpl: async () => {
+      calls++;
+      return {
+        privateChats: 1,
+        completedChats: 1,
+        failedChats: 0,
+        processedMessages: 2,
+        skippedMessages: 0 as const,
+      };
+    },
+  };
+
+  assert.equal(
+    await runContactAnalysisCommand(["rebuild-private"], {
+      ...dependencies,
+      env: {},
+    }),
+    1,
+  );
+  assert.equal(
+    await runContactAnalysisCommand(["rebuild-private"], {
+      ...dependencies,
+      env: { TELEGRAM_EXPOSED_TOOLS: "read-only" },
+    }),
+    1,
+  );
+  assert.equal(
+    await runContactAnalysisCommand(
+      ["rebuild-private", "--backup-dir", "relative-backup"],
+      {
+        ...dependencies,
+        env: { TELEGRAM_EXPOSED_TOOLS: "read-only" },
+      },
+    ),
+    1,
+  );
+  assert.equal(calls, 0);
+  assert.match(
+    outputs.join("\n"),
+    /requires_read_only|backup_dir_required|backup_dir_absolute/u,
+  );
+});
+
+test("rebuild-private dry-run and apply share the lock and pass bounded options", async () => {
+  const received: unknown[] = [];
+  const events: string[] = [];
+  const report = {
+    privateChats: 4,
+    completedChats: 4,
+    failedChats: 0,
+    processedMessages: 20,
+    skippedMessages: 0 as const,
+  };
+  const dependencies = {
+    env: {
+      TELEGRAM_EXPOSED_TOOLS: "read-only",
+      ASSISTANT_DATA_DIR: "/srv/state",
+      ASSISTANT_VAULT_DIR: "/srv/vault",
+    },
+    root: "/srv/iva",
+    writeOutput: () => {},
+    withLockImpl: async <T>(root: string, operation: () => Promise<T>) => {
+      events.push(root);
+      return operation();
+    },
+    runPrivateBackfillImpl: async (options: unknown) => {
+      received.push(options);
+      return report;
+    },
+  };
+
+  assert.equal(
+    await runContactAnalysisCommand(
+      ["rebuild-private", "--dry-run", "--json"],
+      dependencies,
+    ),
+    0,
+  );
+  assert.equal(
+    await runContactAnalysisCommand(
+      [
+        "rebuild-private",
+        "--backup-dir",
+        "/srv/backups/run-1",
+        "--run-id",
+        "run-1",
+      ],
+      dependencies,
+    ),
+    0,
+  );
+  assert.deepEqual(events, ["/srv/state", "/srv/state"]);
+  assert.deepEqual(received, [
+    {
+      root: "/srv/iva",
+      dataDir: "/srv/state",
+      vault: "/srv/vault",
+      backupDir: "/srv/state/private-backfill-dry-run",
+      dryRun: true,
+    },
+    {
+      root: "/srv/iva",
+      dataDir: "/srv/state",
+      vault: "/srv/vault",
+      backupDir: "/srv/backups/run-1",
+      runId: "run-1",
+      dryRun: false,
+    },
+  ]);
+});
+
+test("rebuild-status is local-only and rollback requires an explicit verified backup", async () => {
+  const events: string[] = [];
+  const output: string[] = [];
+  const dependencies = {
+    env: {
+      ASSISTANT_DATA_DIR: "/srv/state",
+      ASSISTANT_VAULT_DIR: "/srv/vault",
+    },
+    root: "/srv/iva",
+    writeOutput: (line: string) => output.push(line),
+    readPrivateBackfillStatusImpl: async () => {
+      events.push("status");
+      return { accounts: 1, runs: 1, running: 0, complete: 1, failed: 0 };
+    },
+    rollbackPrivateBackfillImpl: async (options: unknown) => {
+      events.push(`rollback:${JSON.stringify(options)}`);
+    },
+  };
+
+  assert.equal(
+    await runContactAnalysisCommand(["rebuild-status", "--json"], dependencies),
+    0,
+  );
+  assert.equal(
+    await runContactAnalysisCommand(["rebuild-rollback"], dependencies),
+    1,
+  );
+  assert.equal(
+    await runContactAnalysisCommand(
+      ["rebuild-rollback", "--backup-dir", "/srv/backups/run-1"],
+      dependencies,
+    ),
+    0,
+  );
+  assert.deepEqual(JSON.parse(output[0]!), {
+    accounts: 1,
+    runs: 1,
+    running: 0,
+    complete: 1,
+    failed: 0,
+  });
+  assert.match(output.join("\n"), /backup_dir_required/u);
+  assert.equal(
+    events.at(-1),
+    'rollback:{"root":"/srv/iva","dataDir":"/srv/state","vault":"/srv/vault","backupDir":"/srv/backups/run-1"}',
+  );
+});

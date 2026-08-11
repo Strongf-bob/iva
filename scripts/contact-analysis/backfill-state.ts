@@ -190,6 +190,18 @@ export async function verifyBackfillBackup(input: {
   }
 }
 
+export async function loadBackfillManifest(
+  backupDir: string,
+): Promise<BackfillManifest> {
+  const raw = await loadJsonStrict<unknown>(
+    join(backupDir, "manifest.json"),
+    null,
+  );
+  if (raw === null)
+    throw new Error("telegram_private_backfill_manifest_missing");
+  return BackfillManifestSchema.parse(raw);
+}
+
 export async function restoreBackfillBackup(input: {
   vault: string;
   backupDir: string;
