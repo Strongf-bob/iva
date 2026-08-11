@@ -16,6 +16,9 @@ import test from "node:test";
 
 import "../lib/ts-esm-hooks.ts";
 
+const { runContactMemoryTransaction } =
+  await import("../../agent/lib/contact-memory-transaction.ts");
+
 const {
   BackfillStateSchema,
   backfillPaths,
@@ -36,11 +39,13 @@ test("backfill state is account-scoped, atomic, and private", async () => {
     accountUserId: 7,
     runId: "run-20260811",
     phase: "running",
+    vaultDir: "/srv/iva/vault",
     backupDir: "/srv/backups/run-20260811",
     backupReady: true,
     inventoryComplete: true,
     incrementalHandoffComplete: false,
     incrementalStateBefore: { schemaVersion: 1, accountUserId: 7, jobs: {} },
+    inventory: [{ id: 42, title: "Person", username: null }],
     jobs: {
       "42": {
         chatId: 42,
@@ -189,10 +194,64 @@ test("backup expands before dynamic writes and rollback refuses later owner edit
   await writeFile(dynamic, "owner edit\n");
 
   await assert.rejects(
+    ensureBackfillBackupFiles({
+      root,
+      vault,
+      backupDir,
+      manifest,
+      files: [dynamic],
+    }),
+    /concurrent_edit/u,
+  );
+
+  await assert.rejects(
     restoreBackfillBackup({ root, vault, backupDir, manifest }),
     /rollback conflict/u,
   );
   assert.equal(await readFile(dynamic, "utf8"), "owner edit\n");
+});
+
+test("resume repairs a postimage left ahead of a recovered vault journal", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "iva-backfill-recovery-"));
+  const root = join(workspace, "app");
+  const vault = join(root, "vault");
+  const backupDir = join(workspace, "backups", "run-1");
+  const card = join(vault, "cards", "contacts", "telegram-user-42.md");
+  await mkdir(join(vault, "cards", "contacts"), { recursive: true });
+  await writeFile(card, "before\n");
+  let manifest = await createBackfillBackup({
+    root,
+    vault,
+    backupDir,
+    accountUserId: 7,
+    runId: "run-1",
+    files: [card],
+  });
+
+  await assert.rejects(
+    runContactMemoryTransaction(vault, [card], async () => {
+      await writeFile(card, "after\n");
+      manifest = await recordBackfillPostimages({
+        root,
+        vault,
+        backupDir,
+        manifest,
+        files: [card],
+      });
+      throw new Error("simulated_crash_before_journal_commit");
+    }),
+    /simulated_crash/u,
+  );
+  assert.equal(await readFile(card, "utf8"), "before\n");
+
+  manifest = await ensureBackfillBackupFiles({
+    root,
+    vault,
+    backupDir,
+    manifest,
+    files: [card],
+  });
+  assert.equal(manifest.files[0]?.mutationRecorded, false);
 });
 
 test("backup rejects tracked and symlink-redirected destinations", async () => {
@@ -238,6 +297,7 @@ test("state schema rejects mismatched job cursors and manifest identity", () => 
         accountUserId: 7,
         runId: "run-1",
         phase: "running",
+        vaultDir: "/srv/iva/vault",
         backupDir: "/srv/backups/run-1",
         backupReady: false,
         inventoryComplete: true,
@@ -247,6 +307,7 @@ test("state schema rejects mismatched job cursors and manifest identity", () => 
           accountUserId: 7,
           jobs: {},
         },
+        inventory: [{ id: 42, title: "Wrong", username: null }],
         jobs: {
           "42": {
             chatId: 43,

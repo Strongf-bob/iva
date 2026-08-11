@@ -30,6 +30,12 @@ const JobSchema = z.strictObject({
   lastErrorCode: z.string().min(1).max(100).nullable(),
 });
 
+const FrozenDialogSchema = z.strictObject({
+  id: z.int().positive(),
+  title: z.string().min(1).max(500),
+  username: z.string().min(1).max(64).nullable(),
+});
+
 const BackupFileSchema = z.strictObject({
   path: z.string().min(1),
   existed: z.boolean(),
@@ -70,14 +76,27 @@ export const BackfillStateSchema = z
       "failed",
       "rolled_back",
     ]),
+    vaultDir: z.string().min(1).refine(isAbsolute),
     backupDir: z.string().min(1).refine(isAbsolute),
     backupReady: z.boolean(),
     inventoryComplete: z.boolean(),
     incrementalHandoffComplete: z.boolean(),
     incrementalStateBefore: ContactAnalysisStateSchema,
+    inventory: z.array(FrozenDialogSchema),
     jobs: z.record(z.string().regex(/^[1-9]\d*$/u), JobSchema),
   })
   .superRefine((state, context) => {
+    const inventoryIds = state.inventory.map((dialog) => String(dialog.id));
+    const inventoryById = new Map(
+      state.inventory.map((dialog) => [String(dialog.id), dialog]),
+    );
+    if (new Set(inventoryIds).size !== inventoryIds.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["inventory"],
+        message: "frozen inventory contains duplicate dialogs",
+      });
+    }
     for (const [key, job] of Object.entries(state.jobs)) {
       if (key !== String(job.chatId)) {
         context.addIssue({
@@ -93,6 +112,18 @@ export const BackfillStateSchema = z
           message: "job cursor exceeds high-water",
         });
       }
+      const frozen = inventoryById.get(key);
+      if (
+        !frozen ||
+        frozen.title !== job.title ||
+        frozen.username !== job.username
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["jobs", key],
+          message: "job does not match frozen inventory",
+        });
+      }
     }
     if (state.backupReady && !state.inventoryComplete) {
       context.addIssue({
@@ -100,6 +131,16 @@ export const BackfillStateSchema = z
         path: ["backupReady"],
         message: "backup cannot precede completed inventory",
       });
+    }
+    if (state.inventoryComplete) {
+      const jobIds = Object.keys(state.jobs);
+      if (inventoryIds.sort().join("\n") !== jobIds.sort().join("\n")) {
+        context.addIssue({
+          code: "custom",
+          path: ["inventory"],
+          message: "frozen inventory does not match jobs",
+        });
+      }
     }
     if (state.phase === "complete") {
       if (
@@ -292,11 +333,31 @@ export async function ensureBackfillBackupFiles(input: {
   const manifest = structuredClone(
     BackfillManifestSchema.parse(input.manifest),
   );
-  const known = new Set(manifest.files.map((item) => item.path));
+  const known = new Map(manifest.files.map((item) => [item.path, item]));
   for (const file of [...new Set(input.files)].sort()) {
     const path = assertContactMemoryPath(input.vault, file);
-    if (known.has(path)) continue;
     const snapshot = await fileSnapshot(file);
+    const existing = known.get(path);
+    if (existing) {
+      const matchesBefore = matchesSnapshot(snapshot, existing);
+      const matchesAfter =
+        existing.mutationRecorded &&
+        existing.postExisted !== null &&
+        matchesSnapshot(snapshot, {
+          existed: existing.postExisted,
+          sha256: existing.postSha256,
+          size: existing.postSize,
+        });
+      if (!matchesBefore && !matchesAfter)
+        throw new Error("telegram_private_backfill_concurrent_edit");
+      if (matchesBefore && existing.mutationRecorded) {
+        existing.mutationRecorded = false;
+        existing.postExisted = null;
+        existing.postSha256 = null;
+        existing.postSize = null;
+      }
+      continue;
+    }
     const backupPath = `files/${String(manifest.files.length).padStart(6, "0")}.bin`;
     if (snapshot.existed) {
       const destination = await safeBackupFile(
@@ -317,7 +378,7 @@ export async function ensureBackfillBackupFiles(input: {
       postSha256: null,
       postSize: null,
     });
-    known.add(path);
+    known.set(path, manifest.files.at(-1)!);
   }
   await persistManifest(input.backupDir, manifest);
   return manifest;

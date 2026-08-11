@@ -2,10 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
-import {
-  runContactMemoryTransaction,
-  withContactMemoryLockAsync,
-} from "../../agent/lib/contact-memory-transaction.ts";
+import { runContactMemoryTransaction } from "../../agent/lib/contact-memory-transaction.ts";
 import {
   analyzePage,
   chunkMessages,
@@ -194,8 +191,8 @@ export async function runPrivateContactBackfill({
   if (!client.messages)
     throw new Error("telegram_private_backfill_messages_unavailable");
   const account = await withTransientRetries(() => client.account(), sleepImpl);
-  const dialogs = await inventoryPrivateDialogs(client, sleepImpl);
   if (dryRun) {
+    const dialogs = await inventoryPrivateDialogs(client, sleepImpl);
     for (const dialog of dialogs)
       await withTransientRetries(
         () => client.messageWindow(dialog.id, 0, 1),
@@ -210,7 +207,8 @@ export async function runPrivateContactBackfill({
     };
   }
 
-  return withContactMemoryLockAsync(vault, async () => {
+  {
+    const normalizedVault = resolve(vault);
     const normalizedBackupDir = resolve(backupDir);
     const paths = backfillPaths(root, dataDir, account.userId);
     const incrementalPaths = statePaths(
@@ -242,19 +240,31 @@ export async function runPrivateContactBackfill({
         accountUserId: account.userId,
         runId,
         phase: "inventory",
+        vaultDir: normalizedVault,
         backupDir: normalizedBackupDir,
         backupReady: false,
         inventoryComplete: false,
         incrementalHandoffComplete: false,
         incrementalStateBefore,
+        inventory: [],
         jobs: {},
       };
+      const dialogs = await inventoryPrivateDialogs(client, sleepImpl);
+      state.inventory = dialogs.map(({ id, title, username }) => ({
+        id,
+        title,
+        username,
+      }));
+      await saveBackfillState(paths, state);
     }
+    if (state.vaultDir !== normalizedVault)
+      throw new Error("telegram_private_backfill_vault_directory_mismatch");
     if (state.backupDir !== normalizedBackupDir)
       throw new Error("telegram_private_backfill_backup_directory_mismatch");
 
     if (!state.inventoryComplete) {
-      for (const dialog of dialogs) {
+      for (const frozen of state.inventory) {
+        const dialog: TelegramDialog = { ...frozen, kind: "private" };
         if (state.jobs[String(dialog.id)]) continue;
         const highWater = await withTransientRetries(
           () => client.messageWindow(dialog.id, 0, 1),
@@ -312,20 +322,15 @@ export async function runPrivateContactBackfill({
         runId,
         files: [],
       });
-      await runContactMemoryTransaction(
-        vault,
-        [...initialFiles],
-        async () => {
-          manifest = await ensureBackfillBackupFiles({
-            root,
-            vault,
-            backupDir: state.backupDir,
-            manifest,
-            files: initialFiles,
-          });
-        },
-        { lockHeld: true },
-      );
+      await runContactMemoryTransaction(vault, [...initialFiles], async () => {
+        manifest = await ensureBackfillBackupFiles({
+          root,
+          vault,
+          backupDir: state.backupDir,
+          manifest,
+          files: initialFiles,
+        });
+      });
       state.backupReady = true;
       state.phase = "running";
       await saveBackfillState(paths, state);
@@ -350,39 +355,34 @@ export async function runPrivateContactBackfill({
           workbookFile,
         ]),
       ].sort();
-      await runContactMemoryTransaction(
-        vault,
-        files,
-        async () => {
-          manifest = await ensureBackfillBackupFiles({
-            root,
+      await runContactMemoryTransaction(vault, files, async () => {
+        manifest = await ensureBackfillBackupFiles({
+          root,
+          vault,
+          backupDir: state.backupDir,
+          manifest,
+          files,
+        });
+        for (const graphInput of graphInputs) {
+          await reduceBatchImpl({ ...graphInput, transactionLocked: true });
+          await updateQuestionWorkbookImpl({
             vault,
-            backupDir: state.backupDir,
-            manifest,
-            files,
+            dialog,
+            questions: graphInput.batch.questions ?? [],
           });
-          for (const graphInput of graphInputs) {
-            await reduceBatchImpl({ ...graphInput, transactionLocked: true });
-            await updateQuestionWorkbookImpl({
-              vault,
-              dialog,
-              questions: graphInput.batch.questions ?? [],
-            });
-          }
-          manifest = await recordBackfillPostimages({
-            root,
-            vault,
-            backupDir: state.backupDir,
-            manifest,
-            files,
-          });
-          const candidate = structuredClone(state);
-          commit(candidate);
-          await saveBackfillState(paths, candidate);
-          state = candidate;
-        },
-        { lockHeld: true },
-      );
+        }
+        manifest = await recordBackfillPostimages({
+          root,
+          vault,
+          backupDir: state.backupDir,
+          manifest,
+          files,
+        });
+      });
+      const candidate = structuredClone(state);
+      commit(candidate);
+      await saveBackfillState(paths, candidate);
+      state = candidate;
     };
 
     for (const dialog of frozenDialogs) {
@@ -505,33 +505,28 @@ export async function runPrivateContactBackfill({
       );
       const files = reconcilePersonTaskFilesImpl({ vault, personPaths });
       if (files.length > 0) {
-        await runContactMemoryTransaction(
-          vault,
-          files,
-          async () => {
-            manifest = await ensureBackfillBackupFiles({
-              root,
-              vault,
-              backupDir: state.backupDir,
-              manifest,
-              files,
-            });
-            await reconcilePersonTasksImpl({
-              vault,
-              today,
-              personPaths,
-              transactionLocked: true,
-            });
-            manifest = await recordBackfillPostimages({
-              root,
-              vault,
-              backupDir: state.backupDir,
-              manifest,
-              files,
-            });
-          },
-          { lockHeld: true },
-        );
+        await runContactMemoryTransaction(vault, files, async () => {
+          manifest = await ensureBackfillBackupFiles({
+            root,
+            vault,
+            backupDir: state.backupDir,
+            manifest,
+            files,
+          });
+          await reconcilePersonTasksImpl({
+            vault,
+            today,
+            personPaths,
+            transactionLocked: true,
+          });
+          manifest = await recordBackfillPostimages({
+            root,
+            vault,
+            backupDir: state.backupDir,
+            manifest,
+            files,
+          });
+        });
       }
     }
     if (failedJobs.length === 0 && !state.incrementalHandoffComplete) {
@@ -569,5 +564,5 @@ export async function runPrivateContactBackfill({
       ),
       skippedMessages: 0,
     };
-  });
+  }
 }

@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { isAbsolute, join, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import "./lib/ts-esm-hooks.ts";
 import type {
@@ -12,7 +13,13 @@ import type {
   PrivateBackfillReport,
   RunPrivateContactBackfillOptions,
 } from "./contact-analysis/backfill.ts";
-import { loadState, saveState, statePaths } from "./contact-analysis/state.ts";
+import type { BackfillState } from "./contact-analysis/backfill-state.ts";
+import {
+  loadState,
+  saveState,
+  statePaths,
+  type ContactAnalysisState,
+} from "./contact-analysis/state.ts";
 
 export interface ContactAnalysisStatus {
   accounts: number;
@@ -126,7 +133,6 @@ export async function rollbackPrivateBackfill(input: {
   dataDir: string;
   vault: string;
   backupDir: string;
-  accountUserId: number;
   runId: string;
 }): Promise<void> {
   const {
@@ -139,27 +145,36 @@ export async function rollbackPrivateBackfill(input: {
   const { runContactMemoryTransaction } =
     await import("../agent/lib/contact-memory-transaction.ts");
   const manifest = await loadBackfillManifest(input.backupDir);
-  const paths = backfillPaths(input.root, input.dataDir, input.accountUserId);
+  const paths = backfillPaths(
+    input.root,
+    input.dataDir,
+    manifest.accountUserId,
+  );
   const state = await loadBackfillState(paths);
   if (!state) throw new Error("telegram_private_backfill_state_missing");
   if (
-    state.accountUserId !== input.accountUserId ||
     state.runId !== input.runId ||
-    manifest.accountUserId !== input.accountUserId ||
+    state.accountUserId !== manifest.accountUserId ||
     manifest.runId !== input.runId
   )
     throw new Error("telegram_private_backfill_rollback_identity_mismatch");
   if (state.backupDir !== resolve(input.backupDir))
     throw new Error("telegram_private_backfill_backup_directory_mismatch");
+  if (state.vaultDir !== resolve(input.vault))
+    throw new Error("telegram_private_backfill_vault_directory_mismatch");
   if (state.phase === "rolled_back")
     throw new Error("telegram_private_backfill_already_rolled_back");
   const files = manifest.files.map((item) => join(input.vault, item.path));
   const incrementalPaths = statePaths(
     input.root,
     input.dataDir,
-    input.accountUserId,
+    manifest.accountUserId,
   );
   const incrementalCurrent = await loadState(incrementalPaths);
+  const incrementalAfter = incrementalStateAfterRollback(
+    incrementalCurrent,
+    state,
+  );
   await runContactMemoryTransaction(input.vault, files, async () => {
     await restoreBackfillBackup({
       root: input.root,
@@ -167,17 +182,49 @@ export async function rollbackPrivateBackfill(input: {
       backupDir: input.backupDir,
       manifest,
     });
-    const candidate = structuredClone(state);
-    candidate.phase = "rolled_back";
-    candidate.incrementalHandoffComplete = false;
-    try {
-      await saveState(incrementalPaths, state.incrementalStateBefore);
-      await saveBackfillState(paths, candidate);
-    } catch (error) {
-      await saveState(incrementalPaths, incrementalCurrent);
-      throw error;
-    }
   });
+  await saveState(incrementalPaths, incrementalAfter);
+  const candidate = structuredClone(state);
+  candidate.phase = "rolled_back";
+  candidate.incrementalHandoffComplete = false;
+  await saveBackfillState(paths, candidate);
+}
+
+export function incrementalStateAfterRollback(
+  current: ContactAnalysisState,
+  backfill: BackfillState,
+): ContactAnalysisState {
+  const result = structuredClone(current);
+  for (const job of Object.values(backfill.jobs)) {
+    const key = String(job.chatId);
+    const before = backfill.incrementalStateBefore.jobs[key];
+    const present = current.jobs[key];
+    if (!backfill.incrementalHandoffComplete) {
+      if (isDeepStrictEqual(present, before)) continue;
+      if (present && present.committedThrough > (before?.committedThrough ?? 0))
+        continue;
+      throw new Error("telegram_private_backfill_incremental_state_conflict");
+    }
+    const expected = {
+      chatId: job.chatId,
+      kind: "private" as const,
+      title: job.title,
+      committedThrough: job.highWaterId,
+      contextSummary: job.contextSummary,
+      skippedMessages: before?.skippedMessages ?? 0,
+      status: "complete" as const,
+      attempts: before?.attempts ?? 0,
+      lastErrorCode: null,
+    };
+    if (isDeepStrictEqual(present, expected)) {
+      if (before) result.jobs[key] = structuredClone(before);
+      else delete result.jobs[key];
+      continue;
+    }
+    if (present && present.committedThrough > job.highWaterId) continue;
+    throw new Error("telegram_private_backfill_incremental_state_conflict");
+  }
+  return result;
 }
 
 export async function readContactAnalysisStatus(
@@ -236,16 +283,6 @@ async function defaultRunPrivateBackfill(
   const { runPrivateContactBackfill } =
     await import("./contact-analysis/backfill.ts");
   return runPrivateContactBackfill(options);
-}
-
-async function defaultResolveAccountUserId(input: {
-  root: string;
-  dataDir: string;
-  tokenPath?: string;
-}): Promise<number> {
-  const { createTelegramAnalysisClient } =
-    await import("./contact-analysis/telegram-client.ts");
-  return (await createTelegramAnalysisClient(input).account()).userId;
 }
 
 function isOwnerEnabled(env: NodeJS.ProcessEnv): boolean {
@@ -314,14 +351,8 @@ export interface ContactAnalysisCommandDependencies {
     dataDir: string;
     vault: string;
     backupDir: string;
-    accountUserId: number;
     runId: string;
   }) => Promise<void>;
-  resolveAccountUserIdImpl?: (input: {
-    root: string;
-    dataDir: string;
-    tokenPath?: string;
-  }) => Promise<number>;
   runContactAnalysisImpl?: (
     options: RunContactAnalysisOptions,
   ) => Promise<ContactAnalysisReport>;
@@ -362,7 +393,6 @@ export async function runContactAnalysisCommand(
     readStatusImpl = readContactAnalysisStatus,
     readPrivateBackfillStatusImpl = readPrivateBackfillStatus,
     rollbackPrivateBackfillImpl = rollbackPrivateBackfill,
-    resolveAccountUserIdImpl = defaultResolveAccountUserId,
     runContactAnalysisImpl = defaultRunContactAnalysis,
     runPrivateBackfillImpl = defaultRunPrivateBackfill,
     withLockImpl = withAdvisoryPipelineLock,
@@ -419,19 +449,12 @@ export async function runContactAnalysisCommand(
       const resolvedDataDir = isAbsolute(dataDir)
         ? dataDir
         : join(root, dataDir);
-      const tokenPath = ownerTokenPath(env, root);
       await withLockImpl(resolvedDataDir, async () => {
-        const accountUserId = await resolveAccountUserIdImpl({
-          root,
-          dataDir,
-          ...(tokenPath ? { tokenPath } : {}),
-        });
         await rollbackPrivateBackfillImpl({
           root,
           dataDir,
           vault: env.ASSISTANT_VAULT_DIR ?? join(root, "vault"),
           backupDir,
-          accountUserId,
           runId,
         });
       });

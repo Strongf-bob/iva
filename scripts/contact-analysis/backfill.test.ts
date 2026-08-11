@@ -517,7 +517,7 @@ test("resume verifies the retained backup before another reducer mutation", asyn
 
 test("partial high-water inventory is durable and never recaptured", async () => {
   const root = await mkdtemp(join(tmpdir(), "iva-private-backfill-"));
-  const dialogs: TelegramDialog[] = [
+  let dialogs: TelegramDialog[] = [
     { id: 42, kind: "private", title: "First", username: null },
     { id: 43, kind: "private", title: "Second", username: null },
   ];
@@ -560,9 +560,17 @@ test("partial high-water inventory is durable and never recaptured", async () =>
   const partial = await loadBackfillState(backfillPaths(root, "data", 7));
   assert.equal(partial?.inventoryComplete, false);
   assert.deepEqual(Object.keys(partial?.jobs ?? {}), ["42"]);
+  dialogs = [
+    { id: 42, kind: "private", title: "First", username: null },
+    { id: 44, kind: "private", title: "New", username: null },
+  ];
   secondAvailable = true;
   await runPrivateContactBackfill(options);
   assert.equal(sampled.filter((chatId) => chatId === 42).length, 1);
+  assert.ok(sampled.filter((chatId) => chatId === 43).length >= 2);
+  assert.equal(sampled.includes(44), false);
+  const complete = await loadBackfillState(backfillPaths(root, "data", 7));
+  assert.deepEqual(Object.keys(complete?.jobs ?? {}), ["42", "43"]);
 });
 
 test("a rolled-back checkpoint starts a fresh run and never reuses completed cursors", async () => {
@@ -574,11 +582,13 @@ test("a rolled-back checkpoint starts a fresh run and never reuses completed cur
     accountUserId: 7,
     runId: "old-run",
     phase: "rolled_back",
+    vaultDir: join(root, "vault"),
     backupDir: oldBackup,
     backupReady: true,
     inventoryComplete: true,
     incrementalHandoffComplete: false,
     incrementalStateBefore: { schemaVersion: 1, accountUserId: 7, jobs: {} },
+    inventory: [{ id: 42, title: "Person", username: null }],
     jobs: {
       "42": {
         chatId: 42,

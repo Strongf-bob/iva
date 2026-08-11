@@ -15,6 +15,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  incrementalStateAfterRollback,
   rollbackPrivateBackfill,
   runContactAnalysisCommand,
 } from "./contact-analysis.ts";
@@ -338,7 +339,6 @@ test("rebuild-status is local-only and rollback requires an explicit verified ba
     rollbackPrivateBackfillImpl: async (options: unknown) => {
       events.push(`rollback:${JSON.stringify(options)}`);
     },
-    resolveAccountUserIdImpl: async () => 7,
     withLockImpl: async <T>(root: string, operation: () => Promise<T>) => {
       events.push(`lock:${root}`);
       return operation();
@@ -386,7 +386,7 @@ test("rebuild-status is local-only and rollback requires an explicit verified ba
   assert.match(output.join("\n"), /run_id_required/u);
   assert.equal(
     events.at(-1),
-    'rollback:{"root":"/srv/iva","dataDir":"/srv/state","vault":"/srv/vault","backupDir":"/srv/backups/run-1","accountUserId":7,"runId":"run-1"}',
+    'rollback:{"root":"/srv/iva","dataDir":"/srv/state","vault":"/srv/vault","backupDir":"/srv/backups/run-1","runId":"run-1"}',
   );
   assert.ok(events.includes("lock:/srv/state"));
 });
@@ -470,11 +470,13 @@ test("rollback validates identity before mutation and restores vault plus increm
     accountUserId: 7,
     runId: "run-1",
     phase: "complete",
+    vaultDir: vault,
     backupDir,
     backupReady: true,
     inventoryComplete: true,
     incrementalHandoffComplete: true,
     incrementalStateBefore: incrementalBefore,
+    inventory: [{ id: 42, title: "Person", username: null }],
     jobs: {
       "42": {
         chatId: 42,
@@ -513,10 +515,21 @@ test("rollback validates identity before mutation and restores vault plus increm
       dataDir: "data",
       vault,
       backupDir,
-      accountUserId: 7,
       runId: "foreign-run",
     }),
     /identity_mismatch/u,
+  );
+  assert.equal(await readFile(card, "utf8"), "after\n");
+
+  await assert.rejects(
+    rollbackPrivateBackfill({
+      root,
+      dataDir: "data",
+      vault: join(root, "other-vault"),
+      backupDir,
+      runId: "run-1",
+    }),
+    /vault_directory_mismatch/u,
   );
   assert.equal(await readFile(card, "utf8"), "after\n");
 
@@ -525,7 +538,6 @@ test("rollback validates identity before mutation and restores vault plus increm
     dataDir: "data",
     vault,
     backupDir,
-    accountUserId: 7,
     runId: "run-1",
   });
   assert.equal(await readFile(card, "utf8"), "before\n");
@@ -533,5 +545,65 @@ test("rollback validates identity before mutation and restores vault plus increm
   assert.equal(
     (await loadBackfillState(backfillStatePaths))?.phase,
     "rolled_back",
+  );
+});
+
+test("rollback preserves incremental progress newer than the frozen high-water", () => {
+  const before = {
+    schemaVersion: 1 as const,
+    accountUserId: 7,
+    jobs: {},
+  };
+  const current = {
+    schemaVersion: 1 as const,
+    accountUserId: 7,
+    jobs: {
+      "42": {
+        chatId: 42,
+        kind: "private" as const,
+        title: "Person",
+        committedThrough: 5,
+        contextSummary: "newer sync",
+        skippedMessages: 0,
+        status: "complete" as const,
+        attempts: 0,
+        lastErrorCode: null,
+      },
+    },
+  };
+  const backfill = {
+    schemaVersion: 1 as const,
+    accountUserId: 7,
+    runId: "run-1",
+    phase: "complete" as const,
+    vaultDir: "/srv/vault",
+    backupDir: "/srv/backups/run-1",
+    backupReady: true,
+    inventoryComplete: true,
+    incrementalHandoffComplete: true,
+    incrementalStateBefore: before,
+    inventory: [{ id: 42, title: "Person", username: null }],
+    jobs: {
+      "42": {
+        chatId: 42,
+        title: "Person",
+        username: null,
+        highWaterId: 2,
+        committedThrough: 2,
+        contextSummary: "backfill",
+        processedMessages: 2,
+        status: "complete" as const,
+        lastErrorCode: null,
+      },
+    },
+  };
+
+  assert.deepEqual(incrementalStateAfterRollback(current, backfill), current);
+  const divergent = structuredClone(current);
+  divergent.jobs["42"].committedThrough = 2;
+  divergent.jobs["42"].contextSummary = "owner edit";
+  assert.throws(
+    () => incrementalStateAfterRollback(divergent, backfill),
+    /incremental_state_conflict/u,
   );
 });

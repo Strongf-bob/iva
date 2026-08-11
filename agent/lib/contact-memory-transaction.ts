@@ -105,7 +105,6 @@ export async function runContactMemoryTransaction<T>(
   vault: string,
   files: string[],
   action: () => Promise<T> | T,
-  options: { lockHeld?: boolean } = {},
 ): Promise<T> {
   mkdirSync(vault, { recursive: true });
   const execute = async (): Promise<T> => {
@@ -128,7 +127,6 @@ export async function runContactMemoryTransaction<T>(
       throw error;
     }
   };
-  if (options.lockHeld) return execute();
   const release = acquireLock(join(vault, ".contact-memory-global"));
   try {
     return await execute();
