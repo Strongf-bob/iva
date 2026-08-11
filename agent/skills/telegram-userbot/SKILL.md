@@ -73,7 +73,10 @@ description: Подключение и чтение личного Telegram-ак
    node --env-file-if-exists=.env scripts/contact-analysis.ts rebuild-status --json
    ```
 4. Повтор той же applying-команды автоматически продолжает незавершённый run. Не удаляй backup
-   после успеха. Для проверяемого отката используй `rebuild-rollback --backup-dir <same-dir>`.
+   после успеха. Для проверяемого отката возьми `runId` из `rebuild-status --json` и используй:
+   ```bash
+   node --env-file-if-exists=.env scripts/contact-analysis.ts rebuild-rollback --backup-dir <same-dir> --run-id <run-id>
+   ```
 
 Backfill читает только диалоги `private`, фиксирует верхнюю границу каждого чата и проходит
 сообщения от старых к новым без пропусков. Он не создаёт встречи или активные задачи из фоновой

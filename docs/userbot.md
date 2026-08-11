@@ -121,6 +121,25 @@ node --env-file-if-exists=.env scripts/contact-analysis.ts status --json
 `status` reads local checkpoints only; it does not call Telegram or a model. Runtime state lives under
 `data/contact-analysis/` and never stores message bodies.
 
+The ordinary sync is intentionally optimized for recent changes and does not prove complete historical
+coverage. For a one-time rebuild of human-readable private-chat profiles, first run a model-free dry run,
+then apply with a new private backup directory outside both the vault and application checkout:
+
+```bash
+node --env-file-if-exists=.env scripts/contact-analysis.ts rebuild-private --dry-run --json
+node --env-file-if-exists=.env scripts/contact-analysis.ts rebuild-private --backup-dir /absolute/private/backup/run-1 --run-id run-1 --json
+node --env-file-if-exists=.env scripts/contact-analysis.ts rebuild-status --json
+```
+
+The applying command is resumable and processes only one-to-one human chats, oldest first, through a
+fixed per-chat high-water mark. It verifies and expands the backup before every exact write set, hands
+the high-water to incremental sync only after completion, and retains the backup. A rollback is
+conflict-aware and requires the exact account run reported by status:
+
+```bash
+node --env-file-if-exists=.env scripts/contact-analysis.ts rebuild-rollback --backup-dir /absolute/private/backup/run-1 --run-id run-1
+```
+
 ## How it works
 
 - **One session owner.** Exactly one process may own a Telethon session; a second opener

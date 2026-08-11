@@ -1019,9 +1019,7 @@ function renderCard(card: CardState): string {
   return `---\n${frontmatter}\n---\n${body.replace(/\s*$/u, "")}\n`;
 }
 
-export async function reduceBatch(
-  input: ReduceBatchInput,
-): Promise<ReduceResult> {
+export function reduceBatchFiles(input: ReduceBatchInput): string[] {
   requireSafeNonZeroInteger(input.ownerUserId, "owner user ID");
   const batch = AnalysisPageSchema.parse(input.batch);
   if (batch.chatId !== input.dialog.id) {
@@ -1046,7 +1044,15 @@ export async function reduceBatch(
     }
   }
 
-  const orderedFiles = [...files].sort();
+  return [...files].sort();
+}
+
+export async function reduceBatch(
+  input: ReduceBatchInput,
+): Promise<ReduceResult> {
+  const batch = AnalysisPageSchema.parse(input.batch);
+  const orderedFiles = reduceBatchFiles(input);
+  const collective = ["group", "channel"].includes(input.dialog.kind);
   if (!input.transactionLocked) {
     return runContactMemoryTransaction(input.vault, orderedFiles, () =>
       reduceBatch({ ...input, transactionLocked: true }),

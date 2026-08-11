@@ -105,10 +105,10 @@ export async function runContactMemoryTransaction<T>(
   vault: string,
   files: string[],
   action: () => Promise<T> | T,
+  options: { lockHeld?: boolean } = {},
 ): Promise<T> {
   mkdirSync(vault, { recursive: true });
-  const release = acquireLock(join(vault, ".contact-memory-global"));
-  try {
+  const execute = async (): Promise<T> => {
     recoverJournal(vault);
     const unique = [...new Set(files)].sort();
     const journal = JournalSchema.parse({
@@ -127,6 +127,11 @@ export async function runContactMemoryTransaction<T>(
       recoverJournal(vault);
       throw error;
     }
+  };
+  if (options.lockHeld) return execute();
+  const release = acquireLock(join(vault, ".contact-memory-global"));
+  try {
+    return await execute();
   } finally {
     release();
   }

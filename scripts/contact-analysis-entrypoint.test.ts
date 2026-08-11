@@ -1,11 +1,32 @@
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/require-await, @typescript-eslint/no-unnecessary-type-assertion -- Node's test runner owns registrations; injected async boundaries intentionally use synchronous fakes. */
 import assert from "node:assert/strict";
-import { access, chmod, mkdir, mkdtemp, open, rm } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { runContactAnalysisCommand } from "./contact-analysis.ts";
+import {
+  rollbackPrivateBackfill,
+  runContactAnalysisCommand,
+} from "./contact-analysis.ts";
+const {
+  backfillPaths,
+  createBackfillBackup,
+  loadBackfillState,
+  recordBackfillPostimages,
+  saveBackfillState,
+} = await import("./contact-analysis/backfill-state.ts");
+const { loadState, saveState, statePaths } =
+  await import("./contact-analysis/state.ts");
 
 test("status reads local checkpoints without Telegram or model calls", async () => {
   const output: string[] = [];
@@ -296,6 +317,7 @@ test("rebuild-status is local-only and rollback requires an explicit verified ba
   const output: string[] = [];
   const dependencies = {
     env: {
+      TELEGRAM_EXPOSED_TOOLS: "read-only",
       ASSISTANT_DATA_DIR: "/srv/state",
       ASSISTANT_VAULT_DIR: "/srv/vault",
     },
@@ -303,11 +325,20 @@ test("rebuild-status is local-only and rollback requires an explicit verified ba
     writeOutput: (line: string) => output.push(line),
     readPrivateBackfillStatusImpl: async () => {
       events.push("status");
-      return { accounts: 1, runs: 1, running: 0, complete: 1, failed: 0 };
+      return {
+        accounts: 1,
+        runs: 1,
+        running: 0,
+        complete: 1,
+        failed: 0,
+        rolledBack: 0,
+        details: [],
+      };
     },
     rollbackPrivateBackfillImpl: async (options: unknown) => {
       events.push(`rollback:${JSON.stringify(options)}`);
     },
+    resolveAccountUserIdImpl: async () => 7,
     withLockImpl: async <T>(root: string, operation: () => Promise<T>) => {
       events.push(`lock:${root}`);
       return operation();
@@ -327,6 +358,19 @@ test("rebuild-status is local-only and rollback requires an explicit verified ba
       ["rebuild-rollback", "--backup-dir", "/srv/backups/run-1"],
       dependencies,
     ),
+    1,
+  );
+  assert.equal(
+    await runContactAnalysisCommand(
+      [
+        "rebuild-rollback",
+        "--backup-dir",
+        "/srv/backups/run-1",
+        "--run-id",
+        "run-1",
+      ],
+      dependencies,
+    ),
     0,
   );
   assert.deepEqual(JSON.parse(output[0]!), {
@@ -335,11 +379,159 @@ test("rebuild-status is local-only and rollback requires an explicit verified ba
     running: 0,
     complete: 1,
     failed: 0,
+    rolledBack: 0,
+    details: [],
   });
   assert.match(output.join("\n"), /backup_dir_required/u);
+  assert.match(output.join("\n"), /run_id_required/u);
   assert.equal(
     events.at(-1),
-    'rollback:{"root":"/srv/iva","dataDir":"/srv/state","vault":"/srv/vault","backupDir":"/srv/backups/run-1"}',
+    'rollback:{"root":"/srv/iva","dataDir":"/srv/state","vault":"/srv/vault","backupDir":"/srv/backups/run-1","accountUserId":7,"runId":"run-1"}',
   );
   assert.ok(events.includes("lock:/srv/state"));
+});
+
+test("private rebuild and rollback reject non-owner multi-user workers", async () => {
+  let calls = 0;
+  const dependencies = {
+    env: {
+      TELEGRAM_EXPOSED_TOOLS: "read-only",
+      ASSISTANT_MULTI_USER: "1",
+      ASSISTANT_ROLE: "member",
+    },
+    root: "/srv/iva",
+    writeOutput: () => {},
+    runPrivateBackfillImpl: async () => {
+      calls++;
+      throw new Error("must not run");
+    },
+    rollbackPrivateBackfillImpl: async () => {
+      calls++;
+    },
+  };
+  assert.equal(
+    await runContactAnalysisCommand(
+      ["rebuild-private", "--backup-dir", "/srv/backups/run-1"],
+      dependencies,
+    ),
+    1,
+  );
+  assert.equal(
+    await runContactAnalysisCommand(
+      [
+        "rebuild-rollback",
+        "--backup-dir",
+        "/srv/backups/run-1",
+        "--run-id",
+        "run-1",
+      ],
+      dependencies,
+    ),
+    1,
+  );
+  assert.equal(calls, 0);
+});
+
+test("rollback validates identity before mutation and restores vault plus incremental cursor", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "iva-backfill-rollback-"));
+  const root = join(workspace, "app");
+  const vault = join(root, "vault");
+  const backupDir = join(workspace, "backups", "run-1");
+  const card = join(vault, "cards", "contacts", "telegram-user-42.md");
+  await mkdir(join(vault, "cards", "contacts"), { recursive: true });
+  await writeFile(card, "before\n");
+
+  const incrementalPaths = statePaths(root, "data", 7);
+  const incrementalBefore = {
+    schemaVersion: 1 as const,
+    accountUserId: 7,
+    jobs: {},
+  };
+  await saveState(incrementalPaths, incrementalBefore);
+  const manifest = await createBackfillBackup({
+    root,
+    vault,
+    backupDir,
+    accountUserId: 7,
+    runId: "run-1",
+    files: [card],
+  });
+  await writeFile(card, "after\n");
+  await recordBackfillPostimages({
+    root,
+    vault,
+    backupDir,
+    manifest,
+    files: [card],
+  });
+  const backfillStatePaths = backfillPaths(root, "data", 7);
+  await saveBackfillState(backfillStatePaths, {
+    schemaVersion: 1,
+    accountUserId: 7,
+    runId: "run-1",
+    phase: "complete",
+    backupDir,
+    backupReady: true,
+    inventoryComplete: true,
+    incrementalHandoffComplete: true,
+    incrementalStateBefore: incrementalBefore,
+    jobs: {
+      "42": {
+        chatId: 42,
+        title: "Person",
+        username: null,
+        highWaterId: 2,
+        committedThrough: 2,
+        contextSummary: "done",
+        processedMessages: 2,
+        status: "complete",
+        lastErrorCode: null,
+      },
+    },
+  });
+  await saveState(incrementalPaths, {
+    schemaVersion: 1,
+    accountUserId: 7,
+    jobs: {
+      "42": {
+        chatId: 42,
+        kind: "private",
+        title: "Person",
+        committedThrough: 2,
+        contextSummary: "done",
+        skippedMessages: 0,
+        status: "complete",
+        attempts: 0,
+        lastErrorCode: null,
+      },
+    },
+  });
+
+  await assert.rejects(
+    rollbackPrivateBackfill({
+      root,
+      dataDir: "data",
+      vault,
+      backupDir,
+      accountUserId: 7,
+      runId: "foreign-run",
+    }),
+    /identity_mismatch/u,
+  );
+  assert.equal(await readFile(card, "utf8"), "after\n");
+
+  await rollbackPrivateBackfill({
+    root,
+    dataDir: "data",
+    vault,
+    backupDir,
+    accountUserId: 7,
+    runId: "run-1",
+  });
+  assert.equal(await readFile(card, "utf8"), "before\n");
+  assert.deepEqual(await loadState(incrementalPaths), incrementalBefore);
+  assert.equal(
+    (await loadBackfillState(backfillStatePaths))?.phase,
+    "rolled_back",
+  );
 });

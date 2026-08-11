@@ -51,13 +51,13 @@ export function memoryRollupJob(period: MemoryPeriod) {
 }
 
 export function contactAnalysisJob() {
-  const { root, statusPath } = resolvePaths();
+  const { root, dataDir, statusPath } = resolvePaths();
   return {
     name: "telegram-contact-sync",
     argv: ["scripts/contact-analysis.ts", "sync"],
     root,
     nodeBin: process.execPath,
-    lockPath: join(root, ".contact-analysis.lock"),
+    lockPath: join(dataDir, ".contact-analysis.lock"),
     statusPath,
     timeoutMs: 24 * 60 * 60 * 1000,
     guardMs: 10 * 60 * 1000,

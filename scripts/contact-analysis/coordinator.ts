@@ -145,7 +145,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "";
 }
 
-function isAuthorizationLoss(error: unknown): boolean {
+export function isAuthorizationLoss(error: unknown): boolean {
   return errorMessage(error) === "telegram_analysis_http_409";
 }
 
@@ -175,7 +175,7 @@ function retryAfterMilliseconds(error: unknown): number | null {
     : null;
 }
 
-async function withTransientRetries<T>(
+export async function withTransientRetries<T>(
   operation: () => Promise<T>,
   sleep: (milliseconds: number) => Promise<void>,
 ): Promise<T> {

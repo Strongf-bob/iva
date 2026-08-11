@@ -20,7 +20,9 @@ const {
   BackfillStateSchema,
   backfillPaths,
   createBackfillBackup,
+  ensureBackfillBackupFiles,
   loadBackfillState,
+  recordBackfillPostimages,
   restoreBackfillBackup,
   saveBackfillState,
   verifyBackfillBackup,
@@ -34,11 +36,16 @@ test("backfill state is account-scoped, atomic, and private", async () => {
     accountUserId: 7,
     runId: "run-20260811",
     phase: "running",
-    backupManifest: null,
+    backupDir: "/srv/backups/run-20260811",
+    backupReady: true,
+    inventoryComplete: true,
+    incrementalHandoffComplete: false,
+    incrementalStateBefore: { schemaVersion: 1, accountUserId: 7, jobs: {} },
     jobs: {
       "42": {
         chatId: 42,
         title: "Person",
+        username: null,
         highWaterId: 500,
         committedThrough: 200,
         contextSummary: "summary",
@@ -58,15 +65,18 @@ test("backfill state is account-scoped, atomic, and private", async () => {
 });
 
 test("backup verifies hashes and restores existing and initially missing files", async () => {
-  const root = await mkdtemp(join(tmpdir(), "iva-backfill-backup-"));
+  const workspace = await mkdtemp(join(tmpdir(), "iva-backfill-backup-"));
+  const root = join(workspace, "app");
+  await mkdir(root);
   const vault = join(root, "vault");
-  const backupDir = join(root, "backup");
+  const backupDir = join(workspace, "backup");
   const existing = join(vault, "cards", "contacts", "telegram-user-42.md");
   const initiallyMissing = join(vault, "tasks", "people.md");
   await mkdir(join(vault, "cards", "contacts"), { recursive: true });
   await writeFile(existing, "before\n", { mode: 0o640 });
 
   const manifest = await createBackfillBackup({
+    root,
     vault,
     backupDir,
     accountUserId: 7,
@@ -74,11 +84,23 @@ test("backup verifies hashes and restores existing and initially missing files",
     files: [existing, initiallyMissing],
   });
 
-  await verifyBackfillBackup({ vault, backupDir, manifest });
+  await verifyBackfillBackup({ root, vault, backupDir, manifest });
   await writeFile(existing, "after\n");
   await mkdir(join(vault, "tasks"), { recursive: true });
   await writeFile(initiallyMissing, "created\n");
-  await restoreBackfillBackup({ vault, backupDir, manifest });
+  const recorded = await recordBackfillPostimages({
+    root,
+    vault,
+    backupDir,
+    manifest,
+    files: [existing, initiallyMissing],
+  });
+  await restoreBackfillBackup({
+    root,
+    vault,
+    backupDir,
+    manifest: recorded,
+  });
 
   assert.equal(await readFile(existing, "utf8"), "before\n");
   assert.equal((await stat(existing)).mode & 0o777, 0o640);
@@ -91,7 +113,9 @@ test("backup verifies hashes and restores existing and initially missing files",
 });
 
 test("backup verification rejects tampering and symlinked sources", async () => {
-  const root = await mkdtemp(join(tmpdir(), "iva-backfill-backup-"));
+  const workspace = await mkdtemp(join(tmpdir(), "iva-backfill-backup-"));
+  const root = join(workspace, "app");
+  await mkdir(root);
   const vault = join(root, "vault");
   const outside = join(root, "outside.md");
   const linked = join(vault, "cards", "contacts", "telegram-user-42.md");
@@ -100,8 +124,9 @@ test("backup verification rejects tampering and symlinked sources", async () => 
   await symlink(outside, linked);
   await assert.rejects(
     createBackfillBackup({
+      root,
       vault,
-      backupDir: join(root, "backup-linked"),
+      backupDir: join(workspace, "backup-linked"),
       accountUserId: 7,
       runId: "run-linked",
       files: [linked],
@@ -112,8 +137,9 @@ test("backup verification rejects tampering and symlinked sources", async () => 
   await writeFile(linked, "original\n").catch(() => undefined);
   const ordinary = join(vault, "ordinary.md");
   await writeFile(ordinary, "original\n");
-  const backupDir = join(root, "backup");
+  const backupDir = join(workspace, "backup");
   const manifest = await createBackfillBackup({
+    root,
     vault,
     backupDir,
     accountUserId: 7,
@@ -123,7 +149,118 @@ test("backup verification rejects tampering and symlinked sources", async () => 
   await chmod(join(backupDir, manifest.files[0].backupPath), 0o600);
   await writeFile(join(backupDir, manifest.files[0].backupPath), "tampered\n");
   await assert.rejects(
-    verifyBackfillBackup({ vault, backupDir, manifest }),
+    verifyBackfillBackup({ root, vault, backupDir, manifest }),
     /hash mismatch/u,
+  );
+});
+
+test("backup expands before dynamic writes and rollback refuses later owner edits", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "iva-backfill-dynamic-"));
+  const root = join(workspace, "app");
+  const vault = join(root, "vault");
+  const backupDir = join(workspace, "backups", "run-1");
+  const dynamic = join(vault, "cards", "projects", "dynamic.md");
+  await mkdir(root);
+
+  let manifest = await createBackfillBackup({
+    root,
+    vault,
+    backupDir,
+    accountUserId: 7,
+    runId: "run-1",
+    files: [],
+  });
+  manifest = await ensureBackfillBackupFiles({
+    root,
+    vault,
+    backupDir,
+    manifest,
+    files: [dynamic],
+  });
+  await mkdir(join(vault, "cards", "projects"), { recursive: true });
+  await writeFile(dynamic, "generated\n");
+  manifest = await recordBackfillPostimages({
+    root,
+    vault,
+    backupDir,
+    manifest,
+    files: [dynamic],
+  });
+  await writeFile(dynamic, "owner edit\n");
+
+  await assert.rejects(
+    restoreBackfillBackup({ root, vault, backupDir, manifest }),
+    /rollback conflict/u,
+  );
+  assert.equal(await readFile(dynamic, "utf8"), "owner edit\n");
+});
+
+test("backup rejects tracked and symlink-redirected destinations", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "iva-backfill-location-"));
+  const root = join(workspace, "app");
+  const vault = join(root, "vault");
+  const outside = join(workspace, "outside");
+  await mkdir(root);
+  await mkdir(outside);
+
+  await assert.rejects(
+    createBackfillBackup({
+      root,
+      vault,
+      backupDir: join(root, "tracked-backup"),
+      accountUserId: 7,
+      runId: "tracked",
+      files: [],
+    }),
+    /outside the application root/u,
+  );
+
+  const linked = join(workspace, "linked-backup");
+  await symlink(outside, linked);
+  await assert.rejects(
+    createBackfillBackup({
+      root,
+      vault,
+      backupDir: linked,
+      accountUserId: 7,
+      runId: "linked",
+      files: [],
+    }),
+    /symlink/u,
+  );
+});
+
+test("state schema rejects mismatched job cursors and manifest identity", () => {
+  assert.throws(
+    () =>
+      BackfillStateSchema.parse({
+        schemaVersion: 1,
+        accountUserId: 7,
+        runId: "run-1",
+        phase: "running",
+        backupDir: "/srv/backups/run-1",
+        backupReady: false,
+        inventoryComplete: true,
+        incrementalHandoffComplete: false,
+        incrementalStateBefore: {
+          schemaVersion: 1,
+          accountUserId: 7,
+          jobs: {},
+        },
+        jobs: {
+          "42": {
+            chatId: 43,
+            title: "Wrong",
+            username: null,
+            highWaterId: 10,
+            committedThrough: 11,
+            contextSummary: "",
+            processedMessages: 0,
+            status: "ready",
+            lastErrorCode: null,
+          },
+        },
+      }),
+    /job/u,
   );
 });

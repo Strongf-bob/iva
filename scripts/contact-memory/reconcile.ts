@@ -14,6 +14,39 @@ import { withContactMemoryLockAsync } from "../../agent/lib/contact-memory-trans
 const START = "<!-- iva:person-open-tasks:start -->";
 const END = "<!-- iva:person-open-tasks:end -->";
 
+function assertContained(vault: string, file: string): void {
+  const lexical = resolve(file);
+  const lexicalRoot = resolve(vault);
+  if (!lexical.startsWith(`${lexicalRoot}${sep}`))
+    throw new Error("contact-memory path is outside the vault");
+  const vaultRoot = realpathSync(vault);
+  const actual = realpathSync(file);
+  if (!actual.startsWith(`${vaultRoot}${sep}`))
+    throw new Error("contact-memory symlink points outside the vault");
+}
+
+export function personTaskReconciliationFiles(input: {
+  vault: string;
+  personPaths?: string[];
+}): string[] {
+  const tasksFile = join(input.vault, "tasks", "people.md");
+  if (!existsSync(tasksFile)) return [];
+  assertContained(input.vault, tasksFile);
+  const tasks = parsePeopleTaskDocument(readFileSync(tasksFile, "utf8"));
+  const people = new Set([
+    ...tasks.map((task) => task.personPath),
+    ...(input.personPaths ?? []),
+  ]);
+  const files = [tasksFile];
+  for (const personPath of [...people].sort()) {
+    const file = join(input.vault, `${personPath}.md`);
+    if (!existsSync(file)) continue;
+    assertContained(input.vault, file);
+    files.push(file);
+  }
+  return files;
+}
+
 function renderOpenTasks(tasks: PersonTask[]): string {
   if (tasks.length === 0) return "";
   return [
@@ -54,17 +87,7 @@ export async function reconcilePersonTasks(input: {
   }
   const tasksFile = join(input.vault, "tasks", "people.md");
   if (!existsSync(tasksFile)) return { changedFiles: [] };
-  const vaultRoot = realpathSync(input.vault);
-  const assertContained = (file: string): void => {
-    const lexical = resolve(file);
-    const lexicalRoot = resolve(input.vault);
-    if (!lexical.startsWith(`${lexicalRoot}${sep}`))
-      throw new Error("contact-memory path is outside the vault");
-    const actual = realpathSync(file);
-    if (!actual.startsWith(`${vaultRoot}${sep}`))
-      throw new Error("contact-memory symlink points outside the vault");
-  };
-  assertContained(tasksFile);
+  assertContained(input.vault, tasksFile);
   const taskRelease = acquireLock(tasksFile);
   const changedFiles: string[] = [];
   try {
@@ -84,7 +107,7 @@ export async function reconcilePersonTasks(input: {
     for (const personPath of people) {
       const file = join(input.vault, `${personPath}.md`);
       if (!existsSync(file)) continue;
-      assertContained(file);
+      assertContained(input.vault, file);
       const release = acquireLock(file);
       try {
         const personExisting = readFileSync(file, "utf8");
