@@ -18,6 +18,7 @@ COMPOSE_FILE="${IVA_RELEASE_COMPOSE_FILE:-$ACTIVE_COMPOSE_FILE}"
 ENV_FILE="$RUNTIME_ROOT/.env"
 CURRENT_IMAGE_FILE="$DEPLOY_DIR/current-image"
 PREVIOUS_IMAGE_FILE="$DEPLOY_DIR/previous-image"
+ACTIVE_DEPLOY_SCRIPT="$DEPLOY_DIR/deploy.sh"
 LEGACY_OWNER_ROUTE_FILE="$RUNTIME_ROOT/data/control/legacy-owner-route.json"
 REGISTRY_IMAGE="ghcr.io/strongf-bob/iva"
 HEALTH_ATTEMPTS="${IVA_DEPLOY_HEALTH_ATTEMPTS:-36}"
@@ -31,17 +32,72 @@ fail() {
 }
 
 command_text="${SSH_ORIGINAL_COMMAND:-}"
-if [[ ! "$command_text" =~ ^deploy\ [0-9a-f]{40}$ ]]; then
+command_mode=""
+backfill_action=""
+backfill_run_id=""
+if [[ "$command_text" =~ ^deploy\ ([0-9a-f]{40})$ ]]; then
+  command_mode="deploy"
+  sha="${BASH_REMATCH[1]}"
+elif [ "$command_text" = "contact-backfill dry-run" ]; then
+  command_mode="contact-backfill"
+  backfill_action="dry-run"
+elif [[ "$command_text" =~ ^contact-backfill\ (apply|status|rollback)\ ([a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?)$ ]]; then
+  command_mode="contact-backfill"
+  backfill_action="${BASH_REMATCH[1]}"
+  backfill_run_id="${BASH_REMATCH[2]}"
+else
   fail "invalid deployment command"
 fi
 
-sha="${command_text#deploy }"
-candidate_image="$REGISTRY_IMAGE:sha-$sha"
-
 [ -f "$ENV_FILE" ] || fail "runtime environment is missing"
-docker info --format '{{json .SecurityOptions}}' | grep -q rootless ||
+docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q rootless ||
   fail "rootless Docker is required"
 mkdir -p "$DEPLOY_DIR"
+
+compose() {
+  local image="$1" allow_inert="$2"
+  shift 2
+  IVA_IMAGE="$image" TELEGRAM_USERBOT_ALLOW_INERT="$allow_inert" \
+    IVA_CONTAINER_WORKERS_ALLOW_LEGACY="$CONTAINER_WORKERS_ALLOW_LEGACY" docker compose \
+    --project-directory "$RUNTIME_ROOT" \
+    -f "$COMPOSE_FILE" \
+    "$@"
+}
+
+if [ "$command_mode" = "contact-backfill" ]; then
+  operator_output=""
+  validated_output=""
+  [ -f "$ACTIVE_COMPOSE_FILE" ] || fail "compose file is missing"
+  [ -f "$CURRENT_IMAGE_FILE" ] || fail "current image state is missing"
+  current_image="$(sed -n '1p' "$CURRENT_IMAGE_FILE")"
+  [[ "$current_image" =~ ^$REGISTRY_IMAGE:sha-[0-9a-f]{40}$ ]] ||
+    fail "current image state is invalid"
+  if [ "$backfill_action" != "status" ]; then
+    exec 9>"$DEPLOY_DIR/deploy.lock"
+    flock -n 9 || fail "another deployment or backfill is running"
+  fi
+  if [ "$backfill_action" = "dry-run" ]; then
+    operator_output="$(
+      compose "$current_image" 0 exec -T telegram-poll node \
+        scripts/production/contact-backfill-operator.ts dry-run 2>/dev/null
+    )" || fail "contact backfill operation failed"
+  else
+    operator_output="$(
+      compose "$current_image" 0 exec -T telegram-poll node \
+        scripts/production/contact-backfill-operator.ts \
+        "$backfill_action" "$backfill_run_id" 2>/dev/null
+    )" || fail "contact backfill operation failed"
+  fi
+  validated_output="$(
+    compose "$current_image" 0 exec -T telegram-poll node \
+      scripts/production/contact-backfill-output-validator.ts \
+      <<<"$operator_output" 2>/dev/null
+  )" || fail "contact backfill operation failed"
+  printf '%s\n' "$validated_output"
+  exit 0
+fi
+
+candidate_image="$REGISTRY_IMAGE:sha-$sha"
 
 printf 'deploy: pulling immutable image for %s\n' "$sha"
 docker pull "$candidate_image" || fail "image pull failed"
@@ -74,16 +130,6 @@ fi
 
 exec 9>"$DEPLOY_DIR/deploy.lock"
 flock -n 9 || fail "another deployment is running"
-
-compose() {
-  local image="$1" allow_inert="$2"
-  shift 2
-  IVA_IMAGE="$image" TELEGRAM_USERBOT_ALLOW_INERT="$allow_inert" \
-    IVA_CONTAINER_WORKERS_ALLOW_LEGACY="$CONTAINER_WORKERS_ALLOW_LEGACY" docker compose \
-    --project-directory "$RUNTIME_ROOT" \
-    -f "$COMPOSE_FILE" \
-    "$@"
-}
 
 image_supports_userbot() {
   docker run --rm --entrypoint /bin/sh "$1" -c \
@@ -237,14 +283,42 @@ start_image() {
 write_state() {
   local path="$1" value="$2" temporary
   temporary="$path.tmp.$$"
-  printf '%s\n' "$value" >"$temporary"
-  chmod 600 "$temporary"
-  mv "$temporary" "$path"
+  printf '%s\n' "$value" >"$temporary" || return 1
+  chmod 600 "$temporary" || return 1
+  mv "$temporary" "$path" || return 1
 }
 
 previous_image=""
 if [ -f "$CURRENT_IMAGE_FILE" ]; then
   previous_image="$(sed -n '1p' "$CURRENT_IMAGE_FILE")"
+fi
+
+# Stage release control files before touching the running services. The later
+# same-directory renames are atomic, so copy/permission failures leave both the
+# runtime and persisted release state on the previous version.
+temporary_deploy=""
+temporary_compose=""
+promotion_backup_dir="$DEPLOY_DIR/promotion-backup.$$"
+mkdir -p "$promotion_backup_dir" || fail "release control backup failed"
+for control_file in \
+  "$ACTIVE_DEPLOY_SCRIPT" \
+  "$ACTIVE_COMPOSE_FILE" \
+  "$CURRENT_IMAGE_FILE" \
+  "$PREVIOUS_IMAGE_FILE"; do
+  if [ -f "$control_file" ]; then
+    cp -p "$control_file" "$promotion_backup_dir/$(basename "$control_file")" ||
+      fail "release control backup failed"
+  fi
+done
+if [ "$0" != "$ACTIVE_DEPLOY_SCRIPT" ]; then
+  temporary_deploy="$ACTIVE_DEPLOY_SCRIPT.tmp.$$"
+  cp "$0" "$temporary_deploy" || fail "release deploy script staging failed"
+  chmod 700 "$temporary_deploy" || fail "release deploy script staging failed"
+fi
+if [ "$COMPOSE_FILE" != "$ACTIVE_COMPOSE_FILE" ]; then
+  temporary_compose="$ACTIVE_COMPOSE_FILE.tmp.$$"
+  cp "$COMPOSE_FILE" "$temporary_compose" || fail "release compose staging failed"
+  chmod 600 "$temporary_compose" || fail "release compose staging failed"
 fi
 
 image_supports_userbot "$candidate_image" || fail "candidate image lacks the userbot runtime"
@@ -261,6 +335,9 @@ if [ -f "$LEGACY_OWNER_ROUTE_FILE" ]; then
 fi
 cleanup_owner_route_backup() {
   rm -f "$owner_route_backup"
+  [ -z "$temporary_deploy" ] || rm -f "$temporary_deploy"
+  [ -z "$temporary_compose" ] || rm -f "$temporary_compose"
+  rm -rf "$promotion_backup_dir"
 }
 trap cleanup_owner_route_backup EXIT
 
@@ -272,6 +349,51 @@ restore_owner_route() {
   else
     rm -f "$LEGACY_OWNER_ROUTE_FILE" || return 1
   fi
+}
+
+restore_control_file() {
+  local target="$1" backup="$promotion_backup_dir/$(basename "$1")" temporary
+  if [ -f "$backup" ]; then
+    temporary="$target.restore.$$"
+    cp -p "$backup" "$temporary" || return 1
+    mv "$temporary" "$target" || return 1
+  else
+    rm -f "$target" || return 1
+  fi
+}
+
+restore_release_controls() {
+  restore_control_file "$ACTIVE_DEPLOY_SCRIPT" || return 1
+  restore_control_file "$ACTIVE_COMPOSE_FILE" || return 1
+  restore_control_file "$CURRENT_IMAGE_FILE" || return 1
+  restore_control_file "$PREVIOUS_IMAGE_FILE" || return 1
+}
+
+restore_runtime_after_promotion_failure() {
+  restore_owner_route || return 1
+  if [ "$previous_image" = "$candidate_image" ]; then
+    return 0
+  fi
+  compose "$candidate_image" 0 stop telegram-poll >/dev/null 2>&1 || true
+  if [ -z "$previous_image" ]; then
+    compose "$candidate_image" 0 down >/dev/null 2>&1 || true
+    return 0
+  fi
+  docker pull "$previous_image" >/dev/null 2>&1 || true
+  local allow_inert=0 scheduler=0 container_workers=1
+  if ! image_supports_userbot "$previous_image"; then
+    allow_inert=1
+  fi
+  image_supports_routing_health "$previous_image" || return 1
+  if image_supports_scheduler "$previous_image"; then
+    scheduler=1
+  fi
+  if ! image_supports_container_workers "$previous_image"; then
+    legacy_rollback_is_safe "$candidate_image" || return 1
+    container_workers=0
+    CONTAINER_WORKERS_ALLOW_LEGACY=1
+  fi
+  start_image "$previous_image" "$allow_inert" "$scheduler" "$container_workers"
 }
 
 if ! start_image "$candidate_image" 0 1 1; then
@@ -312,15 +434,26 @@ if ! start_image "$candidate_image" 0 1 1; then
   exit 1
 fi
 
-if [ -n "$previous_image" ] && [ "$previous_image" != "$candidate_image" ]; then
-  write_state "$PREVIOUS_IMAGE_FILE" "$previous_image"
-fi
-write_state "$CURRENT_IMAGE_FILE" "$candidate_image"
-if [ "$COMPOSE_FILE" != "$ACTIVE_COMPOSE_FILE" ]; then
-  temporary_compose="$ACTIVE_COMPOSE_FILE.tmp.$$"
-  cp "$COMPOSE_FILE" "$temporary_compose"
-  chmod 600 "$temporary_compose"
-  mv "$temporary_compose" "$ACTIVE_COMPOSE_FILE"
+promote_release() {
+  if [ -n "$temporary_deploy" ]; then
+    mv "$temporary_deploy" "$ACTIVE_DEPLOY_SCRIPT" || return 1
+    temporary_deploy=""
+  fi
+  if [ -n "$temporary_compose" ]; then
+    mv "$temporary_compose" "$ACTIVE_COMPOSE_FILE" || return 1
+    temporary_compose=""
+  fi
+  if [ -n "$previous_image" ] && [ "$previous_image" != "$candidate_image" ]; then
+    write_state "$PREVIOUS_IMAGE_FILE" "$previous_image" || return 1
+  fi
+  write_state "$CURRENT_IMAGE_FILE" "$candidate_image" || return 1
+}
+
+if ! promote_release; then
+  restore_release_controls || fail "release promotion and control restoration failed; polling remains stopped"
+  restore_runtime_after_promotion_failure ||
+    fail "release promotion failed and previous runtime could not be restored"
+  fail "release promotion failed; previous release restored"
 fi
 
 printf 'deploy: healthy release %s is active\n' "$sha"
