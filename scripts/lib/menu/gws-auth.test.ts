@@ -6,6 +6,7 @@ import {
   childEnv,
   parseAuthChallenge,
   extractCallbackQuery,
+  resolveGoogleHome,
 } from "./gws-auth.ts";
 
 test("OAuth relay state is bound to the fixed personal worker", () => {
@@ -18,6 +19,24 @@ test("Google CLI receives the personal HOME and config directory", () => {
   const env = childEnv("/srv/iva/data/users/101");
   assert.equal(env.HOME, "/srv/iva/data/users/101");
   assert.equal(env.XDG_CONFIG_HOME, "/srv/iva/data/users/101/.config");
+});
+
+test("container and multi-user Google HOME fail closed without an absolute personal root", () => {
+  assert.equal(
+    resolveGoogleHome({
+      personalRoot: "/srv/iva/data/users/101",
+      container: true,
+    }),
+    "/srv/iva/data/users/101",
+  );
+  assert.throws(
+    () => resolveGoogleHome({ container: true }),
+    /personal Google HOME/u,
+  );
+  assert.throws(
+    () => resolveGoogleHome({ personalRoot: "relative", multiUser: true }),
+    /personal Google HOME/u,
+  );
 });
 
 test("parseAuthChallenge extracts the Google URL and loopback port", () => {

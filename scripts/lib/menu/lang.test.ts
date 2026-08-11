@@ -131,10 +131,10 @@ test("language menu renders current-language checkmarks with stable callbacks", 
       expectedRows,
     );
     assert.deepEqual(view.rows[1], [
-      { text: "Back", callback_data: "iva_menu:r:o" },
+      { text: "Back", callback_data: "iva_menu:sper:o" },
     ]);
   }
-  assert.equal(language.parent, "r");
+  assert.equal(language.parent, "sper");
 });
 
 test("language selection persists settings and env before redrawing root", async () => {

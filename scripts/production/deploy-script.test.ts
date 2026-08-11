@@ -53,15 +53,17 @@ function harness(): {
     'printf "docker image=%s args=%s\\n" "${IVA_IMAGE:-}" "$*" >> "$MOCK_LOG"\n' +
       'if [ "${1:-}" = "info" ]; then printf \'["name=rootless"]\\n\'; exit 0; fi\n' +
       'if [ "${1:-}" = "image" ] && [ "${2:-}" = "inspect" ]; then printf "%s\\n" "${SSH_ORIGINAL_COMMAND#deploy }"; exit 0; fi\n' +
-      'if [ "${1:-}" = "run" ]; then if printf "%s" "$*" | grep -q -- "--entrypoint /bin/sh"; then if printf "%s" "$*" | grep -q "routing-health.ts"; then case "$*" in *"${MOCK_INCOMPATIBLE_ROUTING_IMAGE:-__none__}"*) exit 1 ;; *) exit 0 ;; esac; fi; [ "${MOCK_CANDIDATE_COMPAT:-1}" = "1" ]; exit; fi; last=""; for arg in "$@"; do last="$arg"; done; case "$last" in */deploy.sh) cat "$MOCK_REPO_ROOT/deploy/container/deploy.sh" ;; */compose.production.yml) cat "$MOCK_REPO_ROOT/deploy/container/compose.production.yml" ;; *) exit 1 ;; esac; exit 0; fi\n' +
+      'if [ "${1:-}" = "run" ]; then if printf "%s" "$*" | grep -q -- "--entrypoint /bin/sh"; then if printf "%s" "$*" | grep -q "routing-health.ts"; then case "$*" in *"${MOCK_INCOMPATIBLE_ROUTING_IMAGE:-__none__}"*) exit 1 ;; *) exit 0 ;; esac; fi; if printf "%s" "$*" | grep -q "reminder-scheduler"; then case "$*" in *"${MOCK_UNSUPPORTED_SCHEDULER_IMAGE:-never}"*) exit 1 ;; esac; [ "${MOCK_SCHEDULER_COMPAT:-1}" = "1" ]; else [ "${MOCK_CANDIDATE_COMPAT:-1}" = "1" ]; fi; exit; fi; last=""; for arg in "$@"; do last="$arg"; done; case "$last" in */deploy.sh) cat "$MOCK_REPO_ROOT/deploy/container/deploy.sh" ;; */compose.production.yml) cat "$MOCK_REPO_ROOT/deploy/container/compose.production.yml" ;; *) exit 1 ;; esac; exit 0; fi\n' +
       'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "up -d"; then printf "%s\\n" "$IVA_IMAGE" > "$MOCK_IMAGE_STATE"; if [ "${MOCK_CREATE_ROUTE:-0}" = "1" ] && printf "%s" "$*" | grep -q "telegram-poll"; then mkdir -p "$IVA_RUNTIME_ROOT/data/control"; printf "candidate route\\n" > "$IVA_RUNTIME_ROOT/data/control/legacy-owner-route.json"; fi; fi\n' +
       'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "ps -q iva"; then printf "iva-container\\n"; fi\n' +
       'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "ps -q telegram-poll"; then printf "poller-container\\n"; fi\n' +
       'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "ps -q telegram-userbot"; then printf "userbot-container\\n"; fi\n' +
+      'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "ps -q reminder-scheduler"; then printf "scheduler-container\\n"; fi\n' +
       'last=""; for arg in "$@"; do last="$arg"; done\n' +
       'if [ "${1:-}" = "inspect" ] && [ "$last" = "poller-container" ]; then printf "%s 0\\n" "${MOCK_POLLER_STATE:-running}"; exit 0; fi\n' +
       'if [ "${1:-}" = "inspect" ] && [ "$last" = "userbot-container" ]; then printf "%s %s\\n" "${MOCK_USERBOT_STATE:-running}" "${MOCK_USERBOT_RESTARTS:-0}"; exit 0; fi\n' +
       'if [ "${1:-}" = "exec" ] && [ "${2:-}" = "poller-container" ]; then [ "${MOCK_ROUTING_HEALTH:-1}" = "1" ]; exit; fi\n' +
+      'if [ "${1:-}" = "inspect" ] && [ "$last" = "scheduler-container" ]; then printf "%s %s\\n" "${MOCK_SCHEDULER_HEALTH:-healthy}" "${MOCK_SCHEDULER_RESTARTS:-0}"; exit 0; fi\n' +
       'if [ "${1:-}" = "exec" ] && [ "${2:-}" = "userbot-container" ]; then if [ "${MOCK_USERBOT_EXECUTE:-0}" = "1" ]; then /bin/sh -c "${5:-}"; else [ "${MOCK_USERBOT_HEALTH:-1}" = "1" ]; fi; exit; fi\n' +
       'if [ "${1:-}" = "inspect" ]; then image=$(/bin/cat "$MOCK_IMAGE_STATE"); case "$image" in *sha-b*) printf "unhealthy\\n" ;; *) printf "healthy\\n" ;; esac; fi\n',
   );
@@ -174,10 +176,21 @@ void test("a healthy candidate advances the current immutable image", () => {
   );
   assert.match(readFileSync(log, "utf8"), /ps -q telegram-poll/u);
   assert.match(readFileSync(log, "utf8"), /ps -q telegram-userbot/u);
+  assert.match(readFileSync(log, "utf8"), /ps -q reminder-scheduler/u);
   assert.match(
     readFileSync(log, "utf8"),
-    /up -d --remove-orphans iva telegram-poll telegram-userbot/u,
+    /up -d --remove-orphans iva telegram-poll telegram-userbot reminder-scheduler/u,
   );
+});
+
+void test("a candidate without the scheduler runtime is rejected", () => {
+  const { env } = harness();
+  const result = run(`deploy ${goodSha}`, {
+    ...env,
+    MOCK_SCHEDULER_COMPAT: "0",
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /candidate image lacks the reminder scheduler/u);
 });
 
 void test("a candidate without the real supervisor cannot pass via the inert fallback", () => {
@@ -232,6 +245,18 @@ void test("a stopped or restarted userbot supervisor fails deployment", () => {
   for (const override of [
     { MOCK_USERBOT_STATE: "exited" },
     { MOCK_USERBOT_RESTARTS: "1" },
+  ]) {
+    const { env } = harness();
+    const result = run(`deploy ${goodSha}`, { ...env, ...override });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /candidate failed health checks/u);
+  }
+});
+
+void test("an unhealthy or restarted reminder scheduler fails deployment", () => {
+  for (const override of [
+    { MOCK_SCHEDULER_HEALTH: "unhealthy" },
+    { MOCK_SCHEDULER_RESTARTS: "1" },
   ]) {
     const { env } = harness();
     const result = run(`deploy ${goodSha}`, { ...env, ...override });
@@ -349,4 +374,30 @@ void test("an incompatible rollback keeps polling stopped and removes a candidat
   assert.match(readFileSync(log, "utf8"), /stop telegram-poll/u);
   assert.doesNotMatch(result.stderr, /previous image restored/u);
   assert.match(result.stderr, /polling remains stopped/u);
+});
+
+void test("rollback restores an older image without scheduler support", () => {
+  const { root, env, log, imageState } = harness();
+  const previous = `ghcr.io/strongf-bob/iva:sha-${goodSha}`;
+  writeFileSync(join(root, "deploy/current-image"), `${previous}\n`);
+  writeFileSync(imageState, `${previous}\n`);
+
+  const result = run(`deploy ${badSha}`, {
+    ...env,
+    MOCK_UNSUPPORTED_SCHEDULER_IMAGE: previous,
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /previous image restored/u);
+  assert.match(
+    readFileSync(log, "utf8"),
+    /compose.*rm -sf reminder-scheduler/u,
+  );
+  assert.match(
+    readFileSync(log, "utf8"),
+    new RegExp(
+      `image=${previous}.*up -d --remove-orphans iva telegram-poll telegram-userbot(?:\\n|$)`,
+      "u",
+    ),
+  );
 });

@@ -17,6 +17,15 @@ import { z } from "zod";
 import { assertContactMemoryPath } from "../../agent/lib/contact-memory-transaction.ts";
 import { loadJsonStrict, saveJsonAtomic } from "../../agent/lib/json-store.ts";
 import { ContactAnalysisStateSchema } from "./state.ts";
+import { AnalysisPageSchema } from "./types.ts";
+
+const PendingBatchSchema = z.strictObject({
+  fromCommittedThrough: z.int().nonnegative(),
+  committedThrough: z.int().positive(),
+  rollingSummary: z.string().max(4000),
+  processedMessages: z.int().positive(),
+  batches: z.array(AnalysisPageSchema).min(1).max(256),
+});
 
 const JobSchema = z.strictObject({
   chatId: z.int().positive(),
@@ -26,6 +35,7 @@ const JobSchema = z.strictObject({
   committedThrough: z.int().nonnegative(),
   contextSummary: z.string().max(4000),
   processedMessages: z.int().nonnegative(),
+  pending: PendingBatchSchema.nullable().default(null),
   status: z.enum(["ready", "running", "complete", "retry"]),
   lastErrorCode: z.string().min(1).max(100).nullable(),
 });
@@ -112,6 +122,18 @@ export const BackfillStateSchema = z
           message: "job cursor exceeds high-water",
         });
       }
+      if (
+        job.pending &&
+        (job.pending.fromCommittedThrough !== job.committedThrough ||
+          job.pending.committedThrough <= job.committedThrough ||
+          job.pending.committedThrough > job.highWaterId)
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["jobs", key, "pending"],
+          message: "pending batch does not continue the durable cursor",
+        });
+      }
       const frozen = inventoryById.get(key);
       if (
         !frozen ||
@@ -147,7 +169,8 @@ export const BackfillStateSchema = z
         !state.inventoryComplete ||
         !state.backupReady ||
         !state.incrementalHandoffComplete ||
-        Object.values(state.jobs).some((job) => job.status !== "complete")
+        Object.values(state.jobs).some((job) => job.status !== "complete") ||
+        Object.values(state.jobs).some((job) => job.pending !== null)
       ) {
         context.addIssue({
           code: "custom",

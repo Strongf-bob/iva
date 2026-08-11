@@ -20,6 +20,16 @@ assert.equal(
   "details",
 );
 assert.equal(needsRichMessage("formula:\n$$E = mc^2$$"), true, "block math");
+const personCard = `# 👤 Alice Example
+
+| Field | Current |
+|---|---|
+| Relationship | Colleague |
+
+<details><summary>Sources</summary>
+vault/cards/contacts/alice.md
+</details>`;
+assert.equal(needsRichMessage(personCard), true, "People rich card");
 
 // Plain: HTML path renders these fine → must stay off rich.
 assert.equal(

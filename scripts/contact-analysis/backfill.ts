@@ -278,6 +278,7 @@ export async function runPrivateContactBackfill({
           committedThrough: 0,
           contextSummary: "",
           processedMessages: 0,
+          pending: null,
           status: "ready",
           lastErrorCode: null,
         };
@@ -415,6 +416,18 @@ export async function runPrivateContactBackfill({
             messages: [],
           }).length,
         });
+        const applyPending = async (): Promise<void> => {
+          const pending = state.jobs[String(dialog.id)].pending;
+          if (!pending) return;
+          await applyBatches(dialog, pending.batches, (candidate) => {
+            const candidateJob = candidate.jobs[String(dialog.id)];
+            candidateJob.contextSummary = pending.rollingSummary;
+            candidateJob.committedThrough = pending.committedThrough;
+            candidateJob.processedMessages += pending.processedMessages;
+            candidateJob.pending = null;
+          });
+        };
+        await applyPending();
         while (
           state.jobs[String(dialog.id)].committedThrough < job.highWaterId
         ) {
@@ -465,12 +478,18 @@ export async function runPrivateContactBackfill({
               group.flatMap((chunk) => chunk.map((message) => message.id)),
             );
             const committedThrough = Math.max(...completedIds);
-            await applyBatches(dialog, batches, (candidate) => {
-              const candidateJob = candidate.jobs[String(dialog.id)];
-              candidateJob.contextSummary = rollingSummary;
-              candidateJob.committedThrough = committedThrough;
-              candidateJob.processedMessages += completedIds.size;
-            });
+            const pendingState = structuredClone(state);
+            pendingState.jobs[String(dialog.id)].pending = {
+              fromCommittedThrough:
+                pendingState.jobs[String(dialog.id)].committedThrough,
+              committedThrough,
+              rollingSummary,
+              processedMessages: completedIds.size,
+              batches,
+            };
+            await saveBackfillState(paths, pendingState);
+            state = pendingState;
+            await applyPending();
           }
         }
         const candidate = structuredClone(state);

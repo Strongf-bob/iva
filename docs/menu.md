@@ -1,23 +1,51 @@
-# The settings menu (`/menu`)
+# The control center (`/menu`)
 
-`/menu` opens one Telegram message with a nested inline keyboard that gathers **every** Iva setting in one place — model, web search, language, a character test, a memory interview, the personal userbot, Google Workspace, timers, skills and a live status card. It exists because configuring an agent by hand — editing `.env`, running CLI wizards, pasting keys over SSH — is exactly where people get stuck.
+`/menu` opens Iva's action-first control center in one Telegram message. Daily work is at the top level; configuration is grouped under **Settings** instead of competing with routine actions. It exists because remembering commands or configuring an agent by hand — editing `.env`, running CLI wizards, pasting keys over SSH — is exactly where people get stuck.
 
-The menu lives in the long-poll bridge, not the agent. That has three consequences: it **works while Iva is mid-turn** (out-of-band — nothing is queued behind a running reply), it **costs zero model tokens** (the one exception is the memory interview, which hands your answers to Iva to distill), and deploying a change to it is a bridge restart, not a rebuild. Only user IDs on the allowlist can open it; taps from anyone else are silently dropped. Everything is bilingual (ru/en) and follows the **🌐 Language** button live.
+The menu lives in the long-poll bridge, not the agent. That has three consequences: it **works while Iva is mid-turn** (out-of-band — nothing is queued behind a running reply), local navigation, counts, and snapshots **cost zero model tokens**, while an explicitly chosen agent-backed action consumes a normal model turn, and deploying a bridge-only change does not require an agent rebuild. Only user IDs on the allowlist can open it; taps from anyone else are silently dropped. Everything is bilingual (ru/en) and follows the **🌐 Language** button live.
 
 ## The map
 
 ```
-⚙️ Settings
-[🧠 Model]     [🤔 Thinking]
-[🔍 Search]    [🌐 Language]
-[🎭 Character] [💾 Memory]
-[📡 Userbot]   [🔗 Google]
-[⏰ Timers]    [🧩 Skills]
-[📊 Status]    [🛠 Maintenance]
+Iva
+[✨ Today]      [📥 Inbox]
+[👥 People]     [✅ Tasks]
+[🔔 Automation] [⚙️ Settings]
 [✖ Close]
+
+Settings
+[🧠 AI] [🔗 Connections]
+[🎨 Personalization]
+[🛠 System]
 ```
 
-**🧠 Model** and **🤔 Thinking** hand off to the existing `/model` and `/think` wizards, rendered into the same message; a **‹ Menu** button walks you back. Every other sub-screen has a **‹ Back** button; **✖ Close** drops the menu and strips the keyboard.
+On personalized multi-user workers, ordinary users see **Today**, **Tasks**, **Automation**, and **Settings**. **Inbox** and **People** remain owner-only because they expose private cross-service and relationship context. **✖ Close** drops the menu and strips the keyboard.
+
+## Daily actions
+
+- **✨ Today** shows the current open-task count and starts either the daily attention brief or weekly review through the existing authenticated command route.
+- **📥 Inbox** shows a bounded snapshot of urgent and reply-needed items from the owner's isolated unified-inbox state. **Review privately** hands the existing snapshot to Iva for an evidence-backed read-only review; it never recollects sources or performs proposed actions. Missing or corrupt snapshots are reported honestly.
+- **✅ Tasks** shows the open count, lists tasks through `/tasks`, or captures one 1–500-character task and hands it to `/task`.
+- **🔔 Automation** opens personal reminders, schedules, and their health information.
+
+## People
+
+**👥 People** is an owner-only personal CRM surface with three actions:
+
+- **What do we know?** asks for a name and runs `/person <name>`. Iva resolves one contact, reads at most three directly linked supporting cards, separates current truth from History, preserves confidence labels, and cites vault-relative evidence.
+- **Relationship brief** hands the same bounded identity to `/brief <name>` for conversation preparation.
+- **Add a detail** asks for a name and one factual note. The note is passed as structured untrusted data to the hidden supplement workflow; it never appears in `callback_data`.
+
+Supplements update only one unambiguously resolved existing contact card through `write_card`. Compatible facts use `UPDATE`; a contradiction uses `SUPERSEDE` only when the owner explicitly states a correction, preserving the displaced fact in History. Ambiguous or missing contacts cause no write, and the workflow never creates tasks, messages, calendar events, drafts, or a new contact as a side effect.
+
+## Settings groups
+
+- **🧠 AI** — model, thinking effort, and web search.
+- **🔗 Connections** — personal read-only Telegram userbot and Google Workspace.
+- **🎨 Personalization** — language, character, and the CORE memory interview.
+- **🛠 System** — status, skills, and maintenance.
+
+**🧠 Model** and **🤔 Thinking** hand off to the existing `/model` and `/think` wizards, rendered into the same message; a **‹ Menu** button walks you back. Every other sub-screen has a **‹ Back** button.
 
 ## What applies when
 
@@ -86,24 +114,24 @@ userbot remains opt-in beta; the full picture, including the anti-ban guardrail:
 
 ## Google Workspace
 
-The **🔗 Google** screen checks for `~/.config/gws/client_secret.json`. Missing, it walks you through console.cloud.google.com — create an OAuth client of type _Desktop app_, download the JSON, and send it into the chat — paste the contents or attach the `.json` file (it's shape-checked and written `0600`). Present, it probes authorization; if you're not signed in yet it shows a **Connect** button that runs the whole sign-in for you — no SSH. `gws auth login` only supports the loopback flow (it waits for the browser to hit `http://localhost:<port>` on the server), which can't complete from a browser on another machine. So Iva starts `gws` itself, sends you the Google consent link, and when you approve and paste the redirect URL back — the one that lands on a `http://localhost:…` page your browser can't load — it replays that callback against the loopback listener locally, finishing the exchange and storing the token. The pasted URL carries a one-time code, so Iva deletes that message and never logs it, then edits the screen to a final status (connected, or retry). What `gws` reaches: Gmail, Calendar, Tasks, Drive, Sheets, Docs.
+The **🔗 Google** screen checks for `.config/gws/client_secret.json` beneath the active user's `HOME`. In personalized containers that `HOME` is the selected user's private root, so credentials and OAuth tokens cannot cross users. Missing, it walks you through console.cloud.google.com — create an OAuth client of type _Desktop app_, download the JSON, and send it into the chat — paste the contents or attach the `.json` file (it's shape-checked and written `0600`). Present, it probes authorization; if you're not signed in yet it shows a **Connect** button that runs the whole sign-in for you — no SSH. `gws auth login` only supports the loopback flow (it waits for the browser to hit `http://localhost:<port>` on the server), which can't complete from a browser on another machine. So Iva starts `gws` with that same private `HOME`, sends you the Google consent link, and when you approve and paste the redirect URL back — the one that lands on a `http://localhost:…` page your browser can't load — it replays that callback against the loopback listener locally, finishing the exchange and storing the token. The pasted URL carries a one-time code, so Iva deletes that message and never logs it, then edits the screen to a final status (connected, or retry). What `gws` reaches: Gmail, Calendar, Tasks, Drive, Sheets, Docs. Runtime commands are narrower than the OAuth scopes: Gmail can only be read or saved as a draft, Calendar events cannot contain attendees, and Tasks/Drive/Sheets/Docs allow reads and artifact creation but no update or delete operations.
 
 ## Timers, Skills, Status
 
 Three read-only screens.
 
-- **⏰ Timers** — the `iva-*` (and `xfeed-daily`) systemd timers with their next run, plus the open-task count from `data/tasks.json`.
+- **⏰ Timers** — personal durable reminders in containers; host-native installs show the `iva-*` (and `xfeed-daily`) systemd timers. Both include the open-task count and built-in eve schedules.
 - **🧩 Skills** — every installed skill with a one-line description, paged.
 - **📊 Status** — one card: version, provider · model · thinking, search provider and key badge, language, userbot state, Google, and today's token usage (the same figure as `/usage`). **🔄 Refresh** re-reads everything. Thinking levels are selectable for OpenAI subscriptions and for the OpenAI-compatible Ollama Cloud and OpenCode Go APIs; the latter expose the common `low` / `medium` / `high` contract.
 
 ## Maintenance
 
-**🛠 Maintenance** gathers the install's technical commands so none of them need SSH:
+**🛠 Maintenance** gathers the install's technical commands so routine checks do not need SSH. Host-native and container runtimes use different adapters:
 
-- **🩺 Doctor** — `iva doctor`: diagnoses and auto-repairs units, timers, port, `.env`, build.
+- **🩺 Doctor** — host-native `iva doctor` diagnoses and repairs units, timers, port, `.env`, and build. In a container it checks private writable paths, `gws`, Eve health, the durable poller offset, scheduler heartbeat, and the selected user's last schedule outcome without claiming to repair immutable image or host services.
 - **🧹 Vault cleanup** — the streaming cleaner from 0.3.1 (`cleanup.py --apply`): collapses description bloat, never touches card bodies.
-- **🌙 Night memory cycle** — starts the nightly `iva-memory-doctor.service` right now instead of 05:00; it runs as the same systemd unit, so it survives bridge restarts.
-- **🔄 Update** — hands off to the existing `/update` flow (check → confirm buttons → an update that survives its own restart).
+- **🌙 Night memory cycle** — host-native mode starts `iva-memory-doctor.service`; container mode runs the selected user's bounded memory job with its normal lock and status file.
+- **🔄 Update** — host-native mode hands off to the existing `/update` flow. A container cannot safely replace itself from chat, so container mode shows exact host-side `docker compose pull` and `docker compose up -d` guidance.
 
 Every command asks for confirmation, then shows live progress in the same message — an animated loader from the same custom-emoji pack the update flow uses (a swirl for doctor, green for cleanup, an orange spinner for the memory cycle; plain ◇ when the bot owner has no Premium), the current step and elapsed time, with a ✖ Cancel button. One command runs at a time, and doctor/cleanup refuse to start while an update is in progress. The final summary is a single line with numbers (files cleaned and MB freed, ok/warn counts) plus the output tail when something failed.
 

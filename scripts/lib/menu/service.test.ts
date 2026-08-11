@@ -13,7 +13,7 @@ import service, {
   type MenuServiceState,
   type MenuServiceView,
 } from "./service.ts";
-import root from "./root.ts";
+import settingsSystem from "./settings-system.ts";
 import {
   LOADERS,
   cancelRun,
@@ -30,6 +30,7 @@ const { SCREENS } = (await import("./index.ts")) as {
 
 type TestState = MenuServiceState & {
   flow: "menu";
+  role?: "owner" | "user";
   page: number;
   awaitText: null;
   data: Record<string, unknown>;
@@ -112,6 +113,51 @@ const newState = (over: Partial<TestState> = {}): TestState => ({
   ...over,
 });
 
+test("container Maintenance uses per-user attached processes and truthful update guidance", async () => {
+  resetForTests();
+  let updateChecks = 0;
+  const h = makeCtx({
+    lang: "en",
+    deps: {
+      runtime: "container",
+      root: "/app",
+      dataDir: "/app/data",
+      envPath: "/app/.env",
+      handleUpdateCheck: () => {
+        updateChecks += 1;
+      },
+    },
+  });
+  const st = newState({
+    userId: "101",
+    personalRoot: "/app/data/users/101",
+  });
+  h.st = st;
+
+  for (const cmd of ["doc", "cln", "mem"] as const) {
+    const spec = await commandSpec(cmd, h.ctx, st);
+    assert.equal(spec.kind, "proc");
+    assert.equal(spec.env?.HOME, "/app/data/users/101");
+  }
+  const cleanup = await commandSpec("cln", h.ctx, st);
+  assert.equal(cleanup.kind, "proc");
+  if (cleanup.kind !== "proc")
+    throw new Error("expected container process spec");
+  assert.equal(cleanup.cwd, "/app/data/users/101/vault");
+
+  await service.on("c", ["doc"], st, h.ctx);
+  assert.ok(st._last);
+  assert.doesNotMatch(st._last.text, /units|timers/u);
+  assert.match(st._last.text, /scheduler health/u);
+
+  await service.on("up", [], st, h.ctx);
+  assert.equal(updateChecks, 0);
+  assert.ok(st._last);
+  assert.doesNotMatch(st._last.text, /docker compose pull/u);
+  assert.match(st._last.text, /Deploy workflow/u);
+  assert.match(st._last.text, /deploy <40-character main SHA>/u);
+});
+
 const waitFor = async (fn: () => boolean, ms = 3000): Promise<void> => {
   const until = Date.now() + ms;
   while (Date.now() < until) {
@@ -127,16 +173,19 @@ const fastRun = {
   pollMs: 5,
 } satisfies Partial<RunOptions>;
 
-test("svc зарегистрирован в движке, root ведёт на него, Закрыть в своём ряду", () => {
+test("svc зарегистрирован в движке и доступен из системных настроек", () => {
   assert.equal(SCREENS.svc, service);
-  const view = root.render(newState({ screen: "r" }), makeCtx().ctx);
+  const view = settingsSystem.render(
+    newState({ screen: "ssys", role: "owner" }),
+    makeCtx().ctx,
+  );
   const flat = view.rows.flat();
   assert.ok(flat.some((b) => b.callback_data === "iva_menu:svc:o"));
-  const closeRow = view.rows.find((r) =>
-    r.some((b) => b.callback_data === "iva_menu:r:x"),
+  const backRow = view.rows.find((r) =>
+    r.some((b) => b.callback_data === "iva_menu:r:o"),
   );
-  assert.ok(closeRow);
-  assert.equal(closeRow.length, 1);
+  assert.ok(backRow);
+  assert.equal(backRow.length, 1);
 });
 
 test("render idle: четыре команды и Назад, ru/en", async () => {

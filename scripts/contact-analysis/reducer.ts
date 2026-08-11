@@ -366,6 +366,8 @@ function renderObservation(observation: Observation): string {
     works_on: "Проект",
     communication_style: "Как общается",
     commitment: "Обязательство",
+    follow_up: "Следующий шаг",
+    meaningful_contact: "Значимый контакт",
     preference: "Предпочтение",
     owner_mention: "Упоминание владельца",
     external_owner_claim: "Со слов другого человека",
@@ -431,7 +433,9 @@ function observationSection(observation: Observation): string {
     return "Интересы и предпочтения";
   if (observation.predicate === "important_date") return "Важные даты";
   if (observation.predicate === "gift_idea") return "Подарки и идеи";
-  if (observation.predicate === "commitment") return "Открытые дела";
+  if (["commitment", "follow_up"].includes(observation.predicate))
+    return "Открытые дела";
+  if (observation.predicate === "meaningful_contact") return "Наши отношения";
   return "Интересные факты";
 }
 

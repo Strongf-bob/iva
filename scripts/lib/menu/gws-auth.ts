@@ -13,8 +13,8 @@ import { spawn } from "node:child_process";
 import { request as httpRequest } from "node:http";
 import { readFile } from "node:fs/promises";
 import { existsSync, openSync, closeSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { join, dirname, isAbsolute } from "node:path";
 
 export interface AuthChallenge {
   url: string;
@@ -51,6 +51,31 @@ interface StartAuthOptions {
 
 interface RelayCodeOptions {
   timeoutMs?: number;
+}
+
+export interface GoogleHomeOptions {
+  personalRoot?: string;
+  container?: boolean;
+  multiUser?: boolean;
+  fallbackHome?: string;
+}
+
+export function resolveGoogleHome({
+  personalRoot,
+  container = process.env.IVA_RUNTIME === "container",
+  multiUser = process.env.ASSISTANT_MULTI_USER === "1",
+  fallbackHome = homedir(),
+}: GoogleHomeOptions = {}): string {
+  if (personalRoot && isAbsolute(personalRoot)) return personalRoot;
+  if (container || multiUser) {
+    throw new Error(
+      "personal Google HOME must be an absolute configured user path",
+    );
+  }
+  if (!isAbsolute(fallbackHome)) {
+    throw new Error("fallback Google HOME must be absolute");
+  }
+  return fallbackHome;
 }
 
 function textValue(value: unknown): string {
@@ -106,7 +131,8 @@ export function gwsBin() {
   return existsSync(p) ? p : "gws";
 }
 
-export function childEnv(homeDir?: string) {
+export function childEnv(homeDir: string) {
+  if (!isAbsolute(homeDir)) throw new Error("Google HOME must be absolute");
   const path = process.env.PATH
     ? `${NODE_BIN_DIR}:${process.env.PATH}`
     : NODE_BIN_DIR;
@@ -133,6 +159,7 @@ export async function startAuth({
   timeoutMs = 6000,
   homeDir,
 }: StartAuthOptions = {}): Promise<AuthSession | null> {
+  const resolvedHome = resolveGoogleHome({ personalRoot: homeDir });
   const logPath = join(
     tmpdir(),
     `iva-gws-auth-${process.pid}-${Date.now()}.log`,
@@ -141,7 +168,7 @@ export async function startAuth({
   let child;
   try {
     child = spawn(gwsBin(), ["auth", "login", "-s", services], {
-      env: childEnv(homeDir),
+      env: childEnv(resolvedHome),
       detached: true,
       stdio: ["ignore", fd, fd],
     });

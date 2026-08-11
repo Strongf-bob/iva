@@ -19,7 +19,7 @@ import {
 import { isRunning, chatKeyOf } from "#lib/run-status.ts";
 
 const SID = "core";
-const PARENT = "r";
+const PARENT = "sper";
 const EXCERPT_LIMIT = 400;
 
 type Lang = "en" | "ru";

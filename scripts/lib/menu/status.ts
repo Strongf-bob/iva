@@ -5,23 +5,33 @@
 // заглушка «…», затем async-edit по завершении. Так единственный getUpdates-цикл моста не
 // блокируется дольше ~1.5с.
 import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
 import { readEnvValues } from "../env-file.ts";
 import { CATALOG } from "../model-catalog.ts";
 import { SEARCH_CATALOG } from "../search-catalog.ts";
 import { readEntries, summarize } from "../usage.ts";
 import { probeUserbotHealth } from "../userbot-health.ts";
+import {
+  isContainerRuntime,
+  readContainerRuntimeStatus,
+} from "../container-maintenance.ts";
 
 type Env = Record<string, string | undefined>;
 type VersionPackage = { version?: unknown };
-type StatusState = { chatId: unknown; userId: unknown; screen: string };
+type StatusState = {
+  chatId: unknown;
+  userId: unknown;
+  screen: string;
+  personalRoot?: string;
+};
 type Health = { state?: string };
 type MenuContext = {
   deps: {
     root: string;
     envPath: string;
     dataDir: string;
+    runtime?: "container" | "host";
     probeUserbotHealth?: (options: {
       root: string;
       port: string;
@@ -87,7 +97,7 @@ function usageToday(
 }
 
 // Собирает быстрые поля (без медленной пробы) — переиспользуется первым рендером и async-edit'ом.
-function fastFields(env: Env, ctx: MenuContext) {
+function fastFields(env: Env, ctx: MenuContext, state: StatusState) {
   const provider =
     typeof env.MODEL_PROVIDER === "string" &&
     Object.hasOwn(CATALOG, env.MODEL_PROVIDER)
@@ -100,6 +110,22 @@ function fastFields(env: Env, ctx: MenuContext) {
       ? env.SEARCH_PROVIDER
       : "tavily";
   const searchCat = SEARCH_CATALOG[searchProv as keyof typeof SEARCH_CATALOG];
+  const container = isContainerRuntime(
+    ctx.deps.runtime ?? process.env.IVA_RUNTIME,
+  );
+  const googleHome =
+    state.personalRoot && isAbsolute(state.personalRoot)
+      ? state.personalRoot
+      : container
+        ? null
+        : homedir();
+  const runtimeStatus = container
+    ? readContainerRuntimeStatus(ctx.deps.dataDir)
+    : null;
+  const personalDataDir =
+    container && state.personalRoot && isAbsolute(state.personalRoot)
+      ? join(state.personalRoot, "runtime", "data")
+      : ctx.deps.dataDir;
   return {
     version: version(ctx.deps.root),
     provider,
@@ -108,8 +134,13 @@ function fastFields(env: Env, ctx: MenuContext) {
     searchProv,
     hasKey: Boolean(searchCat && env[searchCat.keyVar]),
     lang: ctx.getLang(),
-    gws: existsSync(join(homedir(), ".config/gws/client_secret.json")),
-    usage: usageToday(ctx.deps.dataDir, env.ASSISTANT_TIMEZONE, ctx.tr),
+    gws: Boolean(
+      googleHome &&
+      existsSync(join(googleHome, ".config/gws/client_secret.json")),
+    ),
+    runtime: container ? "container" : "host",
+    scheduler: runtimeStatus?.scheduler ?? "host-managed",
+    usage: usageToday(personalDataDir, env.ASSISTANT_TIMEZONE, ctx.tr),
   };
 }
 
@@ -143,6 +174,8 @@ function buildView(
       `Поиск: ${d.searchProv} ${d.hasKey ? "🔑" : "🔒"}`,
     ),
     T(`Language: ${d.lang}`, `Язык: ${d.lang}`),
+    T(`Runtime: ${d.runtime}`, `Среда: ${d.runtime}`),
+    T(`Scheduler: ${d.scheduler}`, `Планировщик: ${d.scheduler}`),
     `Userbot: ${ub}`,
     T(
       `Google: ${d.gws ? "configured" : "not set"}`,
@@ -152,16 +185,16 @@ function buildView(
   ];
   const rows = [
     [ctx.btn(T("🔄 Refresh", "🔄 Обновить"), "iva_menu:st:rf")],
-    ctx.backRow("r"),
+    ctx.backRow("ssys"),
   ];
   return { text: lines.join("\n"), rows };
 }
 
 export default {
-  parent: "r",
+  parent: "ssys",
   async render(st: StatusState, ctx: MenuContext) {
     const env = (await readEnvValues(ctx.deps.envPath)) as Env;
-    const d = fastFields(env, ctx);
+    const d = fastFields(env, ctx, st);
 
     // Медленную пробу гоним ОТДЕЛЬНО и правим сообщение по готовности — только если экран
     // всё ещё текущий (пользователь не ушёл в другой раздел / не закрыл меню).

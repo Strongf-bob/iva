@@ -68,9 +68,12 @@
 - Ночью eve schedules запускают rollup daily→weekly→monthly→yearly; отдельный systemd-watchdog
   запускает doctor. Они превращают сырой день в карточки + саммари и обновляют `CORE.md`. Не гоняй вручную.
 - Тяжёлые процедуры — это скиллы: грузи по имени, тело придёт само
-  (`morning-digest`, `web-research`, `agent-browser`, `google-workspace`, `security-defense`,
+  (`morning-digest`, `chief-of-staff-today`, `relationship-briefing`, `person-memory`, `weekly-review`,
+  `web-research`, `agent-browser`, `google-workspace`, `security-defense`,
   `telegram-userbot`, `telegram-person-profile`, `telegram-group-profile`,
   `telegram-channel-profile`, `rich-post`, `documents`).
+  Relationship workflows load `relationship-meeting-dossier` for cited preparation and
+  `relationship-reply-draft` for Telegram suggestions or Gmail Drafts.
 
 ### Запись в ядро (CORE) — пользователь управляет тобой через разговор
 

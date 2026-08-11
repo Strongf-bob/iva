@@ -1,20 +1,22 @@
 ---
 description: >-
-  Send Telegram rich-media posts and reports via the bot (Bot API 10.1 sendRichMessage) - text, inline images, tables, headings, lists, quotes, collapsible blocks, formulas, collages/slideshows ALL in one message bubble. This is the REQUIRED transport for reports (see the red-banner rule in the persona). Also use when asked for a rich post, a message with images between text, a post with a table, "rich message", "картинка в середине текста". NOT for plain text replies (just answer) or simple albums.
+  Send Telegram rich-media posts and reports via the bot (Bot API 10.2 sendRichMessage) - text, inline images, tables, headings, lists, quotes, collapsible blocks, formulas, collages/slideshows ALL in one message bubble. This is the REQUIRED transport for reports (see the red-banner rule in the persona). Also use when asked for a rich post, a message with images between text, a post with a table, "rich message", "картинка в середине текста". NOT for plain text replies (just answer) or simple albums.
 ---
 
 # rich-post — Telegram rich messages via the bot
 
 Send ONE message that mixes text, inline images, tables, headings, lists,
 block quotes, collapsible blocks and formulas. This is `sendRichMessage`
-(Bot API 10.1, June 2026), not an album.
+(Bot API 10.2), not an album.
 
 Album (sendMediaGroup) = up to 10 media, ONE caption, no text between images.
 Rich message = up to 50 media, text/tables/blocks interleaved in a single
 bubble. If the user wants "картинка в середине текста" or "таблица в посте" —
 this skill.
 
-## Quick start
+## Standalone delivery quick start
+
+Skip this section entirely in embedded renderer mode.
 
 All paths are relative to the repo root (the agent's working directory).
 
@@ -34,6 +36,18 @@ python3 agent/skills/rich-post/scripts/send_rich.py --md-file /tmp/post.md
 - `--silent`, `--thread-id` — optional.
 - Token: `$TELEGRAM_BOT_TOKEN` or the repo `.env`. There is NO `--token` flag
   (argv is visible in the process list) — don't put the token on the command line.
+
+## Embedded renderer mode
+
+Another skill may explicitly select **embedded renderer mode** when it already owns
+the current Eve reply. In that mode, return exactly one normal reply containing
+Rich Markdown. Include at least one native-rich construct — a table, task list,
+`<details>` block, or block formula — so the Telegram channel selects
+`sendRichMessage`.
+
+Do not create a temporary file and do not call `send_rich.py` in embedded renderer
+mode. Do not send a second confirmation. The current Eve turn owns delivery,
+outbound redaction, success accounting, and the HTML/plain fallback.
 
 ## Local images — read before using
 
@@ -59,7 +73,9 @@ Because of that:
 Telegram fetches and caches the media at send time, so the temp URL expiring
 afterwards is fine.
 
-## Workflow
+## Standalone delivery workflow
+
+Skip this section entirely in embedded renderer mode.
 
 1. **Write content** in markdown (see syntax below) to a temp file.
 2. **`--dry-run`** to verify layout and image paths (offline).
@@ -127,10 +143,13 @@ HTML-only extras: <u>underline</u> <sub>x</sub> <sup>x</sup>
 - Use `rich_message.markdown` OR `rich_message.html`, exactly one.
 - Channels/groups: the bot must be admin with permission to send media (and
   the target still has to be allowlisted).
-- The host does NOT call sendRichMessage on normal replies — this script is
-  the way to send rich posts.
+- The host promotes a normal reply only when it contains a native-rich construct.
+  Standalone rich posts still use this script; workflows in embedded renderer mode
+  return their Rich Markdown through the current Eve turn instead.
 
-## Example
+## Standalone delivery example
+
+Skip this section entirely in embedded renderer mode.
 
 ```bash
 cat > /tmp/post.md <<'EOF'

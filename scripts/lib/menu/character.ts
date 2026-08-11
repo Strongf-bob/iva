@@ -16,7 +16,7 @@ import {
 } from "../quiz.ts";
 
 const SID = "chr";
-const PARENT = "r";
+const PARENT = "sper";
 
 type Lang = "en" | "ru";
 type Button = { text: string; callback_data: string };

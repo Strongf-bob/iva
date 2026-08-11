@@ -12,6 +12,12 @@ import {
   type UpdateQuestionWorkbookInput,
   type UpdateQuestionWorkbookResult,
 } from "./question-workbook.ts";
+import { reduceRelationshipObservations } from "../relationship-intelligence/reducer.ts";
+import { renderRelationshipCrm } from "../relationship-intelligence/crm.ts";
+import {
+  loadRegistry,
+  relationshipPaths,
+} from "../relationship-intelligence/store.ts";
 import {
   reduceBatch,
   type ReduceBatchInput,
@@ -138,6 +144,7 @@ export interface RunContactAnalysisOptions {
   ) => Promise<UpdateQuestionWorkbookResult>;
   readSkillTextImpl?: (dialog: TelegramDialog) => Promise<string>;
   contextTokens?: number;
+  reduceRelationshipImpl?: typeof reduceRelationshipObservations;
   sleepImpl?: (milliseconds: number) => Promise<void>;
 }
 
@@ -272,6 +279,7 @@ export async function runContactAnalysis({
   updateQuestionWorkbookImpl = updateQuestionWorkbook,
   readSkillTextImpl = (dialog) => readFile(skillPathFor(dialog.kind), "utf8"),
   contextTokens = Number(process.env.OPENCODE_CONTEXT_WINDOW ?? 131_072),
+  reduceRelationshipImpl = reduceRelationshipObservations,
   sleepImpl = (milliseconds) =>
     new Promise((resolve) => setTimeout(resolve, milliseconds)),
 }: RunContactAnalysisOptions = {}): Promise<ContactAnalysisReport> {
@@ -304,6 +312,7 @@ export async function runContactAnalysis({
   await persist();
 
   let reducerChain = Promise.resolve();
+  const relationshipStatePaths = relationshipPaths(root, dataDir);
   const enqueueReduction = (
     graphInput: ReduceBatchInput,
     workbookInput: UpdateQuestionWorkbookInput,
@@ -311,6 +320,15 @@ export async function runContactAnalysis({
     const pending = reducerChain.then(async () => {
       const graph = await reduceBatchImpl(graphInput);
       const workbook = await updateQuestionWorkbookImpl(workbookInput);
+      await reduceRelationshipImpl({
+        paths: relationshipStatePaths,
+        ownerUserId: graphInput.ownerUserId,
+        observations: graphInput.batch.observations,
+      });
+      await renderRelationshipCrm({
+        vault,
+        registry: await loadRegistry(relationshipStatePaths),
+      });
       return { graph, workbook };
     });
     reducerChain = pending.then(

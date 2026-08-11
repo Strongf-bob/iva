@@ -20,6 +20,7 @@ type TelegramResponse = {
   ok: boolean;
   status: number;
   text: string;
+  messageId: number | null;
 };
 
 async function post(
@@ -31,11 +32,138 @@ async function post(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  const text = await res.text();
+  let messageId: number | null = null;
+  if (res.ok && text) {
+    try {
+      const parsed: unknown = JSON.parse(text);
+      const id = (parsed as { result?: { message_id?: unknown } } | null)
+        ?.result?.message_id;
+      if (typeof id === "number" && Number.isSafeInteger(id)) messageId = id;
+    } catch {
+      // Existing callers only need the HTTP success bit. Receipt-requiring callers
+      // classify a missing message id as ambiguous below.
+    }
+  }
   return {
     ok: res.ok,
     status: res.status,
-    text: res.ok ? "" : await res.text(),
+    text: res.ok ? "" : text,
+    messageId,
   };
+}
+
+type InlineKeyboardMarkup = {
+  readonly inline_keyboard: readonly (readonly {
+    readonly text: string;
+    readonly callback_data: string;
+  }[])[];
+};
+
+type TelegramSendResult = {
+  readonly ok: boolean;
+  readonly fellBack: boolean;
+  readonly error: string;
+  readonly receipt: string;
+  readonly failureKind?: "retryable" | "ambiguous" | "terminal";
+};
+
+function failureKind(status: number): "retryable" | "terminal" {
+  return status >= 500 || status === 408 || status === 425 || status === 429
+    ? "retryable"
+    : "terminal";
+}
+
+async function sendTelegramHtmlInternal(
+  bot: string,
+  chat: string,
+  md: unknown,
+  {
+    caption = false,
+    replyMarkup,
+    requireReceipt = false,
+  }: {
+    readonly caption?: boolean;
+    readonly replyMarkup?: InlineKeyboardMarkup;
+    readonly requireReceipt?: boolean;
+  } = {},
+): Promise<TelegramSendResult> {
+  let fellBack = false;
+  const messageIds: number[] = [];
+  const guard = scanOutbound(md as string);
+  if (!guard.clean) {
+    console.error(
+      "[security] outbound report leak redacted:",
+      guard.findings.map((f) => `${f.type}:${f.name}`).join(", "),
+    );
+  }
+  const chunks = toTelegramHtmlChunks(guard.text, caption ? 1024 : 4096);
+  try {
+    for (const [index, chunk] of chunks.entries()) {
+      const last = index === chunks.length - 1;
+      const r = await post(bot, {
+        chat_id: chat,
+        text: chunk,
+        parse_mode: "HTML",
+        ...(last && replyMarkup ? { reply_markup: replyMarkup } : {}),
+      });
+      if (r.ok) {
+        if (r.messageId !== null) messageIds.push(r.messageId);
+        continue;
+      }
+      if (r.status === 400) {
+        fellBack = true;
+        const plain = await post(bot, {
+          chat_id: chat,
+          text: htmlToPlain(chunk),
+          ...(last && replyMarkup ? { reply_markup: replyMarkup } : {}),
+        });
+        if (plain.ok) {
+          if (plain.messageId !== null) messageIds.push(plain.messageId);
+          continue;
+        }
+        return {
+          ok: false,
+          fellBack,
+          error: `plain retry ${plain.status}: ${plain.text}`,
+          receipt: "",
+          failureKind:
+            messageIds.length > 0 ? "ambiguous" : failureKind(plain.status),
+        };
+      }
+      return {
+        ok: false,
+        fellBack,
+        error: `${r.status}: ${r.text}`,
+        receipt: "",
+        failureKind:
+          messageIds.length > 0 ? "ambiguous" : failureKind(r.status),
+      };
+    }
+    if (requireReceipt && messageIds.length !== chunks.length) {
+      return {
+        ok: false,
+        fellBack,
+        error: "Telegram accepted a message without a delivery receipt",
+        receipt: "",
+        failureKind: "ambiguous",
+      };
+    }
+    return {
+      ok: true,
+      fellBack,
+      error: "",
+      receipt: messageIds.length ? `telegram:${messageIds.join(",")}` : "",
+    };
+  } catch {
+    return {
+      ok: false,
+      fellBack,
+      error: "Telegram transport failed",
+      receipt: "",
+      failureKind: "ambiguous",
+    };
+  }
 }
 
 export async function sendTelegramHtml(
@@ -44,52 +172,24 @@ export async function sendTelegramHtml(
   md: unknown,
   { caption = false }: { caption?: boolean } = {},
 ): Promise<{ ok: boolean; fellBack: boolean; error: string }> {
-  let fellBack = false;
-  // Outbound security-гейт: редактим утёкшие секреты и в ночных отчётах (fail-open + лог).
-  const guard = scanOutbound(md as string);
-  if (!guard.clean) {
-    console.error(
-      "[security] outbound report leak redacted:",
-      guard.findings.map((f) => `${f.type}:${f.name}`).join(", "),
-    );
-  }
-  const guardedMarkdown = guard.text;
-  try {
-    for (const chunk of toTelegramHtmlChunks(
-      guardedMarkdown,
-      caption ? 1024 : 4096,
-    )) {
-      const r = await post(bot, {
-        chat_id: chat,
-        text: chunk,
-        parse_mode: "HTML",
-      });
-      if (r.ok) continue;
-      // 400 = Telegram не распарсил HTML. Одна повторная попытка без тегов/parse_mode.
-      if (r.status === 400) {
-        fellBack = true;
-        const plain = await post(bot, {
-          chat_id: chat,
-          text: htmlToPlain(chunk),
-        });
-        if (!plain.ok)
-          return {
-            ok: false,
-            fellBack,
-            error: `plain retry ${plain.status}: ${plain.text}`,
-          };
-        continue;
-      }
-      return { ok: false, fellBack, error: `${r.status}: ${r.text}` };
-    }
-    return { ok: true, fellBack, error: "" };
-  } catch (e) {
-    const message =
-      e !== null &&
-      (typeof e === "object" || typeof e === "function") &&
-      "message" in e
-        ? (e.message ?? e)
-        : e;
-    return { ok: false, fellBack, error: String(message) };
-  }
+  const result = await sendTelegramHtmlInternal(bot, chat, md, { caption });
+  return {
+    ok: result.ok,
+    fellBack: result.fellBack,
+    error: result.error,
+  };
+}
+
+export function sendTelegramHtmlWithReceipt(
+  bot: string,
+  chat: string,
+  md: unknown,
+  options: {
+    readonly replyMarkup?: InlineKeyboardMarkup;
+  } = {},
+): Promise<TelegramSendResult> {
+  return sendTelegramHtmlInternal(bot, chat, md, {
+    ...options,
+    requireReceipt: true,
+  });
 }

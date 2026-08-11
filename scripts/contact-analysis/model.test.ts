@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { LanguageModel } from "ai";
 
+import { CONTACT_ANALYSIS_MAX_OUTPUT_TOKENS } from "./context-budget.ts";
 import { analyzeStructured } from "./model.ts";
 
 const model = { modelId: "fake-model" } as unknown as LanguageModel;
@@ -42,9 +43,9 @@ test("structured analysis passes the exact skill and bounded chat context", asyn
     },
     {
       model,
-      streamObjectImpl: ((options: Record<string, unknown>) => {
+      generateObjectImpl: ((options: Record<string, unknown>) => {
         received = options;
-        return { object: Promise.resolve(batch) };
+        return Promise.resolve({ object: batch });
       }) as never,
     },
   );
@@ -52,10 +53,41 @@ test("structured analysis passes the exact skill and bounded chat context", asyn
   assert.deepEqual(result, batch);
   assert.equal(received?.model, model);
   assert.equal(received?.system, "PRIVATE CHAT SKILL");
-  assert.equal(received?.maxOutputTokens, 16_384);
+  assert.equal(CONTACT_ANALYSIS_MAX_OUTPUT_TOKENS, 32_768);
+  assert.equal(received?.maxOutputTokens, CONTACT_ANALYSIS_MAX_OUTPUT_TOKENS);
   assert.equal(received?.maxRetries, 0);
   assert.ok(received?.abortSignal instanceof AbortSignal);
-  assert.deepEqual(JSON.parse(String(received?.prompt)), {
+  const parsedPrompt: unknown = JSON.parse(String(received?.prompt));
+  assert.ok(
+    parsedPrompt !== null &&
+      typeof parsedPrompt === "object" &&
+      !Array.isArray(parsedPrompt),
+  );
+  const prompt = parsedPrompt as Record<string, unknown>;
+  const responseSchema = prompt.responseSchema;
+  assert.ok(
+    responseSchema !== null &&
+      typeof responseSchema === "object" &&
+      !Array.isArray(responseSchema),
+  );
+  const responseSchemaRecord = responseSchema as Record<string, unknown>;
+  assert.equal(responseSchemaRecord.type, "object");
+  assert.equal(responseSchemaRecord.additionalProperties, false);
+  assert.deepEqual(responseSchemaRecord.required, [
+    "schemaVersion",
+    "chatId",
+    "rollingSummary",
+    "observations",
+  ]);
+  assert.deepEqual(prompt.responseRules, [
+    "Every observation must contain exactly one of value or objectId, never both and never neither.",
+    "An external_owner_claim observation must contain assertedById.",
+    "Relationship metadata is required for commitment observations and forbidden for every other predicate.",
+    "A birthday observation must use value YYYY-MM-DD or --MM-DD and confidence EXTRACTED.",
+  ]);
+  delete prompt.responseSchema;
+  delete prompt.responseRules;
+  assert.deepEqual(prompt, {
     ownerUserId: 7,
     dialog: {
       id: 44,
@@ -97,8 +129,8 @@ test("structured analysis aborts a model call at its bounded deadline", async ()
       {
         model,
         timeoutMs: 5,
-        streamObjectImpl: ((options: { abortSignal: AbortSignal }) => ({
-          object: new Promise((_resolve, reject) => {
+        generateObjectImpl: ((options: { abortSignal: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
             options.abortSignal.addEventListener(
               "abort",
               () =>
@@ -109,8 +141,47 @@ test("structured analysis aborts a model call at its bounded deadline", async ()
                 ),
               { once: true },
             );
-          }),
-        })) as never,
+          })) as never,
+      },
+    ),
+    (error: unknown) =>
+      error instanceof DOMException && error.name === "TimeoutError",
+  );
+});
+
+test("structured analysis enforces the deadline when the provider ignores abort", async () => {
+  await assert.rejects(
+    analyzeStructured(
+      {
+        skillText: "PRIVATE CHAT SKILL",
+        ownerUserId: 7,
+        dialog: {
+          id: 44,
+          kind: "private",
+          title: "Alex",
+          username: null,
+        },
+        rollingSummary: "",
+        messages: [],
+      },
+      {
+        model,
+        timeoutMs: 5,
+        generateObjectImpl: (() =>
+          new Promise((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  object: {
+                    schemaVersion: 1,
+                    chatId: 44,
+                    rollingSummary: "late result",
+                    observations: [],
+                  },
+                }),
+              40,
+            ),
+          )) as never,
       },
     ),
     (error: unknown) =>
@@ -135,14 +206,15 @@ test("structured analysis validates provider output again", async () => {
       },
       {
         model,
-        streamObjectImpl: (() => ({
-          object: Promise.resolve({
-            schemaVersion: 1,
-            chatId: 44,
-            rollingSummary: "",
-            observations: [{ predicate: "invented" }],
-          }),
-        })) as never,
+        generateObjectImpl: (() =>
+          Promise.resolve({
+            object: {
+              schemaVersion: 1,
+              chatId: 44,
+              rollingSummary: "",
+              observations: [{ predicate: "invented" }],
+            },
+          })) as never,
       },
     ),
   );

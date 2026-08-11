@@ -14,6 +14,7 @@ import { readEnvFresh } from "../lib/env-file.ts";
 import {
   readRoutingUserRegistry,
   type UserRecord,
+  type UserRegistry,
 } from "../lib/user-registry.ts";
 import {
   formatUsageReport,
@@ -27,6 +28,7 @@ import {
   CONTROL_DIR,
   DATA_DIR,
   ENV_PATH,
+  HOST,
   ROOT,
   SECRET,
   log,
@@ -50,9 +52,10 @@ import {
 import { createMenu } from "../lib/menu/index.ts";
 import {
   resolveTenant,
-  workerRoutes,
+  routesForTenant,
   type WorkerRoutes,
 } from "./tenant-routing.ts";
+import { handleProactiveCommitmentCallback } from "../proactive/callback.ts";
 
 type ControlCallbackQuery = TelegramCallbackQuery & { data: string };
 type PendingFlow = {
@@ -87,6 +90,36 @@ export type ControlTenantContext = {
   dataDir: string;
   personalRoot: string;
 };
+const PERSONAL_MENU_PREFIXES = [
+  "iva_menu:r:",
+  "iva_menu:td:",
+  "iva_menu:tsk:",
+  "iva_menu:auto:",
+  "iva_menu:set:",
+  "iva_menu:scon:",
+  "iva_menu:ssys:",
+  "iva_menu:st:",
+  "iva_menu:gws:",
+  "iva_menu:cron:",
+];
+
+export function controlCallbackAllowed(
+  data: string,
+  role: UserRecord["role"],
+): boolean {
+  if (role === "owner") return true;
+  if (
+    data.startsWith("iva_update:") ||
+    data.startsWith("iva_model:") ||
+    data.startsWith("iva_think:")
+  ) {
+    return false;
+  }
+  if (data.startsWith("iva_menu:")) {
+    return PERSONAL_MENU_PREFIXES.some((prefix) => data.startsWith(prefix));
+  }
+  return true;
+}
 const OWNER_ONLY_CONTROLS = new Set([
   "/restart",
   "/update",
@@ -104,16 +137,24 @@ export function controlCommandAllowed(
 
 const controlTg = tg as unknown as ControlTransport;
 
-async function routesForUpdate(
+export function resolveControlRoutes(
   update: TelegramUpdate,
-): Promise<WorkerRoutes | null> {
-  const registry = await readRoutingUserRegistry(CONTROL_DIR);
+  registry: UserRegistry,
+  legacyBase: string,
+): WorkerRoutes | null {
   const tenant = resolveTenant(update, registry);
   if (tenant.kind !== "active") return null;
   const user = registry.users.find(
     (candidate) => candidate.id === tenant.userId,
   );
-  return user ? workerRoutes(user) : null;
+  return user ? routesForTenant(user, legacyBase) : null;
+}
+
+async function routesForUpdate(
+  update: TelegramUpdate,
+): Promise<WorkerRoutes | null> {
+  const registry = await readRoutingUserRegistry(CONTROL_DIR);
+  return resolveControlRoutes(update, registry, HOST);
 }
 
 function errorDetails(error: unknown): ErrorDetails {
@@ -328,19 +369,21 @@ async function handleControl(
   const cq = update.callback_query;
   if (cq && hasCallbackData(cq)) {
     const callback = cq;
+    const proactiveHandled = await handleProactiveCommitmentCallback({
+      callback,
+      tenant,
+      answer: async (text) => {
+        await controlTg("answerCallbackQuery", {
+          callback_query_id: callback.id,
+          text,
+        }).catch(() => ({ ok: false }));
+      },
+    });
+    if (proactiveHandled) return true;
     const tenantMenuState = tenant
       ? getWizard(callback.message?.chat?.id, tenant.user.id)
       : null;
-    if (
-      tenant &&
-      tenant.user.role !== "owner" &&
-      (callback.data.startsWith("iva_update:") ||
-        callback.data.startsWith("iva_model:") ||
-        callback.data.startsWith("iva_think:") ||
-        (callback.data.startsWith("iva_menu:") &&
-          !callback.data.startsWith("iva_menu:r:") &&
-          !callback.data.startsWith("iva_menu:gws:")))
-    ) {
+    if (tenant && !controlCallbackAllowed(callback.data, tenant.user.role)) {
       await controlTg("answerCallbackQuery", {
         callback_query_id: callback.id,
         text: tr("Owner only", "Только для владельца"),

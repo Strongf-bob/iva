@@ -2,7 +2,7 @@
 // «имя → следующий запуск», плюс счётчик задач из data/tasks.json, плюс блок расписаний
 // внутри самой Ивы (agent/schedules/*.ts — Nitro scheduled tasks, не systemd) из
 // data/rollup-status.json (scripts/lib/schedule-runner.ts). Пагинация systemd-списка по 8;
-// блок расписаний Ивы всегда ровно 5 строк — не пагинируется.
+// блок расписаний Ивы остаётся коротким и не пагинируется.
 //
 // execFile ограничен таймаутом 1.5с и кэшируется на 60с — единственный getUpdates-цикл
 // моста нельзя блокировать дольше (список таймеров редко висит, одной ограниченной пробы
@@ -11,6 +11,8 @@ import { readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { readSettings } from "#lib/settings.ts";
+import { listReminders } from "../reminder-store.ts";
+import { isContainerRuntime } from "../container-maintenance.ts";
 
 const PER_PAGE = 8;
 const CACHE_TTL_MS = 60_000;
@@ -18,9 +20,9 @@ type Button = { text: string; callback_data: string };
 type Timer = { unit: string; next: string };
 type Translate = (english: string, russian: string) => string;
 type RollupEntry = { lastSuccessAt?: unknown };
-type MenuState = { page: number };
+type MenuState = { page: number; personalRoot?: string };
 type MenuContext = {
-  deps: { dataDir: string };
+  deps: { dataDir: string; runtime?: "container" | "host" };
   tr: Translate;
   btn: (text: string, callbackData: string) => Button;
   backRow: (screen: string) => Button[];
@@ -37,6 +39,11 @@ const EVE_SCHEDULES = [
   { name: "memory-monthly", cron: "20 4 1 * *" },
   { name: "memory-yearly", cron: "25 4 1 1 *" },
   { name: "digest", cron: "0 8 * * *" },
+  { name: "relationship-daily-prepare", cron: "45 7 * * *" },
+  { name: "relationship-daily-deliver", cron: "0 8 * * *" },
+  { name: "relationship-weekly-prepare", cron: "45 7 * * 1" },
+  { name: "relationship-weekly-deliver", cron: "0 8 * * 1" },
+  { name: "proactive-reviews", cron: "*/5 * * * *" },
 ];
 
 function loadRollupStatus(dataDir: string): Record<string, RollupEntry> {
@@ -68,12 +75,12 @@ function formatLastSuccess(entry: RollupEntry | undefined, T: Translate) {
     .replace(/\.\d{3}Z$/, "Z");
 }
 
-function digestEnabled() {
+function digestEnabled(dataDir: string) {
   // readSettings() resolves data/settings.json from ASSISTANT_DATA_DIR/cwd itself (see
   // agent/lib/settings.ts) — same file agent/schedules/digest.ts reads at fire time,
   // so this always reflects the toggle digest.ts itself would see on its next tick.
   try {
-    const settings = readSettings() as {
+    const settings = readSettings(dataDir) as {
       digestSchedule?: { enabled?: boolean };
     };
     return settings.digestSchedule?.enabled === true;
@@ -82,13 +89,28 @@ function digestEnabled() {
   }
 }
 
+function proactiveEnabled(dataDir: string) {
+  try {
+    const settings = readSettings(dataDir) as {
+      proactiveReviews?: { enabled?: boolean };
+    };
+    return settings.proactiveReviews?.enabled === true;
+  } catch {
+    return false;
+  }
+}
+
 function schedulesBlock(dataDir: string, T: Translate) {
   const status = loadRollupStatus(dataDir);
-  const digestOn = digestEnabled();
+  const digestOn = digestEnabled(dataDir);
+  const proactiveOn = proactiveEnabled(dataDir);
   const lines = EVE_SCHEDULES.map((s) => {
     // digest fires off by default (agent/schedules/digest.ts) — "never" would be
     // indistinguishable from "enabled but hasn't run yet"; say so explicitly instead.
     if (s.name === "digest" && !digestOn) {
+      return `• ${s.name} (${s.cron}) → ${T("disabled", "выключен")}`;
+    }
+    if (s.name === "proactive-reviews" && !proactiveOn) {
       return `• ${s.name} (${s.cron}) → ${T("disabled", "выключен")}`;
     }
     return `• ${s.name} (${s.cron}) → ${formatLastSuccess(status[s.name], T)}`;
@@ -159,9 +181,41 @@ export function openTaskCount(dataDir: string): number {
 }
 
 export default {
-  parent: "r",
+  parent: "auto",
   async render(st: MenuState, ctx: MenuContext) {
     const T = ctx.tr;
+    if (isContainerRuntime(ctx.deps.runtime ?? process.env.IVA_RUNTIME)) {
+      const personalData = st.personalRoot
+        ? join(st.personalRoot, "runtime", "data")
+        : null;
+      let reminderDataAvailable = personalData !== null;
+      const reminders = personalData
+        ? await listReminders(personalData).catch(() => {
+            reminderDataAvailable = false;
+            return [];
+          })
+        : [];
+      const lines = reminders.slice(0, PER_PAGE).map((job) => {
+        const next =
+          job.nextRunAt === null
+            ? T("not scheduled", "не запланировано")
+            : new Date(job.nextRunAt).toISOString().replace(/\.000Z$/u, "Z");
+        return `• ${job.message} → ${next}`;
+      });
+      const body = !reminderDataAvailable
+        ? T(
+            "Reminder data unavailable. Run Maintenance diagnostics.",
+            "Данные напоминаний недоступны. Запусти диагностику в Обслуживании.",
+          )
+        : lines.length
+          ? lines.join("\n")
+          : T("No active reminders.", "Активных напоминаний нет.");
+      const dataDir = personalData ?? ctx.deps.dataDir;
+      return {
+        text: `${T("⏰ Personal reminders", "⏰ Личные напоминания")}\n\n${body}\n\n${T(`Tasks in queue: ${openTaskCount(dataDir)}`, `Задач в очереди: ${openTaskCount(dataDir)}`)}\n\n${schedulesBlock(dataDir, T)}`,
+        rows: [ctx.backRow("auto")],
+      };
+    }
     const timers = await loadTimers();
     const taskCount = openTaskCount(ctx.deps.dataDir);
     const taskLine = T(
@@ -173,7 +227,7 @@ export default {
     if (timers.length === 0) {
       return {
         text: `${head}\n\n${T("No Iva timers found.", "Таймеров Iva не найдено.")}\n${taskLine}\n\n${schedules}`,
-        rows: [ctx.backRow("r")],
+        rows: [ctx.backRow("auto")],
       };
     }
     const pages = Math.ceil(timers.length / PER_PAGE);
@@ -194,7 +248,7 @@ export default {
         ),
       ]);
     }
-    rows.push(ctx.backRow("r"));
+    rows.push(ctx.backRow("auto"));
     return { text: `${head}\n\n${body}\n\n${taskLine}\n\n${schedules}`, rows };
   },
   on() {},

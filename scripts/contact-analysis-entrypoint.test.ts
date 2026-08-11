@@ -486,6 +486,7 @@ test("rollback validates identity before mutation and restores vault plus increm
         committedThrough: 2,
         contextSummary: "done",
         processedMessages: 2,
+        pending: null,
         status: "complete",
         lastErrorCode: null,
       },
@@ -592,12 +593,14 @@ test("rollback preserves incremental progress newer than the frozen high-water",
         committedThrough: 2,
         contextSummary: "backfill",
         processedMessages: 2,
+        pending: null,
         status: "complete" as const,
         lastErrorCode: null,
       },
     },
   };
 
+  assert.deepEqual(incrementalStateAfterRollback(before, backfill), before);
   assert.deepEqual(incrementalStateAfterRollback(current, backfill), current);
   const divergent = structuredClone(current);
   divergent.jobs["42"].committedThrough = 2;

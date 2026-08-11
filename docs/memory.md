@@ -31,6 +31,26 @@ the owner remain attributed to their speaker and never flow into `CORE.md` autom
 owns only the block between `iva:telegram-graph` markers, preserving hand-written card content around
 it. Voice and video-note bodies are not analyzed by this pipeline.
 
+## Relationship intelligence
+
+Validated contact observations also feed a private, versioned commitment registry at
+`data/relationship-intelligence/commitments.json`. Every item keeps canonical evidence IDs and
+starts as an internal `pending_suggestion`; detection and scheduled reports never create external
+tasks. Contact cards gain a separate managed CRM region for explicit birthdays, last meaningful
+contact, promises, overdue items, and forgotten follow-ups. A generated
+`cards/notes/relationship-crm.md` provides the cross-contact view while preserving handwritten text
+outside its markers.
+
+The `relationship-meeting-dossier` skill combines a resolved numeric contact with bounded memory,
+read-only Calendar context, and explicitly matched documents. `relationship-reply-draft` returns a
+Telegram suggestion as text or creates a Gmail Draft through the draft-only tool. A Google Task is
+created only after the owner requests a confirmation challenge and repeats its exact item-specific
+phrase; retries reuse the immutable commitment marker.
+
+Daily material is prepared at 07:45 and delivered at 08:00 local time. Weekly material is prepared
+and delivered at the same times on Monday. Multi-user workers run these schedules only for the
+owner, and delivery additionally requires the configured private chat ID to equal the owner ID.
+
 ## Nightly rollup
 
 One script, four in-process eve schedules, configured local time. `scripts/memory/rollup.ts` drives the running agent through `eve/client`:

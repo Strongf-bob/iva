@@ -68,10 +68,12 @@ test("observation predicates are an exact allowlist", () => {
     "works_on",
     "communication_style",
     "commitment",
+    "birthday",
+    "meaningful_contact",
+    "follow_up",
     "preference",
     "owner_mention",
     "external_owner_claim",
-    "birthday",
     "city",
     "timezone",
     "phone",
@@ -86,6 +88,73 @@ test("observation predicates are an exact allowlist", () => {
   assert.equal(
     ObservationPredicateSchema.safeParse("diagnosis").success,
     false,
+  );
+});
+
+test("relationship observations carry only predicate-specific metadata", () => {
+  const base = {
+    schemaVersion: 1,
+    subjectId: "telegram:user:44",
+    kind: "commitment",
+    predicate: "commitment",
+    value: "Send the report",
+    confidence: "EXTRACTED",
+    contextChatId: -1001,
+    evidence,
+  };
+  assert.equal(
+    ObservationSchema.safeParse({
+      ...base,
+      relationship: {
+        direction: "owner_to_contact",
+        dueAt: "2026-08-10T12:00:00Z",
+      },
+    }).success,
+    true,
+  );
+  assert.equal(
+    ObservationSchema.safeParse({
+      ...base,
+      predicate: "role",
+      relationship: { direction: "unknown", dueAt: null },
+    }).success,
+    false,
+  );
+  assert.equal(
+    ObservationSchema.safeParse({
+      ...base,
+      kind: "fact",
+      predicate: "birthday",
+      value: "--05-17",
+      relationship: undefined,
+    }).success,
+    true,
+  );
+  for (const invalid of [
+    { value: "--02-31", confidence: "EXTRACTED" },
+    { value: "2025-02-29", confidence: "EXTRACTED" },
+  ]) {
+    assert.equal(
+      ObservationSchema.safeParse({
+        ...base,
+        kind: "fact",
+        predicate: "birthday",
+        relationship: undefined,
+        ...invalid,
+      }).success,
+      false,
+    );
+  }
+  assert.equal(
+    ObservationSchema.safeParse({
+      ...base,
+      kind: "fact",
+      predicate: "birthday",
+      value: "--05-17",
+      confidence: "AMBIGUOUS",
+      relationship: undefined,
+    }).success,
+    true,
   );
 });
 

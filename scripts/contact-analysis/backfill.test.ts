@@ -168,10 +168,7 @@ test("a failed durable reduction keeps the cursor and resumes the same page once
   assert.equal(first.failedChats, 1);
   assert.equal(second.failedChats, 0);
   assert.equal(second.processedMessages, 2);
-  assert.deepEqual(analyzed, [
-    [1, 2],
-    [1, 2],
-  ]);
+  assert.deepEqual(analyzed, [[1, 2]]);
   assert.deepEqual(reduced, [[1, 2]]);
 });
 
@@ -193,7 +190,7 @@ test("an API page is split into complete context-bounded model chunks", async ()
     vault: join(root, "vault"),
     backupDir: `${root}-backup`,
     runId: "chunk-run",
-    contextTokens: 24_000,
+    contextTokens: 41_000,
     client: {
       account: async () => ({
         userId: 7,
@@ -598,6 +595,7 @@ test("a rolled-back checkpoint starts a fresh run and never reuses completed cur
         committedThrough: 1,
         contextSummary: "old",
         processedMessages: 1,
+        pending: null,
         status: "complete",
         lastErrorCode: null,
       },
@@ -745,7 +743,7 @@ test("oversized message fragments commit atomically under one evidence cursor", 
     vault: join(root, "vault"),
     backupDir: `${root}-backup`,
     runId: "fragment-run",
-    contextTokens: 24_000,
+    contextTokens: 41_000,
     client: {
       account: async () => ({
         userId: 7,

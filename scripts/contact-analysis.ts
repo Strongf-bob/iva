@@ -205,6 +205,7 @@ export function incrementalStateAfterRollback(
         continue;
       throw new Error("telegram_private_backfill_incremental_state_conflict");
     }
+    if (isDeepStrictEqual(present, before)) continue;
     const expected = {
       chatId: job.chatId,
       kind: "private" as const,

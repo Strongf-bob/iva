@@ -140,6 +140,11 @@ conflict-aware and requires the exact account run reported by status:
 node --env-file-if-exists=.env scripts/contact-analysis.ts rebuild-rollback --backup-dir /absolute/private/backup/run-1 --run-id run-1
 ```
 
+Relationship intelligence does not widen this boundary. It consumes only already validated
+GET-export observations and adds no personal-account Telegram operation. CRM rendering, dossiers,
+reply suggestions, commitment confirmation, and bot-delivered owner reports do not expose send,
+reaction, delete, join, invite, or mark-read capabilities through the userbot.
+
 ## How it works
 
 - **One session owner.** Exactly one process may own a Telethon session; a second opener

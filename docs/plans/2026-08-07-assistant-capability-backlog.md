@@ -1,7 +1,8 @@
 # Iva Capability Backlog
 
-This file records ideas explicitly deferred while the Telegram contact graph is implemented. None
-of these items belongs to the current implementation scope.
+This file records capabilities deferred while the Telegram contact graph was implemented and their
+current local implementation status. A capability listed as implemented here is not necessarily
+wired into scheduling, delivery, deployment or a live account.
 
 ## 1. LaTeX-only PDF generation
 
@@ -30,6 +31,10 @@ Before a meeting or requested reply, retrieve the person's contact node, shared 
 recent commitments and unresolved questions. This should consume the contact graph rather than
 create a second profile store.
 
+**Integration seam available:** the unified inbox package exposes a `RelationshipContextProvider`
+and includes its evidence in meeting preparation. The adapter that reads the existing contact graph
+remains deferred; the default provider returns no additional relationship context.
+
 ## 3. Commitment tracker
 
 Extract source-backed promises and deadlines from Telegram and Gmail, deduplicate them, create tasks
@@ -40,15 +45,30 @@ only under an explicit policy and surface overdue commitments.
 Combine Telegram and Gmail into a read-only digest: urgent, needs reply, informational and ignorable.
 External messages remain untrusted data.
 
+**Implemented locally:** `scripts/unified-inbox/` incrementally normalizes read-only Telegram,
+Gmail inbox and Calendar observations, persists private cursors and deduplication state, validates
+evidence-backed classifications and returns a compact owner-private report envelope. Scheduler and
+actual bot-delivery adapters remain deferred.
+
 ## 5. Context-aware reply drafting
 
 Draft replies using the relationship-specific communication context. Sending remains a separate
 explicitly approved action.
 
+**Partially implemented locally:** the unified inbox classifier can generate evidence-backed Gmail
+reply proposals for actionable messages. Proposals remain internal report data: the pipeline does
+not save drafts in Gmail and cannot send mail. Relationship-registry enrichment still depends on the
+deferred adapter above.
+
 ## 6. Meeting preparation
 
 Combine calendar events, relevant contacts, projects, documents, prior decisions and unresolved
 questions into a compact briefing.
+
+**Implemented locally for inbox evidence:** upcoming Calendar events are correlated with recent
+normalized messages and optional evidence from `RelationshipContextProvider`, then rendered as a
+compact preparation section. Direct document/project retrieval and the real relationship-registry
+adapter remain deferred.
 
 ## 7. Personal CRM
 

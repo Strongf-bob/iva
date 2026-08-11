@@ -511,7 +511,7 @@ export function toTelegramHtmlChunks(md: unknown, limit = 4096): string[] {
 
 // ── rich-message routing ────────────────────────────────────────────────────────
 // True when the text has a construct that Telegram's rich messages
-// (sendRichMessage, Bot API 10.1) render natively but parse_mode=HTML CANNOT:
+// (sendRichMessage, Bot API 10.2) render natively but parse_mode=HTML CANNOT:
 // GFM tables, task lists, <details>, block math. Headings/quotes/bold/etc.
 // render fine in HTML, so — like hermes-agent — we do NOT route on those: normal
 // replies stay on the proven HTML path. Conservative by design: a false negative
