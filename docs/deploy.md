@@ -65,6 +65,7 @@ Docker socket. Operate users inside that service after supplying the same `IVA_I
 used to render the stack:
 
 ```bash
+export IVA_IMAGE="$(sed -n '1p' /home/strongf/iva-runtime/deploy/current-image)"
 docker compose -f deploy/container/compose.production.yml exec telegram-poll \
   node bin/iva.mjs users add 987654321
 docker compose -f deploy/container/compose.production.yml exec telegram-poll \

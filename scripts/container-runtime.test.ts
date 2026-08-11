@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,10 +7,15 @@ import { test } from "node:test";
 
 import {
   createContainerRuntime,
+  requireContainerRuntimeReady,
   type ManagedRuntimeChild,
   type RuntimeExit,
 } from "./container-runtime.ts";
-import { submitContainerCommand } from "./lib/container-worker-control.ts";
+import {
+  resolveContainerControlPaths,
+  submitContainerCommand,
+  writeContainerRuntimeStatus,
+} from "./lib/container-worker-control.ts";
 import {
   defaultUserLimits,
   parseTelegramUserId,
@@ -63,7 +68,10 @@ function child(pid: number): DeferredChild {
 function fixture(
   t: { after: (fn: () => Promise<void>) => void },
   users: UserRecord[],
-  { now = () => 1_000 }: { now?: () => number } = {},
+  {
+    now = () => 1_000,
+    commandNow = Date.now,
+  }: { now?: () => number; commandNow?: () => number } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "iva-container-runtime-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -82,9 +90,10 @@ function fixture(
     controlDir,
     supervisorPid: 99,
     now,
-    readRegistry: async () => currentRegistry,
+    commandNow,
+    readRegistry: () => Promise.resolve(currentRegistry),
     launchPoller: () => launch("poller"),
-    launchWorker: async (record) => launch(`worker:${record.id}`),
+    launchWorker: (record) => Promise.resolve(launch(`worker:${record.id}`)),
     shutdownTimeoutMs: 1_000,
   });
   return {
@@ -126,15 +135,11 @@ void test("an invalid registry fails before the poller starts", async (t) => {
   const f = fixture(t, []);
   const runtime = createContainerRuntime({
     controlDir: f.controlDir,
-    readRegistry: async () => {
-      throw new Error("invalid user registry");
-    },
+    readRegistry: () => Promise.reject(new Error("invalid user registry")),
     launchPoller: () => {
       throw new Error("poller must not launch");
     },
-    launchWorker: async () => {
-      throw new Error("worker must not launch");
-    },
+    launchWorker: () => Promise.reject(new Error("worker must not launch")),
   });
 
   await assert.rejects(() => runtime.start(), /invalid user registry/u);
@@ -196,4 +201,107 @@ void test("shutdown terminates poller and workers and waits for their exits", as
   f.children.get("worker:1")?.finish();
   await stopping;
   assert.equal(f.runtime.status().poller.state, "stopped");
+});
+
+void test("readiness probes every routable worker on its exact loopback port", async (t) => {
+  const f = fixture(t, [user("1"), user("2")]);
+  await f.runtime.start();
+  const probed: string[] = [];
+
+  await requireContainerRuntimeReady(f.controlDir, {
+    now: () => 1_000,
+    readRegistry: () => Promise.resolve(registry([user("1"), user("2")])),
+    probeWorker: (record) => {
+      probed.push(`http://127.0.0.1:${record.port}/eve/v1/health`);
+      return Promise.resolve();
+    },
+  });
+
+  assert.deepEqual(probed.sort(), [
+    "http://127.0.0.1:8801/eve/v1/health",
+    "http://127.0.0.1:8802/eve/v1/health",
+  ]);
+});
+
+void test("readiness rejects a running worker whose loopback health fails", async (t) => {
+  const f = fixture(t, [user("1")]);
+  await writeContainerRuntimeStatus(f.controlDir, {
+    schema: "iva-container-runtime-status/v1",
+    supervisorPid: 99,
+    updatedAt: "1970-01-01T00:00:01.000Z",
+    poller: { state: "running", pid: 100, restarts: 0 },
+    workers: {
+      "1": { state: "running", pid: 101, port: 8801, restarts: 0 },
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      requireContainerRuntimeReady(f.controlDir, {
+        now: () => 1_000,
+        readRegistry: () => Promise.resolve(registry([user("1")])),
+        probeWorker: () => Promise.reject(new Error("unhealthy")),
+      }),
+    /unhealthy/u,
+  );
+});
+
+void test("a stale recovered command gets a failed receipt without pausing polling", async (t) => {
+  const f = fixture(t, [], { commandNow: () => 20_001 });
+  await f.runtime.start();
+  const paths = resolveContainerControlPaths(f.controlDir);
+  mkdirSync(paths.requests, { recursive: true, mode: 0o700 });
+  const operationId = "00000000-0000-4000-8000-000000000099";
+  writeFileSync(
+    join(paths.requests, `${operationId}.json`),
+    `${JSON.stringify({
+      schema: "iva-container-command/v1",
+      operationId,
+      action: "pause-poller",
+      userId: null,
+      createdAt: new Date(0).toISOString(),
+    })}\n`,
+    { mode: 0o600 },
+  );
+
+  const ticking = f.runtime.tick();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  if (f.children.get("poller")?.signals.length) {
+    f.children.get("poller")?.finish();
+  }
+  await ticking;
+
+  assert.deepEqual(f.children.get("poller")?.signals, []);
+  const receipt = JSON.parse(
+    readFileSync(join(paths.receipts, `${operationId}.json`), "utf8"),
+  ) as { ok: boolean; message: string };
+  assert.equal(receipt.ok, false);
+  assert.match(receipt.message, /stale/u);
+});
+
+void test("deployment pristine readiness rejects any child restart", async (t) => {
+  const f = fixture(t, [user("1")]);
+  await f.runtime.start();
+  const restarted = {
+    ...f.runtime.status(),
+    workers: {
+      "1": { ...f.runtime.status().workers["1"], restarts: 1 },
+    },
+  };
+  const options = {
+    now: () => 1_000,
+    readRegistry: () => Promise.resolve(registry([user("1")])),
+    readStatus: () => restarted,
+    probeWorker: () => Promise.resolve(),
+  };
+
+  await requireContainerRuntimeReady(f.controlDir, options);
+  await assert.rejects(
+    () =>
+      requireContainerRuntimeReady(f.controlDir, {
+        ...options,
+        requirePristine: true,
+      }),
+    /restarted/u,
+  );
 });

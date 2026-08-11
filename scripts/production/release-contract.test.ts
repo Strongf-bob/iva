@@ -245,7 +245,7 @@ void test("production Compose requires an immutable image and narrow mounts", ()
   assert.match(deployScript, /image_supports_container_workers/u);
   assert.match(
     deployScript,
-    /docker exec "\$poller_id" node scripts\/container-runtime\.ts status --require-ready/u,
+    /docker exec "\$poller_id" node scripts\/container-runtime\.ts status --require-pristine/u,
   );
   assert.match(deployScript, /legacy_rollback_is_safe/u);
   assert.match(deployScript, /TELEGRAM_USERBOT_ALLOW_INERT/u);

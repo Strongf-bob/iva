@@ -1,16 +1,18 @@
 import assert from "node:assert/strict";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 
 import {
@@ -85,6 +87,19 @@ void test("control paths reject symlinks and stay private", async (t) => {
         { action: "pause-poller" },
         { timeoutMs: 10 },
       ),
+    /symbolic link/u,
+  );
+});
+
+void test("the shared control directory itself cannot be a symlink", async (t) => {
+  const root = fixture(t);
+  const target = join(dirname(root), "target");
+  const control = root;
+  mkdirSync(target);
+  symlinkSync(target, control);
+
+  await assert.rejects(
+    () => submitContainerCommand(control, { action: "pause-poller" }),
     /symbolic link/u,
   );
 });
@@ -195,6 +210,59 @@ void test("runtime status is strict, private, and excludes unknown fields", asyn
   assert.equal(
     readFileSync(paths.status, "utf8").includes("TELEGRAM_BOT_TOKEN"),
     true,
+  );
+});
+
+void test("command and status records reject non-private modes", async (t) => {
+  const control = fixture(t);
+  const pending = submitContainerCommand(
+    control,
+    { action: "pause-poller" },
+    { timeoutMs: 50, intervalMs: 5 },
+  ).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const paths = resolveContainerControlPaths(control);
+  const requestName = readdirSync(paths.requests)[0];
+  chmodSync(join(paths.requests, requestName), 0o644);
+  assert.throws(() => claimContainerCommands(control), /mode 0600/u);
+  assert.match(String(await pending), /timed out/u);
+
+  const status: ContainerRuntimeStatus = {
+    schema: "iva-container-runtime-status/v1",
+    supervisorPid: 77,
+    updatedAt: "2026-08-11T10:00:00.000Z",
+    poller: { state: "running", pid: 78, restarts: 0 },
+    workers: {},
+  };
+  await writeContainerRuntimeStatus(control, status);
+  chmodSync(paths.status, 0o644);
+  assert.throws(() => readContainerRuntimeStatus(control), /mode 0600/u);
+
+  const operationId = "00000000-0000-4000-8000-000000000321";
+  const completed = submitContainerCommand(
+    control,
+    { action: "pause-poller" },
+    { operationId, timeoutMs: 100, intervalMs: 5 },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const [command] = claimContainerCommands(control);
+  await completeContainerCommand(control, command, {
+    ok: true,
+    message: "paused",
+  });
+  assert.equal((await completed).ok, true);
+  chmodSync(join(paths.receipts, `${operationId}.json`), 0o644);
+  await assert.rejects(
+    () =>
+      submitContainerCommand(
+        control,
+        { action: "pause-poller" },
+        { operationId, timeoutMs: 10 },
+      ),
+    /mode 0600/u,
   );
 });
 

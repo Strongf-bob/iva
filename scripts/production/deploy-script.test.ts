@@ -62,7 +62,7 @@ function harness(): {
       'last=""; for arg in "$@"; do last="$arg"; done\n' +
       'if [ "${1:-}" = "inspect" ] && [ "$last" = "poller-container" ]; then printf "%s 0\\n" "${MOCK_POLLER_STATE:-running}"; exit 0; fi\n' +
       'if [ "${1:-}" = "inspect" ] && [ "$last" = "userbot-container" ]; then printf "%s %s\\n" "${MOCK_USERBOT_STATE:-running}" "${MOCK_USERBOT_RESTARTS:-0}"; exit 0; fi\n' +
-      'if [ "${1:-}" = "exec" ] && [ "${2:-}" = "poller-container" ]; then if printf "%s" "$*" | grep -q "container-runtime.ts status --require-ready"; then [ "${MOCK_CONTAINER_READY:-1}" = "1" ]; else [ "${MOCK_ROUTING_HEALTH:-1}" = "1" ]; fi; exit; fi\n' +
+      'if [ "${1:-}" = "exec" ] && [ "${2:-}" = "poller-container" ]; then if printf "%s" "$*" | grep -q "container-runtime.ts status --require-pristine"; then [ "${MOCK_CONTAINER_READY:-1}" = "1" ]; else [ "${MOCK_ROUTING_HEALTH:-1}" = "1" ]; fi; exit; fi\n' +
       'if [ "${1:-}" = "inspect" ] && [ "$last" = "scheduler-container" ]; then printf "%s %s\\n" "${MOCK_SCHEDULER_HEALTH:-healthy}" "${MOCK_SCHEDULER_RESTARTS:-0}"; exit 0; fi\n' +
       'if [ "${1:-}" = "exec" ] && [ "${2:-}" = "userbot-container" ]; then if [ "${MOCK_USERBOT_EXECUTE:-0}" = "1" ]; then /bin/sh -c "${5:-}"; else [ "${MOCK_USERBOT_HEALTH:-1}" = "1" ]; fi; exit; fi\n' +
       'if [ "${1:-}" = "inspect" ]; then image=$(/bin/cat "$MOCK_IMAGE_STATE"); case "$image" in *sha-b*) printf "unhealthy\\n" ;; *) printf "healthy\\n" ;; esac; fi\n',

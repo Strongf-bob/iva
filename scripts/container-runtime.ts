@@ -17,6 +17,7 @@ import {
   type UserRegistry,
 } from "./lib/user-registry.ts";
 import { launchWorker, prepareWorker } from "./worker-entry.ts";
+import { probeEveHealth } from "./lib/config-transaction.ts";
 
 export type RuntimeExit = {
   code: number | null;
@@ -46,11 +47,23 @@ type RuntimeOptions = {
   usersDir?: string;
   supervisorPid?: number;
   now?: () => number;
+  commandNow?: () => number;
   readRegistry?: () => Promise<UserRegistry>;
   launchPoller?: () => ManagedRuntimeChild;
   launchWorker?: (user: UserRecord) => Promise<ManagedRuntimeChild>;
   shutdownTimeoutMs?: number;
 };
+
+type ReadinessOptions = {
+  now?: () => number;
+  readRegistry?: () => Promise<UserRegistry>;
+  readStatus?: () => ContainerRuntimeStatus;
+  probeWorker?: (user: UserRecord) => Promise<void>;
+  requirePristine?: boolean;
+};
+
+const COMMAND_MAX_AGE_MS = 15_000;
+const COMMAND_FUTURE_SKEW_MS = 5_000;
 
 export type ContainerRuntime = {
   start: () => Promise<void>;
@@ -93,7 +106,7 @@ async function terminateChild(
   child.stop("SIGTERM");
   const exited = await new Promise<boolean>((resolvePromise) => {
     const timer = setTimeout(() => resolvePromise(false), timeoutMs);
-    child.exited.then(() => {
+    void child.exited.then(() => {
       clearTimeout(timer);
       resolvePromise(true);
     });
@@ -115,6 +128,7 @@ export function createContainerRuntime({
   ),
   supervisorPid = process.pid,
   now = Date.now,
+  commandNow = Date.now,
   readRegistry: readRegistryImpl = () => readUserRegistry(controlDir),
   launchPoller: launchPollerImpl = () =>
     managedChild(
@@ -151,7 +165,7 @@ export function createContainerRuntime({
   let lastStatusWriteAt = 0;
 
   function attachExit(
-    key: "poller" | string,
+    key: string,
     slot: ChildSlot,
     child: ManagedRuntimeChild,
   ): void {
@@ -252,6 +266,13 @@ export function createContainerRuntime({
     command: ClaimedContainerCommand,
   ): Promise<void> {
     try {
+      const commandAge = commandNow() - Date.parse(command.createdAt);
+      if (commandAge > COMMAND_MAX_AGE_MS) {
+        throw new Error("stale container command expired before execution");
+      }
+      if (commandAge < -COMMAND_FUTURE_SKEW_MS) {
+        throw new Error("container command timestamp is in the future");
+      }
       if (!registry)
         throw new Error("container runtime registry is unavailable");
       if (command.action === "start-worker") {
@@ -408,18 +429,35 @@ function runtimePathsFromEnv(): {
   };
 }
 
-async function requireReady(): Promise<void> {
-  const { controlDir } = runtimePathsFromEnv();
-  const registry = await readUserRegistry(controlDir);
-  const status = readContainerRuntimeStatus(controlDir);
-  if (Date.now() - Date.parse(status.updatedAt) > 15_000) {
+export async function requireContainerRuntimeReady(
+  controlDir: string,
+  {
+    now = Date.now,
+    readRegistry: readRegistryImpl = () => readUserRegistry(controlDir),
+    readStatus = () => readContainerRuntimeStatus(controlDir),
+    probeWorker = (user) =>
+      probeEveHealth(`http://127.0.0.1:${user.port}/eve/v1/health`, {
+        timeoutMs: 2_000,
+        intervalMs: 100,
+      }),
+    requirePristine = false,
+  }: ReadinessOptions = {},
+): Promise<void> {
+  const registry = await readRegistryImpl();
+  const status = readStatus();
+  if (now() - Date.parse(status.updatedAt) > 15_000) {
     throw new Error("container runtime status is stale");
   }
   if (status.poller.state !== "running" || status.poller.pid === null) {
     throw new Error("container Telegram poller is not running");
   }
-  for (const user of registry.users) {
-    if (user.status === "blocked") continue;
+  if (requirePristine && status.poller.restarts !== 0) {
+    throw new Error("container Telegram poller restarted before promotion");
+  }
+  const routableUsers = registry.users.filter(
+    (user) => user.status !== "blocked",
+  );
+  for (const user of routableUsers) {
     const worker = status.workers[user.id];
     if (
       !worker ||
@@ -429,8 +467,18 @@ async function requireReady(): Promise<void> {
     ) {
       throw new Error(`container worker ${user.id} is not ready`);
     }
+    if (requirePristine && worker.restarts !== 0) {
+      throw new Error(`container worker ${user.id} restarted before promotion`);
+    }
   }
+  await Promise.all(routableUsers.map((user) => probeWorker(user)));
   console.log("container runtime ready");
+}
+
+async function requireReady(): Promise<void> {
+  const { controlDir } = runtimePathsFromEnv();
+  const requirePristine = process.argv[3] === "--require-pristine";
+  await requireContainerRuntimeReady(controlDir, { requirePristine });
 }
 
 export async function runContainerRuntimeFromEnv(): Promise<void> {
@@ -472,7 +520,10 @@ export async function runContainerRuntimeFromEnv(): Promise<void> {
 
 async function main(): Promise<void> {
   const command = process.argv[2] ?? "run";
-  if (command === "status" && process.argv[3] === "--require-ready") {
+  if (
+    command === "status" &&
+    ["--require-ready", "--require-pristine"].includes(process.argv[3] ?? "")
+  ) {
     await requireReady();
     return;
   }

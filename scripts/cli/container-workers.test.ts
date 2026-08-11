@@ -43,9 +43,9 @@ void test("container lifecycle maps only the fixed worker and poller actions", a
   const lifecycle = createContainerWorkerLifecycle(
     { dataDirAbs: () => "/srv/iva/data" },
     {
-      submitImpl: async (_control, input) => {
+      submitImpl: (_control, input) => {
         calls.push(input);
-        return {
+        return Promise.resolve({
           schema: "iva-container-receipt/v1",
           operationId: "00000000-0000-4000-8000-000000000001",
           action: input.action,
@@ -53,7 +53,7 @@ void test("container lifecycle maps only the fixed worker and poller actions", a
           ok: true,
           message: "ok",
           completedAt: "2026-08-11T10:00:00.000Z",
-        };
+        });
       },
       readStatusImpl: () => status("running"),
       now: () => Date.parse("2026-08-11T10:00:05.000Z"),
@@ -78,15 +78,16 @@ void test("container lifecycle rejects a negative receipt and mismatched status"
   const lifecycle = createContainerWorkerLifecycle(
     { dataDirAbs: () => "/srv/iva/data" },
     {
-      submitImpl: async (_control, input) => ({
-        schema: "iva-container-receipt/v1",
-        operationId: "00000000-0000-4000-8000-000000000001",
-        action: input.action,
-        userId: "userId" in input ? parseTelegramUserId(input.userId) : null,
-        ok: false,
-        message: "not started",
-        completedAt: "2026-08-11T10:00:00.000Z",
-      }),
+      submitImpl: (_control, input) =>
+        Promise.resolve({
+          schema: "iva-container-receipt/v1",
+          operationId: "00000000-0000-4000-8000-000000000001",
+          action: input.action,
+          userId: "userId" in input ? parseTelegramUserId(input.userId) : null,
+          ok: false,
+          message: "not started",
+          completedAt: "2026-08-11T10:00:00.000Z",
+        }),
       readStatusImpl: () => ({
         ...status("running"),
         workers: { "123": { ...status("running").workers["123"], port: 9999 } },

@@ -9,10 +9,10 @@ import {
   renameSync,
   rmSync,
 } from "node:fs";
+import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
-import { saveJsonAtomic } from "../../agent/lib/json-store.ts";
 import { parseTelegramUserId, type TelegramUserId } from "./user-registry.ts";
 
 export const CONTAINER_COMMAND_SCHEMA = "iva-container-command/v1" as const;
@@ -65,6 +65,7 @@ export type ContainerRuntimeStatus = {
 
 export type ContainerControlPaths = {
   root: string;
+  staging: string;
   requests: string;
   processing: string;
   receipts: string;
@@ -151,9 +152,11 @@ function ensurePrivateDirectory(path: string): void {
 }
 
 function ensureControlPaths(controlDir: string): ContainerControlPaths {
+  ensurePrivateDirectory(controlDir);
   const paths = resolveContainerControlPaths(controlDir);
   for (const path of [
     paths.root,
+    paths.staging,
     paths.requests,
     paths.processing,
     paths.receipts,
@@ -163,7 +166,36 @@ function ensureControlPaths(controlDir: string): ContainerControlPaths {
   return paths;
 }
 
+async function savePrivateJsonAtomic(
+  path: string,
+  stagingDirectory: string,
+  value: unknown,
+): Promise<void> {
+  const temporary = join(
+    stagingDirectory,
+    `${process.pid}-${randomUUID()}.tmp`,
+  );
+  try {
+    await writeFile(temporary, JSON.stringify(value, null, 2), {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    chmodSync(temporary, 0o600);
+    await rename(temporary, path);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
+
 function parseJson(path: string): unknown {
+  const info = lstatSync(path);
+  if (info.isSymbolicLink() || !info.isFile()) {
+    throw new Error(`container control record must be a regular file: ${path}`);
+  }
+  if ((info.mode & 0o777) !== 0o600) {
+    throw new Error(`container control record must have mode 0600: ${path}`);
+  }
   try {
     return JSON.parse(readFileSync(path, "utf8"));
   } catch (error) {
@@ -227,6 +259,7 @@ export function resolveContainerControlPaths(
   const root = join(controlDir, "container-runtime");
   return {
     root,
+    staging: join(root, "staging"),
     requests: join(root, "requests"),
     processing: join(root, "processing"),
     receipts: join(root, "receipts"),
@@ -294,8 +327,7 @@ export async function submitContainerCommand(
     }
   }
   if (!existsSync(request) && !existsSync(processing)) {
-    await saveJsonAtomic(request, command);
-    chmodSync(request, 0o600);
+    await savePrivateJsonAtomic(request, paths.staging, command);
   }
 
   const deadline = now() + timeoutMs;
@@ -397,8 +429,7 @@ export async function completeContainerCommand(
       throw new Error("conflicting container command receipt");
     }
   } else {
-    await saveJsonAtomic(path, next);
-    chmodSync(path, 0o600);
+    await savePrivateJsonAtomic(path, paths.staging, next);
   }
   rmSync(commandPath(paths.processing, parsedCommand.operationId), {
     force: true,
@@ -416,8 +447,7 @@ export async function writeContainerRuntimeStatus(
     );
   }
   const paths = ensureControlPaths(controlDir);
-  await saveJsonAtomic(paths.status, parsed.data);
-  chmodSync(paths.status, 0o600);
+  await savePrivateJsonAtomic(paths.status, paths.staging, parsed.data);
 }
 
 export function readContainerRuntimeStatus(
