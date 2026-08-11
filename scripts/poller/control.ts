@@ -14,6 +14,7 @@ import { readEnvFresh } from "../lib/env-file.ts";
 import {
   readRoutingUserRegistry,
   type UserRecord,
+  type UserRegistry,
 } from "../lib/user-registry.ts";
 import {
   formatUsageReport,
@@ -27,6 +28,7 @@ import {
   CONTROL_DIR,
   DATA_DIR,
   ENV_PATH,
+  HOST,
   ROOT,
   SECRET,
   log,
@@ -50,7 +52,7 @@ import {
 import { createMenu } from "../lib/menu/index.ts";
 import {
   resolveTenant,
-  workerRoutes,
+  routesForTenant,
   type WorkerRoutes,
 } from "./tenant-routing.ts";
 import { handleProactiveCommitmentCallback } from "../proactive/callback.ts";
@@ -135,16 +137,24 @@ export function controlCommandAllowed(
 
 const controlTg = tg as unknown as ControlTransport;
 
-async function routesForUpdate(
+export function resolveControlRoutes(
   update: TelegramUpdate,
-): Promise<WorkerRoutes | null> {
-  const registry = await readRoutingUserRegistry(CONTROL_DIR);
+  registry: UserRegistry,
+  legacyBase: string,
+): WorkerRoutes | null {
   const tenant = resolveTenant(update, registry);
   if (tenant.kind !== "active") return null;
   const user = registry.users.find(
     (candidate) => candidate.id === tenant.userId,
   );
-  return user ? workerRoutes(user) : null;
+  return user ? routesForTenant(user, legacyBase) : null;
+}
+
+async function routesForUpdate(
+  update: TelegramUpdate,
+): Promise<WorkerRoutes | null> {
+  const registry = await readRoutingUserRegistry(CONTROL_DIR);
+  return resolveControlRoutes(update, registry, HOST);
 }
 
 function errorDetails(error: unknown): ErrorDetails {
