@@ -91,11 +91,11 @@ printf '{"ok":true,"result":{"id":777}}\\n'
   executable(join(mockBin, "sleep"), ":\n");
   executable(
     join(mockBin, "cp"),
-    'case "${!#}" in *deploy.sh.tmp.*) [ "${MOCK_DEPLOY_COPY_SUCCESS:-1}" = "1" ] || exit 1 ;; esac\n/bin/cp "$@"\n',
+    'target=""\nfor arg in "$@"; do target="$arg"; done\ncase "$target" in *deploy.sh.tmp.*) [ "${MOCK_DEPLOY_COPY_SUCCESS:-1}" = "1" ] || exit 1 ;; esac\n/bin/cp "$@"\n',
   );
   executable(
     join(mockBin, "mv"),
-    'target="${!#}"\nif [ -n "${MOCK_FAIL_MV_TARGET:-}" ] && [ "$(basename "$target")" = "$MOCK_FAIL_MV_TARGET" ] && [ ! -f "$IVA_RUNTIME_ROOT/mv-failure-used" ]; then touch "$IVA_RUNTIME_ROOT/mv-failure-used"; exit 1; fi\n/bin/mv "$@"\n',
+    'target=""\nfor arg in "$@"; do target="$arg"; done\nif [ -n "${MOCK_FAIL_MV_TARGET:-}" ] && [ "$(basename "$target")" = "$MOCK_FAIL_MV_TARGET" ] && [ ! -f "$IVA_RUNTIME_ROOT/mv-failure-used" ]; then touch "$IVA_RUNTIME_ROOT/mv-failure-used"; exit 1; fi\n/bin/mv "$@"\n',
   );
 
   return {
