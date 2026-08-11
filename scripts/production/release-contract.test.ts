@@ -124,6 +124,7 @@ void test("production Compose requires an immutable image and narrow mounts", ()
   assert.match(poll, /IVA_CONTAINER_RUNTIME: "1"/u);
   assert.match(poll, /ASSISTANT_APP_DIR: \/app/u);
   assert.match(poll, /ASSISTANT_DATA_DIR: \/app\/data/u);
+  assert.match(poll, /IVA_RUN_STATUS_DATA_DIR: \/app\/data/u);
   assert.match(
     poll,
     /exec node --env-file=\.env scripts\/container-runtime\.ts run/u,
