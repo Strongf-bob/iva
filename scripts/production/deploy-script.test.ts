@@ -249,6 +249,38 @@ void test("contact backfill returns only validated aggregate JSON", () => {
     assert.match(failure.stderr, /contact backfill operation failed/u);
     assert.doesNotMatch(failure.stderr, /srv|secret|private|sock/u);
   }
+
+  const codedFailure = run("contact-backfill status run-a", {
+    ...env,
+    MOCK_OPERATOR_SUCCESS: "0",
+    MOCK_OPERATOR_STDERR:
+      "/srv/secret.sock\ncontact_backfill_operator_owner_unavailable",
+  });
+  assert.notEqual(codedFailure.status, 0);
+  assert.equal(codedFailure.stdout, "");
+  assert.match(
+    codedFailure.stderr,
+    /contact backfill operation failed: contact_backfill_operator_owner_unavailable/u,
+  );
+  assert.doesNotMatch(codedFailure.stderr, /srv|secret|sock/u);
+
+  for (const hostileCode of [
+    "contact_backfill_998877665544",
+    "telegram_private_backfill_phone_79991234567",
+    `contact_backfill_${"a".repeat(512)}`,
+  ]) {
+    const rejected = run("contact-backfill status run-a", {
+      ...env,
+      MOCK_OPERATOR_SUCCESS: "0",
+      MOCK_OPERATOR_STDERR: hostileCode,
+    });
+    assert.notEqual(rejected.status, 0);
+    assert.equal(rejected.stdout, "");
+    assert.equal(
+      rejected.stderr,
+      "deploy: contact backfill operation failed\n",
+    );
+  }
 });
 
 void test("the forced command activates deployment assets from the verified image", () => {

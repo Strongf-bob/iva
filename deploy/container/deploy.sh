@@ -64,9 +64,56 @@ compose() {
     "$@"
 }
 
+extract_contact_backfill_error() {
+  local line safe=""
+  while IFS= read -r line; do
+    case "$line" in
+      contact_backfill_failed | \
+        contact_backfill_operator_failed | \
+        contact_backfill_operator_output_limit | \
+        contact_backfill_operator_owner_unavailable | \
+        contact_backfill_operator_requires_container | \
+        contact_backfill_operator_run_not_found | \
+        contact_backfill_operator_state_binding_mismatch | \
+        contact_backfill_operator_usage_error | \
+        telegram_contact_analysis_requires_read_only | \
+        telegram_private_backfill_already_active | \
+        telegram_private_backfill_already_rolled_back | \
+        telegram_private_backfill_backup_dir_absolute | \
+        telegram_private_backfill_backup_dir_required | \
+        telegram_private_backfill_backup_directory_mismatch | \
+        telegram_private_backfill_backup_directory_not_empty | \
+        telegram_private_backfill_backup_identity_mismatch | \
+        telegram_private_backfill_concurrent_edit | \
+        telegram_private_backfill_failed | \
+        telegram_private_backfill_high_water_unreachable | \
+        telegram_private_backfill_incremental_state_conflict | \
+        telegram_private_backfill_invalid_dialog_cursor | \
+        telegram_private_backfill_invalid_message_cursor | \
+        telegram_private_backfill_manifest_missing | \
+        telegram_private_backfill_messages_unavailable | \
+        telegram_private_backfill_owner_only | \
+        telegram_private_backfill_rollback_identity_mismatch | \
+        telegram_private_backfill_rolled_back_run_is_terminal | \
+        telegram_private_backfill_run_id_required | \
+        telegram_private_backfill_state_account_mismatch | \
+        telegram_private_backfill_state_missing | \
+        telegram_private_backfill_vault_directory_mismatch)
+        safe="$line"
+        ;;
+    esac
+  done <"$1"
+  printf '%s' "$safe"
+}
+
 if [ "$command_mode" = "contact-backfill" ]; then
   operator_output=""
   validated_output=""
+  safe_error_code=""
+  operator_error_file="$DEPLOY_DIR/contact-backfill-error.$$"
+  : >"$operator_error_file" || fail "contact backfill operation failed"
+  chmod 600 "$operator_error_file" || fail "contact backfill operation failed"
+  trap 'rm -f "$operator_error_file"' EXIT
   [ -f "$ACTIVE_COMPOSE_FILE" ] || fail "compose file is missing"
   [ -f "$CURRENT_IMAGE_FILE" ] || fail "current image state is missing"
   current_image="$(sed -n '1p' "$CURRENT_IMAGE_FILE")"
@@ -77,17 +124,32 @@ if [ "$command_mode" = "contact-backfill" ]; then
     flock -n 9 || fail "another deployment or backfill is running"
   fi
   if [ "$backfill_action" = "dry-run" ]; then
-    operator_output="$(
+    if operator_output="$(
       compose "$current_image" 0 exec -T telegram-poll node \
-        scripts/production/contact-backfill-operator.ts dry-run 2>/dev/null
-    )" || fail "contact backfill operation failed"
+        scripts/production/contact-backfill-operator.ts dry-run 2>"$operator_error_file"
+    )"; then
+      :
+    else
+      safe_error_code="$(extract_contact_backfill_error "$operator_error_file")"
+      [ -z "$safe_error_code" ] ||
+        fail "contact backfill operation failed: $safe_error_code"
+      fail "contact backfill operation failed"
+    fi
   else
-    operator_output="$(
+    if operator_output="$(
       compose "$current_image" 0 exec -T telegram-poll node \
         scripts/production/contact-backfill-operator.ts \
-        "$backfill_action" "$backfill_run_id" 2>/dev/null
-    )" || fail "contact backfill operation failed"
+        "$backfill_action" "$backfill_run_id" 2>"$operator_error_file"
+    )"; then
+      :
+    else
+      safe_error_code="$(extract_contact_backfill_error "$operator_error_file")"
+      [ -z "$safe_error_code" ] ||
+        fail "contact backfill operation failed: $safe_error_code"
+      fail "contact backfill operation failed"
+    fi
   fi
+  rm -f "$operator_error_file"
   validated_output="$(
     compose "$current_image" 0 exec -T telegram-poll node \
       scripts/production/contact-backfill-output-validator.ts \
