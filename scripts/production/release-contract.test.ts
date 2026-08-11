@@ -21,6 +21,7 @@ void test("private runtime state is excluded from Git and the image context", ()
   assertIgnored(".gitignore", "/vault/");
   assertIgnored(".gitignore", "/memory/");
   assertIgnored(".gitignore", "/iva-runtime/");
+  assertIgnored(".gitignore", "/private-backfill-backups/");
 
   for (const entry of [
     ".git",
@@ -32,6 +33,7 @@ void test("private runtime state is excluded from Git and the image context", ()
     "dist",
     "data",
     "memory",
+    "private-backfill-backups",
     "vault",
   ]) {
     assertIgnored(".dockerignore", entry);
@@ -124,6 +126,14 @@ void test("production Compose requires an immutable image and narrow mounts", ()
   assert.match(poll, /IVA_CONTAINER_RUNTIME: "1"/u);
   assert.match(poll, /ASSISTANT_APP_DIR: \/app/u);
   assert.match(poll, /ASSISTANT_DATA_DIR: \/app\/data/u);
+  assert.match(
+    poll,
+    /IVA_CONTACT_BACKFILL_BACKUP_DIR: \/var\/lib\/iva\/contact-backfill-backups/u,
+  );
+  assert.match(
+    poll,
+    /\.\/private-backfill-backups:\/var\/lib\/iva\/contact-backfill-backups/u,
+  );
   assert.match(poll, /IVA_RUN_STATUS_DATA_DIR: \/app\/data/u);
   assert.match(
     poll,

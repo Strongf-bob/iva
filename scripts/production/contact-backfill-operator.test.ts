@@ -192,6 +192,7 @@ void test("operator resolves exactly the active owner into an isolated worker en
     IVA_RUNTIME: "container",
     ASSISTANT_APP_DIR: appRoot,
     ASSISTANT_DATA_DIR: data,
+    IVA_CONTACT_BACKFILL_BACKUP_DIR: join(root, "legacy-only-backups"),
     TELEGRAM_EXPOSED_TOOLS: "read-only",
   });
 
@@ -205,7 +206,161 @@ void test("operator resolves exactly the active owner into an isolated worker en
     context.prepared.env.ASSISTANT_VAULT_DIR,
     join(users, ownerId, "vault"),
   );
+  assert.equal(context.vaultDir, join(users, ownerId, "vault"));
+  assert.equal(context.backupRoot, join(data, "private-backfill-backups"));
   assert.equal(context.prepared.env.TELEGRAM_EXPOSED_TOOLS, "read-only");
+});
+
+void test("operator resolves the active legacy owner against the shared live vault", async () => {
+  const root = mkdtempSync(join(tmpdir(), "iva-backfill-legacy-operator-"));
+  const appRoot = join(root, "app");
+  const data = join(appRoot, "data");
+  const control = join(data, "control");
+  const vault = join(appRoot, "vault");
+  const backupRoot = join(root, "backups");
+  for (const directory of [appRoot, data, control, vault]) {
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+  }
+  const ownerId = "123456789";
+  writeFileSync(
+    join(control, "legacy-owner-route.json"),
+    JSON.stringify({
+      id: ownerId,
+      role: "owner",
+      status: "active",
+      port: 8723,
+      limits: {
+        concurrentTurns: 1,
+        requestsPerHour: 30,
+        requestsPerDay: 100,
+        llmTokensPerDay: 500000,
+        audioSecondsPerDay: 1800,
+        attachmentBytes: 20971520,
+        storageBytes: 1073741824,
+      },
+      createdAt: "2026-08-11T00:00:00.000Z",
+    }),
+    { mode: 0o600 },
+  );
+
+  const context = await resolveContactBackfillOperatorContext({
+    IVA_RUNTIME: "container",
+    ASSISTANT_APP_DIR: appRoot,
+    ASSISTANT_DATA_DIR: data,
+    ASSISTANT_MULTI_USER: "1",
+    IVA_CONTACT_BACKFILL_BACKUP_DIR: backupRoot,
+    TELEGRAM_EXPOSED_TOOLS: "read-only",
+    TELEGRAM_MCP_URL: "http://telegram-userbot:8724/mcp",
+  });
+
+  assert.equal(context.prepared.user.id, ownerId);
+  assert.equal(context.prepared.user.port, 8723);
+  assert.equal(context.prepared.cwd, appRoot);
+  assert.equal(context.prepared.env.ASSISTANT_MULTI_USER, "0");
+  assert.equal(context.prepared.env.ASSISTANT_ROLE, "owner");
+  assert.equal(context.prepared.env.ASSISTANT_DATA_DIR, data);
+  assert.equal(context.prepared.env.ASSISTANT_VAULT_DIR, vault);
+  assert.equal(context.vaultDir, vault);
+  assert.equal(context.backupRoot, backupRoot);
+  assert.equal(context.prepared.env.TELEGRAM_ALLOWED_USER_IDS, ownerId);
+  assert.equal(
+    context.prepared.env.TELEGRAM_MCP_URL,
+    "http://telegram-userbot:8724/mcp",
+  );
+});
+
+void test("legacy operator requires a separately mounted external backup root", async () => {
+  const root = mkdtempSync(join(tmpdir(), "iva-backfill-legacy-backup-"));
+  const appRoot = join(root, "app");
+  const data = join(appRoot, "data");
+  const control = join(data, "control");
+  for (const directory of [appRoot, data, control, join(appRoot, "vault")]) {
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+  }
+  writeFileSync(
+    join(control, "legacy-owner-route.json"),
+    JSON.stringify({
+      id: "123456789",
+      role: "owner",
+      status: "active",
+      port: 8723,
+      limits: {
+        concurrentTurns: 1,
+        requestsPerHour: 30,
+        requestsPerDay: 100,
+        llmTokensPerDay: 500000,
+        audioSecondsPerDay: 1800,
+        attachmentBytes: 20971520,
+        storageBytes: 1073741824,
+      },
+      createdAt: "2026-08-11T00:00:00.000Z",
+    }),
+    { mode: 0o600 },
+  );
+
+  await assert.rejects(
+    resolveContactBackfillOperatorContext({
+      IVA_RUNTIME: "container",
+      ASSISTANT_APP_DIR: appRoot,
+      ASSISTANT_DATA_DIR: data,
+      TELEGRAM_EXPOSED_TOOLS: "read-only",
+    }),
+    /contact_backfill_operator_backup_unavailable/u,
+  );
+  await assert.rejects(
+    resolveContactBackfillOperatorContext({
+      IVA_RUNTIME: "container",
+      ASSISTANT_APP_DIR: appRoot,
+      ASSISTANT_DATA_DIR: data,
+      IVA_CONTACT_BACKFILL_BACKUP_DIR: join(appRoot, "backups"),
+      TELEGRAM_EXPOSED_TOOLS: "read-only",
+    }),
+    /contact_backfill_operator_backup_unavailable/u,
+  );
+});
+
+void test("legacy apply derives a backup accepted by the real containment check", async () => {
+  const root = mkdtempSync(join(tmpdir(), "iva-backfill-legacy-apply-"));
+  const appRoot = join(root, "app");
+  const vaultDir = join(appRoot, "vault");
+  const backupRoot = join(root, "backups");
+  mkdirSync(vaultDir, { recursive: true, mode: 0o700 });
+  const context = {
+    appRoot,
+    globalDataDir: join(appRoot, "data"),
+    vaultDir,
+    backupRoot,
+    prepared: {
+      user: { id: "123456789" },
+      cwd: appRoot,
+      env: { ASSISTANT_DATA_DIR: join(appRoot, "data") },
+    },
+  } as unknown as OperatorContext;
+  const state = { runId: "run-legacy" } as BackfillState;
+
+  const result = await runContactBackfillOperator(["apply", "run-legacy"], {
+    resolveContext: () => Promise.resolve(context),
+    runCli: async (resolved, argv) => {
+      const { createBackfillBackup } =
+        await import("../contact-analysis/backfill-state.ts");
+      const backupIndex = argv.indexOf("--backup-dir");
+      const backupDir = argv[backupIndex + 1];
+      assert.ok(backupDir);
+      await createBackfillBackup({
+        root: resolved.prepared.cwd,
+        vault: resolved.vaultDir,
+        backupDir,
+        accountUserId: 987654321,
+        runId: "run-legacy",
+        files: [],
+      });
+      return {};
+    },
+    loadState: () => Promise.resolve(state),
+    summarizeState: () => Promise.resolve({ summarized: true } as never),
+  });
+
+  assert.deepEqual(result, { summarized: true });
 });
 
 void test("operator maps every action to fixed CLI argv and a derived backup path", async () => {
@@ -213,6 +368,8 @@ void test("operator maps every action to fixed CLI argv and a derived backup pat
   const context = {
     appRoot: "/app",
     globalDataDir: "/app/data",
+    backupRoot: "/app/data/private-backfill-backups",
+    vaultDir: "/app/data/users/123456789/vault",
     prepared: { user: { id: "123456789" } },
   } as unknown as OperatorContext;
   const state = { runId: "run-a" } as BackfillState;

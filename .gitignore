@@ -26,6 +26,7 @@ __pycache__/
 /vault/
 /memory/
 /iva-runtime/
+/private-backfill-backups/
 
 
 # Скиллы держат локальные креды рядом со скриптами (пример: bts-express) —

@@ -70,6 +70,7 @@ extract_contact_backfill_error() {
     case "$line" in
       contact_backfill_failed | \
         contact_backfill_operator_failed | \
+        contact_backfill_operator_backup_unavailable | \
         contact_backfill_operator_output_limit | \
         contact_backfill_operator_owner_unavailable | \
         contact_backfill_operator_requires_container | \

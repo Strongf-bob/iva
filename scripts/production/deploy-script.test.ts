@@ -250,19 +250,23 @@ void test("contact backfill returns only validated aggregate JSON", () => {
     assert.doesNotMatch(failure.stderr, /srv|secret|private|sock/u);
   }
 
-  const codedFailure = run("contact-backfill status run-a", {
-    ...env,
-    MOCK_OPERATOR_SUCCESS: "0",
-    MOCK_OPERATOR_STDERR:
-      "/srv/secret.sock\ncontact_backfill_operator_owner_unavailable",
-  });
-  assert.notEqual(codedFailure.status, 0);
-  assert.equal(codedFailure.stdout, "");
-  assert.match(
-    codedFailure.stderr,
-    /contact backfill operation failed: contact_backfill_operator_owner_unavailable/u,
-  );
-  assert.doesNotMatch(codedFailure.stderr, /srv|secret|sock/u);
+  for (const knownCode of [
+    "contact_backfill_operator_owner_unavailable",
+    "contact_backfill_operator_backup_unavailable",
+  ]) {
+    const codedFailure = run("contact-backfill status run-a", {
+      ...env,
+      MOCK_OPERATOR_SUCCESS: "0",
+      MOCK_OPERATOR_STDERR: `/srv/secret.sock\n${knownCode}`,
+    });
+    assert.notEqual(codedFailure.status, 0);
+    assert.equal(codedFailure.stdout, "");
+    assert.match(
+      codedFailure.stderr,
+      new RegExp(`contact backfill operation failed: ${knownCode}`, "u"),
+    );
+    assert.doesNotMatch(codedFailure.stderr, /srv|secret|sock/u);
+  }
 
   for (const hostileCode of [
     "contact_backfill_998877665544",

@@ -70,6 +70,7 @@ services:
       IVA_CONTAINER_WORKERS_ALLOW_LEGACY: ${IVA_CONTAINER_WORKERS_ALLOW_LEGACY:-0}
       ASSISTANT_APP_DIR: /app
       ASSISTANT_DATA_DIR: /app/data
+      IVA_CONTACT_BACKFILL_BACKUP_DIR: /var/lib/iva/contact-backfill-backups
       IVA_RUN_STATUS_DATA_DIR: /app/data
       ASSISTANT_HOST: http://iva:8723
       IVA_PORT: "8723"
@@ -98,6 +99,7 @@ services:
       - ./memory:/app/memory
       - ./vault:/app/vault
       - ./.eve:/app/.eve
+      - ./private-backfill-backups:/var/lib/iva/contact-backfill-backups
       - ./.env:/app/.env:ro
       - telegram-userbot-onboarding-auth:/app/userbot-onboarding-auth:ro
     tmpfs:
