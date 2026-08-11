@@ -547,3 +547,22 @@ Implementation should preserve the current division of responsibility:
 No database is introduced in this feature. A future database projection is justified only after at
 least two independent consumers need indexed fields that Markdown search and the task registry
 cannot serve reliably.
+
+## 16. Implemented shape
+
+The first implementation keeps the approved storage boundary and adds:
+
+- validated profile facts, full and partial birthdays, timezone-aware current-age calculation, and
+  stable JSON metadata comments that replace the legacy Base64 state on migration;
+- human-readable Telegram-derived person, group, and channel cards while preserving manual prose;
+- explicit owner-reported meeting entries and durable-fact promotion through `contact_memory`;
+- a Markdown person-task registry with open, completed, and cancelled states, immediate reciprocal
+  links, unambiguous completion, and inclusion in the ordinary task list;
+- daily reconciliation, dry-run legacy inventory, recoverable backups, and idempotent migration;
+- clean-output instructions and regression tests preventing technical metadata from appearing in
+  normal replies.
+
+The migration API requires an explicit backup directory so operators cannot accidentally place
+recoverable legacy copies inside a tracked vault. Deployment and migration execution remain separate
+operator actions; this implementation does not mutate a live vault merely because the code was
+built.

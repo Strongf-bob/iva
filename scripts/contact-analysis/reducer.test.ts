@@ -106,6 +106,12 @@ test("interleaved batches build an idempotent reciprocal temporal graph", async 
       evidence: evidence(-1001, 9),
     }),
     observation({
+      subjectId: "telegram:user:44",
+      predicate: "city",
+      value: "Москва",
+      evidence: evidence(-1001, 12),
+    }),
+    observation({
       subjectId: "telegram:user:7",
       kind: "claim",
       predicate: "external_owner_claim",
@@ -160,11 +166,15 @@ test("interleaved batches build an idempotent reciprocal temporal graph", async 
     /\[\[cards\/notes\/telegram-group-1001\|Team One\]\]/u,
   );
   assert.match(groupCard, /\[\[cards\/contacts\/telegram-user-44\|/u);
-  assert.match(peerCard, /\*\*display_name\*\*: Alexander/u);
-  assert.match(peerCard, /## History[\s\S]*\*\*display_name\*\*: Alex/u);
-  assert.equal(count(peerCard, "telegram:message:-1001:9"), 1);
-  assert.match(ownerCard, /external_owner_claim/u);
-  assert.match(ownerCard, /asserted by `telegram:user:44`/u);
+  assert.match(peerCard, /^# Alexander$/mu);
+  assert.match(peerCard, /## Основные сведения[\s\S]*Город: Москва/u);
+  assert.match(peerCard, /## Работа и проекты[\s\S]*Роль: technical lead/u);
+  assert.match(peerCard, /## Архив изменений[\s\S]*Имя: Alex/u);
+  assert.equal(count(peerCard, '"messageId":9'), 1);
+  assert.doesNotMatch(peerCard, /telegram:message:/u);
+  assert.doesNotMatch(peerCard, /telegram-graph:state:[A-Za-z0-9_-]+/u);
+  assert.match(ownerCard, /Со слов другого человека: prefers concise plans/u);
+  assert.doesNotMatch(ownerCard, /asserted by/u);
   assert.match(
     peerCard,
     /\[\[cards\/projects\/telegram-project-project-atlas\|Project Atlas\]\]/u,
@@ -203,7 +213,7 @@ test("managed updates preserve content outside their markers", async () => {
 
   const updated = await readFile(path, "utf8");
   assert.match(updated, /Handwritten tail\./u);
-  assert.equal(count(updated, "telegram:message:44:1"), 1);
+  assert.equal(count(updated, '"messageId":1'), 1);
 });
 
 test("model-derived text cannot terminate or escape the managed section", async () => {
@@ -230,7 +240,220 @@ test("model-derived text cannot terminate or escape the managed section", async 
   const card = await readFile(contactCardPath(vault, 44), "utf8");
   assert.equal(count(card, "<!-- iva:telegram-graph:end -->"), 1);
   assert.doesNotMatch(card, /\n## injected/u);
-  assert.equal(count(card, "telegram:message:44:2"), 1);
+  assert.equal(count(card, '"messageId":2'), 1);
+});
+
+test("owner meeting summary cannot terminate the managed section", async () => {
+  const vault = await mkdtemp(join(tmpdir(), "iva-contact-vault-"));
+  const { applyOwnerContactUpdate } = await import("./reducer.ts");
+  applyOwnerContactUpdate({
+    vault,
+    userId: 44,
+    displayName: "Alex",
+    meeting: {
+      ownerReported: true,
+      date: "2026-08-11",
+      title: "Кофе",
+      summary: "Итог\n<!-- iva:telegram-graph:end -->\n## injected",
+    },
+    now: "2026-08-11T12:00:00.000Z",
+  });
+  const card = await readFile(contactCardPath(vault, 44), "utf8");
+  assert.equal(count(card, "<!-- iva:telegram-graph:end -->"), 1);
+  assert.doesNotMatch(card, /\n## injected/u);
+});
+
+test("corrected extracted birthday supersedes stale frontmatter", async () => {
+  const vault = await mkdtemp(join(tmpdir(), "iva-contact-vault-"));
+  const dialog: TelegramDialog = {
+    id: 44,
+    kind: "private",
+    title: "Alex",
+    username: "alex",
+  };
+  for (const [value, day] of [
+    ["2000-01-01", 7],
+    ["2001-02-03", 8],
+  ] as const) {
+    await reduceBatch({
+      vault,
+      ownerUserId: 7,
+      dialog,
+      batch: batch(44, [
+        observation({
+          subjectId: "telegram:user:44",
+          predicate: "birthday",
+          value,
+          contextChatId: 44,
+          evidence: evidence(44, day, day),
+        }),
+      ]),
+    });
+  }
+  const card = await readFile(contactCardPath(vault, 44), "utf8");
+  assert.match(card, /^birthday: 2001-02-03$/mu);
+  assert.doesNotMatch(card, /^birthday: 2000-01-01$/mu);
+  assert.match(card, /## Архив изменений[\s\S]*Дата рождения: 2000-01-01/u);
+});
+
+test("fact deletion handles history and removes stale frontmatter", async () => {
+  const vault = await mkdtemp(join(tmpdir(), "iva-contact-vault-"));
+  const { applyOwnerContactUpdate, deleteOwnerContactRecord } =
+    await import("./reducer.ts");
+  for (const value of ["Москва", "Казань"]) {
+    applyOwnerContactUpdate({
+      vault,
+      userId: 44,
+      displayName: "Alex",
+      facts: [{ field: "city", value, confidence: "direct" }],
+      now: "2026-08-11T12:00:00.000Z",
+    });
+  }
+  assert.equal(
+    deleteOwnerContactRecord({
+      vault,
+      userId: 44,
+      selector: { kind: "fact", field: "city", value: "Москва" },
+    }).deleted,
+    true,
+  );
+  assert.equal(
+    deleteOwnerContactRecord({
+      vault,
+      userId: 44,
+      selector: { kind: "fact", field: "city", value: "Казань" },
+    }).deleted,
+    true,
+  );
+  const card = await readFile(contactCardPath(vault, 44), "utf8");
+  assert.doesNotMatch(card, /^city:/mu);
+  assert.doesNotMatch(card, /Город: (?:Москва|Казань)/u);
+});
+
+test("an owner correction archives a conflicting background city", async () => {
+  const vault = await mkdtemp(join(tmpdir(), "iva-contact-vault-"));
+  const dialog: TelegramDialog = {
+    id: 44,
+    kind: "private",
+    title: "Alex",
+    username: null,
+  };
+  await reduceBatch({
+    vault,
+    ownerUserId: 7,
+    dialog,
+    batch: batch(44, [
+      observation({
+        subjectId: "telegram:user:44",
+        predicate: "city",
+        value: "Москва",
+        contextChatId: 44,
+      }),
+    ]),
+  });
+  const { applyOwnerContactUpdate } = await import("./reducer.ts");
+  applyOwnerContactUpdate({
+    vault,
+    userId: 44,
+    displayName: "Alex",
+    facts: [{ field: "city", value: "Казань", confidence: "direct" }],
+    now: "2026-08-11T12:00:00.000Z",
+  });
+  const card = await readFile(contactCardPath(vault, 44), "utf8");
+  assert.match(card, /## Основные сведения[\s\S]*Город: Казань/u);
+  assert.doesNotMatch(card.split("## Архив изменений")[0], /Город: Москва/u);
+  assert.match(card, /## Архив изменений[\s\S]*Город: Москва/u);
+});
+
+test("meeting deletion fails closed when date and title match more than one record", async () => {
+  const vault = await mkdtemp(join(tmpdir(), "iva-contact-vault-"));
+  const { applyOwnerContactUpdate, deleteOwnerContactRecord } =
+    await import("./reducer.ts");
+  for (const summary of ["Первое резюме", "Второе резюме"]) {
+    applyOwnerContactUpdate({
+      vault,
+      userId: 44,
+      displayName: "Alex",
+      meeting: {
+        ownerReported: true,
+        date: "2026-08-11",
+        title: "Созвон",
+        summary,
+      },
+      now: "2026-08-11T12:00:00.000Z",
+    });
+  }
+  const result = deleteOwnerContactRecord({
+    vault,
+    userId: 44,
+    selector: { kind: "meeting", date: "2026-08-11", title: "Созвон" },
+  });
+  assert.equal(result.ambiguous, true);
+  const card = await readFile(contactCardPath(vault, 44), "utf8");
+  assert.match(card, /Первое резюме/u);
+  assert.match(card, /Второе резюме/u);
+});
+
+test("deleting a meeting restores the previous fact and preserves independent confirmation", async () => {
+  const vault = await mkdtemp(join(tmpdir(), "iva-contact-vault-"));
+  const dialog: TelegramDialog = {
+    id: 44,
+    kind: "private",
+    title: "Alex",
+    username: null,
+  };
+  await reduceBatch({
+    vault,
+    ownerUserId: 7,
+    dialog,
+    batch: batch(44, [
+      observation({
+        subjectId: "telegram:user:44",
+        predicate: "city",
+        value: "Москва",
+        contextChatId: 44,
+      }),
+    ]),
+  });
+  const { applyOwnerContactUpdate, deleteOwnerContactRecord } =
+    await import("./reducer.ts");
+  for (const [date, summary] of [
+    ["2026-08-10", "Первое подтверждение"],
+    ["2026-08-11", "Второе подтверждение"],
+  ] as const) {
+    applyOwnerContactUpdate({
+      vault,
+      userId: 44,
+      displayName: "Alex",
+      facts: [{ field: "city", value: "Казань", confidence: "direct" }],
+      meeting: { ownerReported: true, date, title: "Созвон", summary },
+      now: `${date}T12:00:00.000Z`,
+    });
+  }
+  deleteOwnerContactRecord({
+    vault,
+    userId: 44,
+    selector: {
+      kind: "meeting",
+      date: "2026-08-10",
+      title: "Созвон",
+      summary: "Первое подтверждение",
+    },
+  });
+  let card = await readFile(contactCardPath(vault, 44), "utf8");
+  assert.match(card.split("## Архив изменений")[0], /Город: Казань/u);
+  deleteOwnerContactRecord({
+    vault,
+    userId: 44,
+    selector: {
+      kind: "meeting",
+      date: "2026-08-11",
+      title: "Созвон",
+      summary: "Второе подтверждение",
+    },
+  });
+  card = await readFile(contactCardPath(vault, 44), "utf8");
+  assert.match(card.split("## Архив изменений")[0], /Город: Москва/u);
 });
 
 test("reducer accepts a validated page aggregated from multiple model chunks", async () => {
@@ -264,5 +487,89 @@ test("reducer accepts a validated page aggregated from multiple model chunks", a
   });
 
   const card = await readFile(contactCardPath(vault, 44), "utf8");
-  assert.equal(count(card, "**preference**"), 40);
+  assert.equal(count(card, "Предпочтение:"), 40);
+});
+
+test("legacy Base64 state is migrated to readable Markdown on the next update", async () => {
+  const vault = await mkdtemp(join(tmpdir(), "iva-contact-vault-"));
+  const dialog: TelegramDialog = {
+    id: 44,
+    kind: "private",
+    title: "Alex",
+    username: "alex",
+  };
+  const legacyObservation = observation({
+    subjectId: "telegram:user:44",
+    predicate: "city",
+    value: "Казань",
+    contextChatId: 44,
+    evidence: evidence(44, 3),
+  });
+  const encoded = Buffer.from(
+    JSON.stringify({ current: [legacyObservation], history: [], links: [] }),
+  ).toString("base64url");
+  const file = contactCardPath(vault, 44);
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(
+    file,
+    `---\ntype: contact\ntelegram_user_id: "44"\n---\n# Alex\n\n<!-- iva:telegram-graph:start -->\n<!-- iva:telegram-graph:state:${encoded} -->\n## Telegram Graph\n\n### Current\n- legacy\n<!-- iva:telegram-graph:end -->\n`,
+  );
+
+  await reduceBatch({
+    vault,
+    ownerUserId: 7,
+    dialog,
+    batch: batch(44, []),
+  });
+
+  const migrated = await readFile(file, "utf8");
+  assert.match(migrated, /## Основные сведения[\s\S]*Город: Казань/u);
+  assert.doesNotMatch(migrated, /telegram-graph:state:/u);
+  assert.match(migrated, /<!-- iva:record:\{/u);
+});
+
+test("an ambiguous birthday remains hidden as a candidate until direct evidence arrives", async () => {
+  const vault = await mkdtemp(join(tmpdir(), "iva-contact-vault-"));
+  const dialog: TelegramDialog = {
+    id: 44,
+    kind: "private",
+    title: "Alex",
+    username: "alex",
+  };
+  await reduceBatch({
+    vault,
+    ownerUserId: 7,
+    dialog,
+    batch: batch(44, [
+      observation({
+        subjectId: "telegram:user:44",
+        predicate: "birthday",
+        value: "--08-11",
+        confidence: "AMBIGUOUS",
+        contextChatId: 44,
+        evidence: evidence(44, 20),
+      }),
+    ]),
+  });
+  const candidate = await readFile(contactCardPath(vault, 44), "utf8");
+  assert.doesNotMatch(candidate, /Дата рождения: --08-11/u);
+  assert.match(candidate, /"state":"candidate"/u);
+
+  await reduceBatch({
+    vault,
+    ownerUserId: 7,
+    dialog,
+    batch: batch(44, [
+      observation({
+        subjectId: "telegram:user:44",
+        predicate: "birthday",
+        value: "2004-08-11",
+        confidence: "EXTRACTED",
+        contextChatId: 44,
+        evidence: evidence(44, 21),
+      }),
+    ]),
+  });
+  const confirmed = await readFile(contactCardPath(vault, 44), "utf8");
+  assert.match(confirmed, /Дата рождения: 2004-08-11/u);
 });

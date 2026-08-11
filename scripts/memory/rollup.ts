@@ -27,6 +27,7 @@ import {
   withTurnTimeout,
 } from "../lib/rollup-turn.ts";
 import { sendTelegramHtml } from "../lib/telegram-send.ts";
+import { reconcilePersonTasks } from "../contact-memory/reconcile.ts";
 
 type Period = "daily" | "weekly" | "monthly" | "yearly";
 
@@ -131,6 +132,10 @@ function buildPrompt(p: Period, now: string): string {
         `без преамбул') so you don't repeat it. Keep lessons recency-ordered, drop the stalest when the ` +
         `section grows; a lesson consistently honored for weeks can be dropped. Skip this whole step if ` +
         `the day held no corrections (no-op — don't invent lessons). ` +
+        `For explicit owner-reported meetings and person-profile facts, use the contact_memory tool; ` +
+        `do not manufacture meetings from ordinary chat. Reconcile person-linked task completions only ` +
+        `when the transcript contains explicit completion language and exactly one unambiguous open match. ` +
+        `If there is no match or more than one match, leave every candidate open and report the ambiguity. ` +
         tail
       );
     case "weekly":
@@ -396,6 +401,12 @@ if (period === "daily") {
     }
     console.log(
       `rollup daily: CORE.md compressed ${oldLength} → ${core.length} chars`,
+    );
+  }
+  const reconciliation = await reconcilePersonTasks({ vault: VAULT, today });
+  if (reconciliation.changedFiles.length > 0) {
+    console.log(
+      `rollup daily: reconciled ${reconciliation.changedFiles.length} person-task files`,
     );
   }
 }

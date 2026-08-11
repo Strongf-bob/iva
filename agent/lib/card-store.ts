@@ -18,6 +18,7 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import {
   parseFrontmatter,
@@ -634,11 +635,35 @@ export function mergeCard(input: MergeInput): MergeResult {
 
 const LOCK_STALE_MS = 15_000;
 
+function processStartIdentity(pid: number): string | null {
+  try {
+    return (
+      execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+        encoding: "utf8",
+        timeout: 1000,
+      }).trim() || null
+    );
+  } catch {
+    return null;
+  }
+}
+
+const PROCESS_START =
+  processStartIdentity(process.pid) ?? `runtime-${Date.now()}`;
+
+function lockOwnerIsAlive(lock: string): boolean {
+  const match = /^(\d+)\|([^|]+)\|/u.exec(readFileSync(lock, "utf8"));
+  if (!match) return false;
+  const expected = Buffer.from(match[2], "base64url").toString("utf8");
+  if (Number(match[1]) === process.pid) return expected === PROCESS_START;
+  return processStartIdentity(Number(match[1])) === expected;
+}
+
 /** Lock-файл (O_EXCL) с токеном владения: release снимает лок, только пока на диске
  * наш токен — вытесненный по staleness держатель не удалит лок преемника. */
 export function acquireLock(file: string, timeoutMs = 5000): () => void {
   const lock = `${file}.lock`;
-  const token = `${process.pid}-${Math.random().toString(36).slice(2)}`;
+  const token = `${process.pid}|${Buffer.from(PROCESS_START).toString("base64url")}|${Math.random().toString(36).slice(2)}`;
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     // Дедлайн проверяется на КАЖДОЙ итерации, включая путь «лок исчез между попыткой
@@ -662,7 +687,10 @@ export function acquireLock(file: string, timeoutMs = 5000): () => void {
       if (e.code !== "EEXIST") throw err;
       // Протухший лок от упавшего процесса не должен блокировать навсегда.
       try {
-        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {
+        if (
+          Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS &&
+          !lockOwnerIsAlive(lock)
+        ) {
           rmSync(lock, { force: true });
           continue;
         }

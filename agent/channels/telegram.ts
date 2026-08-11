@@ -42,6 +42,7 @@ import {
   type TelegramMediaCacheEntry,
 } from "../lib/telegram-media-cache.js";
 import { humanizeProviderError } from "../lib/error-humanizer.js";
+import { stripInternalMemoryArtifacts } from "../lib/contact-memory.js";
 // Состояние «идёт ли ход» — per-chat файлы data/run-status.d с мостом telegram-poll.mjs:
 // мост по ним буферизует входящие, канал хранит sessionId/turnId для отмены.
 import {
@@ -1002,7 +1003,7 @@ const telegram = telegramChannel({
       // Outbound security-гейт: редактим утёкшие секреты/эксфил-URL ДО отправки. Fail-open —
       // если гейт что-то нашёл, шлём отредактированное и громко логируем (блокировать ответ
       // целиком хуже редкой утечки для единственного владельца).
-      const guard = scanOutbound(data.message);
+      const guard = scanOutbound(stripInternalMemoryArtifacts(data.message));
       if (!guard.clean) {
         console.error(
           "[security] outbound leak redacted:",

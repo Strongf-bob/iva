@@ -10,6 +10,20 @@ import {
 } from "../../agent/lib/frontmatter.ts";
 import { acquireLock, atomicWrite } from "../../agent/lib/card-store.ts";
 import {
+  withContactMemoryLock,
+  runContactMemoryTransaction,
+} from "../../agent/lib/contact-memory-transaction.ts";
+import {
+  MeetingSchema,
+  ProfileFactSchema,
+  parseInternalRecord,
+  serializeInternalRecord,
+  stableRecordId,
+  safeHumanInline,
+  type Meeting,
+  type ProfileFact,
+} from "../../agent/lib/contact-memory.ts";
+import {
   AnalysisPageSchema,
   ObservationSchema,
   type AnalysisPage,
@@ -25,10 +39,26 @@ const ManagedLinkSchema = z.strictObject({
   target: z.string().min(1),
   label: z.string().min(1).max(500),
 });
+const StoredFactSchema = ProfileFactSchema.extend({
+  id: z.string().min(1),
+  createdAt: z.iso.datetime({ offset: true }),
+  updatedAt: z.iso.datetime({ offset: true }),
+  originMeetingId: z.string().min(1).optional(),
+  originMeetingIds: z.array(z.string().min(1)).optional(),
+});
+type StoredFact = z.infer<typeof StoredFactSchema>;
+const StoredMeetingSchema = MeetingSchema.extend({
+  id: z.string().min(1),
+  createdAt: z.iso.datetime({ offset: true }),
+});
 const ManagedStateSchema = z.strictObject({
   current: z.array(ObservationSchema),
   history: z.array(ObservationSchema),
+  candidates: z.array(ObservationSchema).default([]),
   links: z.array(ManagedLinkSchema),
+  ownerFacts: z.array(StoredFactSchema).default([]),
+  factHistory: z.array(StoredFactSchema).default([]),
+  meetings: z.array(StoredMeetingSchema).default([]),
 });
 type ManagedState = z.infer<typeof ManagedStateSchema>;
 
@@ -46,6 +76,7 @@ export interface ReduceBatchInput {
   ownerUserId: number;
   dialog: TelegramDialog;
   batch: AnalysisPage;
+  transactionLocked?: boolean;
 }
 
 export interface ReduceResult {
@@ -114,7 +145,15 @@ export function observationId(observation: Observation): string {
 }
 
 function emptyManaged(): ManagedState {
-  return { current: [], history: [], links: [] };
+  return {
+    current: [],
+    history: [],
+    candidates: [],
+    links: [],
+    ownerFacts: [],
+    factHistory: [],
+    meetings: [],
+  };
 }
 
 function ownedRegion(body: string): string | null {
@@ -132,7 +171,36 @@ function parseManaged(body: string): ManagedState {
   if (region === null) return emptyManaged();
   const stateStart = region.indexOf(STATE_PREFIX);
   if (stateStart === -1) {
-    throw new Error("Telegram graph managed section has no state payload");
+    const managed = emptyManaged();
+    const markers = region.match(/<!-- iva:record:\{.*\} -->/gu) ?? [];
+    for (const marker of markers) {
+      const record = parseInternalRecord(marker);
+      if (record.kind === "observation") {
+        const observation = ObservationSchema.parse(record.observation);
+        if (record.state === "current") managed.current.push(observation);
+        else if (record.state === "history") managed.history.push(observation);
+        else if (record.state === "candidate")
+          managed.candidates.push(observation);
+        else throw new Error("contact-memory observation has invalid state");
+      } else if (record.kind === "link") {
+        managed.links.push(
+          ManagedLinkSchema.parse({
+            target: record.target,
+            label: record.label,
+          }),
+        );
+      } else if (record.kind === "profile-fact") {
+        const fact = StoredFactSchema.parse(record.fact);
+        if (record.state === "current") managed.ownerFacts.push(fact);
+        else if (record.state === "history") managed.factHistory.push(fact);
+        else throw new Error("contact-memory fact has invalid state");
+      } else if (record.kind === "meeting") {
+        managed.meetings.push(StoredMeetingSchema.parse(record.meeting));
+      } else {
+        throw new Error("contact-memory record has unsupported kind");
+      }
+    }
+    return ManagedStateSchema.parse(managed);
   }
   const payloadStart = stateStart + STATE_PREFIX.length;
   const payloadEnd = region.indexOf(" -->", payloadStart);
@@ -176,7 +244,17 @@ function newestEvidenceTimestamp(observation: Observation): string {
 }
 
 function supersessionKey(observation: Observation): string | null {
-  if (["display_name", "username"].includes(observation.predicate)) {
+  if (
+    [
+      "display_name",
+      "username",
+      "birthday",
+      "city",
+      "timezone",
+      "education",
+      "employer",
+    ].includes(observation.predicate)
+  ) {
     return `${observation.subjectId}:${observation.predicate}`;
   }
   if (
@@ -192,11 +270,32 @@ function supersessionKey(observation: Observation): string | null {
 function mergeObservation(managed: ManagedState, incoming: Observation): void {
   const incomingId = observationId(incoming);
   if (
-    [...managed.current, ...managed.history].some(
+    [...managed.current, ...managed.history, ...managed.candidates].some(
       (item) => observationId(item) === incomingId,
     )
   ) {
     return;
+  }
+  const candidateOnly = new Set<Observation["predicate"]>([
+    "birthday",
+    "city",
+    "timezone",
+    "phone",
+    "email",
+    "education",
+    "employer",
+  ]);
+  if (
+    candidateOnly.has(incoming.predicate) &&
+    incoming.confidence !== "EXTRACTED"
+  ) {
+    managed.candidates.push(incoming);
+    return;
+  }
+  if (candidateOnly.has(incoming.predicate)) {
+    managed.candidates = managed.candidates.filter(
+      (item) => item.predicate !== incoming.predicate,
+    );
   }
   const key = supersessionKey(incoming);
   if (key === null) {
@@ -250,35 +349,53 @@ function displayName(state: CardState): string {
 }
 
 function safeInline(value: string): string {
-  return (
-    value
-      .replace(/\p{Cc}+/gu, " ")
-      .replace(/<!--/gu, "&lt;!--")
-      .replace(/-->/gu, "--&gt;")
-      .replaceAll("[", " ")
-      .replaceAll("]", " ")
-      .replaceAll("|", " ")
-      .replace(/\s+/gu, " ")
-      .trim() || "Telegram item"
-  );
+  return safeHumanInline(value);
 }
 
 function renderObservation(observation: Observation): string {
-  const id = observationId(observation);
   const target =
     observation.value === undefined
       ? `[[${observation.objectId}]]`
       : safeInline(observation.value);
-  const sources = observation.evidence
-    .map(
-      (item) =>
-        `\`telegram:message:${item.chatId}:${item.messageId}\` (${item.timestamp})`,
-    )
-    .join(", ");
-  const asserted = observation.assertedById
-    ? `; asserted by \`${observation.assertedById}\``
-    : "";
-  return `- <!-- iva:observation:${id} --> **${observation.predicate}**: ${target} (${observation.confidence}${asserted}; evidence: ${sources})`;
+  const labels: Record<Observation["predicate"], string> = {
+    display_name: "Имя",
+    username: "Telegram",
+    relationship: "Контекст отношений",
+    role: "Роль",
+    member_of: "Участник",
+    works_on: "Проект",
+    communication_style: "Как общается",
+    commitment: "Обязательство",
+    preference: "Предпочтение",
+    owner_mention: "Упоминание владельца",
+    external_owner_claim: "Со слов другого человека",
+    birthday: "Дата рождения",
+    city: "Город",
+    timezone: "Часовой пояс",
+    phone: "Телефон",
+    email: "Email",
+    education: "Учёба",
+    employer: "Работа",
+    interest: "Интерес",
+    important_date: "Важная дата",
+    gift_idea: "Идея подарка",
+    interesting_fact: "Факт",
+  };
+  const marker = serializeObservation(observation, "current");
+  return `- ${labels[observation.predicate]}: ${target}\n  ${marker}`;
+}
+
+function serializeObservation(
+  observation: Observation,
+  state: "current" | "history" | "candidate",
+): string {
+  return serializeInternalRecord({
+    v: 1,
+    id: observationId(observation),
+    kind: "observation",
+    state,
+    observation,
+  });
 }
 
 function sortedObservations(items: Observation[]): Observation[] {
@@ -288,35 +405,518 @@ function sortedObservations(items: Observation[]): Observation[] {
   });
 }
 
-function renderManaged(managed: ManagedState): string {
+function observationSection(observation: Observation): string {
+  if (["display_name"].includes(observation.predicate)) return "Как обращаться";
+  if (["birthday", "city", "timezone"].includes(observation.predicate))
+    return "Основные сведения";
+  if (["username", "phone", "email"].includes(observation.predicate))
+    return "Контакты";
+  if (
+    [
+      "relationship",
+      "member_of",
+      "owner_mention",
+      "external_owner_claim",
+    ].includes(observation.predicate)
+  )
+    return "Наши отношения";
+  if (observation.predicate === "education") return "Учёба";
+  if (["role", "works_on", "employer"].includes(observation.predicate))
+    return "Работа и проекты";
+  if (
+    ["communication_style", "preference", "interest"].includes(
+      observation.predicate,
+    )
+  )
+    return "Интересы и предпочтения";
+  if (observation.predicate === "important_date") return "Важные даты";
+  if (observation.predicate === "gift_idea") return "Подарки и идеи";
+  if (observation.predicate === "commitment") return "Открытые дела";
+  return "Интересные факты";
+}
+
+function renderManaged(
+  managed: ManagedState,
+  cardType: CardState["cardType"],
+): string {
   const normalized = ManagedStateSchema.parse({
     current: sortedObservations(managed.current),
     history: sortedObservations(managed.history),
+    candidates: sortedObservations(managed.candidates),
     links: [...managed.links].sort((left, right) =>
       left.target.localeCompare(right.target),
     ),
+    ownerFacts: [...managed.ownerFacts].sort(
+      (left, right) =>
+        left.field.localeCompare(right.field) ||
+        left.id.localeCompare(right.id),
+    ),
+    factHistory: [...managed.factHistory].sort(
+      (left, right) =>
+        left.updatedAt.localeCompare(right.updatedAt) ||
+        left.id.localeCompare(right.id),
+    ),
+    meetings: [...managed.meetings].sort(
+      (left, right) =>
+        right.date.localeCompare(left.date) || right.id.localeCompare(left.id),
+    ),
   });
-  const encoded = Buffer.from(JSON.stringify(normalized), "utf8").toString(
-    "base64url",
-  );
-  const current = normalized.current.map(renderObservation);
-  const history = normalized.history.map(renderObservation);
-  const links = normalized.links.map(
-    (link) => `- [[${link.target}|${safeInline(link.label)}]]`,
-  );
-  return [
+  const lines = [
     START,
-    `${STATE_PREFIX}${encoded} -->`,
-    "## Telegram Graph",
-    "",
-    "### Current",
-    ...(current.length > 0 ? current : ["- No observations yet."]),
-    ...(links.length > 0 ? ["", "### Links", ...links] : []),
-    "",
-    "## History",
-    ...(history.length > 0 ? history : ["- No superseded observations."]),
-    END,
-  ].join("\n");
+    ...normalized.candidates.map((item) =>
+      serializeObservation(item, "candidate"),
+    ),
+  ];
+  const grouped = new Map<string, Observation[]>();
+  for (const item of normalized.current) {
+    const section =
+      cardType === "contact" ? observationSection(item) : "Что известно";
+    const items = grouped.get(section) ?? [];
+    items.push(item);
+    grouped.set(section, items);
+  }
+  const factLabels: Record<ProfileFact["field"], string> = {
+    full_name: "Полное имя",
+    preferred_name: "Предпочтительное имя",
+    nickname: "Прозвище",
+    pronunciation: "Произношение",
+    formality: "Форма обращения",
+    birthday: "Дата рождения",
+    city: "Город",
+    timezone: "Часовой пояс",
+    language: "Язык",
+    family_context: "Семейный контекст",
+    phone: "Телефон",
+    email: "Email",
+    telegram_username: "Telegram",
+    other_contact: "Другой контакт",
+    preferred_channel: "Предпочтительный канал",
+    preferred_contact_time: "Когда лучше писать",
+    relationship: "Контекст отношений",
+    education: "Учёба",
+    work: "Работа",
+    project: "Проект",
+    interest: "Интерес",
+    preference: "Предпочтение",
+    important_date: "Важная дата",
+    gift_given: "Подарено",
+    gift_wish: "Пожелание",
+    gift_idea: "Идея подарка",
+    interesting_fact: "Факт",
+    conversation_followup: "Обсудить",
+  };
+  const factSection = (fact: StoredFact): string => {
+    if (
+      [
+        "full_name",
+        "preferred_name",
+        "nickname",
+        "pronunciation",
+        "formality",
+      ].includes(fact.field)
+    )
+      return "Как обращаться";
+    if (
+      ["birthday", "city", "timezone", "language", "family_context"].includes(
+        fact.field,
+      )
+    )
+      return "Основные сведения";
+    if (
+      [
+        "phone",
+        "email",
+        "telegram_username",
+        "other_contact",
+        "preferred_channel",
+        "preferred_contact_time",
+      ].includes(fact.field)
+    )
+      return "Контакты";
+    if (fact.field === "relationship") return "Наши отношения";
+    if (fact.field === "education") return "Учёба";
+    if (["work", "project"].includes(fact.field)) return "Работа и проекты";
+    if (["interest", "preference"].includes(fact.field))
+      return "Интересы и предпочтения";
+    if (fact.field === "important_date") return "Важные даты";
+    if (["gift_given", "gift_wish", "gift_idea"].includes(fact.field))
+      return "Подарки и идеи";
+    if (fact.field === "conversation_followup") return "К следующему разговору";
+    return "Интересные факты";
+  };
+  const ownerFacts = new Map<string, StoredFact[]>();
+  for (const fact of normalized.ownerFacts) {
+    const section = factSection(fact);
+    const items = ownerFacts.get(section) ?? [];
+    items.push(fact);
+    ownerFacts.set(section, items);
+  }
+  const order = [
+    "Как обращаться",
+    "Основные сведения",
+    "Контакты",
+    "Наши отношения",
+    "Учёба",
+    "Работа и проекты",
+    "Интересы и предпочтения",
+    "Важные даты",
+    "Подарки и идеи",
+    "Интересные факты",
+    "К следующему разговору",
+    "Открытые дела",
+    "Что известно",
+  ];
+  for (const section of order) {
+    const items = grouped.get(section) ?? [];
+    const facts = ownerFacts.get(section) ?? [];
+    if (!items.length && !facts.length) continue;
+    lines.push("", `## ${section}`, "", ...items.map(renderObservation));
+    for (const fact of facts) {
+      lines.push(
+        `- ${fact.label ?? factLabels[fact.field]}: ${safeInline(fact.value)}`,
+      );
+      lines.push(
+        `  ${serializeInternalRecord({ v: 1, id: fact.id, kind: "profile-fact", state: "current", fact })}`,
+      );
+    }
+  }
+  if (normalized.links.length > 0) {
+    lines.push("", "## Связанные люди, группы и проекты", "");
+    for (const link of normalized.links) {
+      lines.push(`- [[${link.target}|${safeInline(link.label)}]]`);
+      lines.push(
+        `  ${serializeInternalRecord({
+          v: 1,
+          id: createHash("sha256")
+            .update(link.target)
+            .digest("hex")
+            .slice(0, 20),
+          kind: "link",
+          target: link.target,
+          label: link.label,
+        })}`,
+      );
+    }
+  }
+  if (normalized.meetings.length > 0) {
+    lines.push("", "## История встреч", "");
+    for (const meeting of normalized.meetings) {
+      lines.push(
+        `### ${meeting.date} — ${safeInline(meeting.title)}`,
+        "",
+        safeInline(meeting.summary),
+      );
+      const updates = meeting.updates ?? [];
+      const followups = meeting.followups ?? [];
+      if (updates.length || followups.length) {
+        lines.push("", "**После встречи обновилось:**", "");
+        for (const update of updates)
+          lines.push(`- ${safeInline(update.value)}`);
+        for (const followup of followups)
+          lines.push(`- ${safeInline(followup)}`);
+      }
+      lines.push(
+        "",
+        serializeInternalRecord({
+          v: 1,
+          id: meeting.id,
+          kind: "meeting",
+          meeting,
+        }),
+        "",
+      );
+    }
+  }
+  if (normalized.history.length > 0 || normalized.factHistory.length > 0) {
+    lines.push("", "## Архив изменений", "");
+    for (const item of normalized.history) {
+      const visible = renderObservation(item).split("\n")[0];
+      lines.push(`${visible}\n  ${serializeObservation(item, "history")}`);
+    }
+    for (const fact of normalized.factHistory) {
+      lines.push(
+        `- ${fact.label ?? factLabels[fact.field]}: ${safeInline(fact.value)}`,
+      );
+      lines.push(
+        `  ${serializeInternalRecord({ v: 1, id: fact.id, kind: "profile-fact", state: "history", fact })}`,
+      );
+    }
+  }
+  lines.push(END);
+  return lines.join("\n");
+}
+
+const SINGLE_VALUE_FIELDS = new Set<ProfileFact["field"]>([
+  "full_name",
+  "preferred_name",
+  "pronunciation",
+  "formality",
+  "birthday",
+  "city",
+  "timezone",
+  "relationship",
+  "education",
+  "work",
+  "preferred_channel",
+  "preferred_contact_time",
+]);
+
+const OWNER_TO_OBSERVATION_FIELD: Partial<
+  Record<ProfileFact["field"], Observation["predicate"]>
+> = {
+  full_name: "display_name",
+  birthday: "birthday",
+  city: "city",
+  timezone: "timezone",
+  relationship: "relationship",
+  education: "education",
+  work: "employer",
+};
+
+export interface ApplyOwnerContactUpdateInput {
+  vault: string;
+  userId: number;
+  displayName: string;
+  facts?: ProfileFact[];
+  meeting?: Meeting;
+  now?: string;
+  transactionLocked?: boolean;
+}
+
+export function applyOwnerContactUpdate(input: ApplyOwnerContactUpdateInput): {
+  file: string;
+  factIds: string[];
+  meetingId: string | null;
+  changed: boolean;
+} {
+  if (!input.transactionLocked) {
+    return withContactMemoryLock(input.vault, () =>
+      applyOwnerContactUpdate({ ...input, transactionLocked: true }),
+    );
+  }
+  const file = contactCardPath(input.vault, input.userId);
+  mkdirSync(dirname(file), { recursive: true });
+  const release = acquireLock(file);
+  try {
+    const card = readCard(file, "contact", input.userId, input.displayName);
+    const now = input.now ?? new Date().toISOString();
+    const meeting = input.meeting ? MeetingSchema.parse(input.meeting) : null;
+    const meetingId = meeting
+      ? stableRecordId("meeting", {
+          userId: input.userId,
+          date: meeting.date,
+          title: meeting.title,
+          summary: meeting.summary,
+        })
+      : null;
+    const factIds: string[] = [];
+    for (const raw of input.facts ?? []) {
+      const fact = ProfileFactSchema.parse(raw);
+      const id = stableRecordId("fact", {
+        userId: input.userId,
+        field: fact.field,
+        value: fact.value,
+        label: fact.label ?? null,
+      });
+      factIds.push(id);
+      const existingFact = card.managed.ownerFacts.find(
+        (item) => item.id === id,
+      );
+      if (existingFact) {
+        if (
+          meetingId &&
+          (existingFact.originMeetingId !== undefined ||
+            existingFact.originMeetingIds !== undefined)
+        ) {
+          existingFact.originMeetingIds = [
+            ...new Set([
+              ...(existingFact.originMeetingIds ?? []),
+              ...(existingFact.originMeetingId
+                ? [existingFact.originMeetingId]
+                : []),
+              meetingId,
+            ]),
+          ];
+          delete existingFact.originMeetingId;
+          existingFact.updatedAt = now;
+        }
+        continue;
+      }
+      if (SINGLE_VALUE_FIELDS.has(fact.field)) {
+        const superseded = card.managed.ownerFacts.filter(
+          (item) => item.field === fact.field && item.value !== fact.value,
+        );
+        card.managed.ownerFacts = card.managed.ownerFacts.filter(
+          (item) => !superseded.some((old) => old.id === item.id),
+        );
+        card.managed.factHistory.push(
+          ...superseded.map((item) => ({ ...item, updatedAt: now })),
+        );
+        const predicate = OWNER_TO_OBSERVATION_FIELD[fact.field];
+        if (predicate) {
+          const background = card.managed.current.filter(
+            (item) => item.predicate === predicate,
+          );
+          card.managed.current = card.managed.current.filter(
+            (item) => item.predicate !== predicate,
+          );
+          card.managed.history.push(...background);
+        }
+      }
+      card.managed.ownerFacts.push({
+        ...fact,
+        id,
+        createdAt: now,
+        updatedAt: now,
+        ...(meetingId ? { originMeetingIds: [meetingId] } : {}),
+      });
+    }
+    if (meeting && meetingId) {
+      if (!card.managed.meetings.some((item) => item.id === meetingId)) {
+        card.managed.meetings.push({
+          ...meeting,
+          id: meetingId,
+          createdAt: now,
+        });
+      }
+    }
+    const rendered = renderCard(card);
+    const changed = rendered !== card.original;
+    if (changed) atomicWrite(file, rendered);
+    return { file, factIds, meetingId, changed };
+  } finally {
+    release();
+  }
+}
+
+export type OwnerRecordSelector =
+  | { kind: "fact"; field: ProfileFact["field"]; value: string }
+  | { kind: "meeting"; date: string; title: string; summary?: string };
+
+export function deleteOwnerContactRecord(input: {
+  vault: string;
+  userId: number;
+  selector: OwnerRecordSelector;
+  transactionLocked?: boolean;
+}): {
+  deleted: boolean;
+  ambiguous?: boolean;
+  file: string;
+  deletedMeetingId?: string;
+} {
+  if (!input.transactionLocked) {
+    return withContactMemoryLock(input.vault, () =>
+      deleteOwnerContactRecord({ ...input, transactionLocked: true }),
+    );
+  }
+  const file = contactCardPath(input.vault, input.userId);
+  if (!existsSync(file)) return { deleted: false, file };
+  const release = acquireLock(file);
+  try {
+    const card = readCard(
+      file,
+      "contact",
+      input.userId,
+      `Telegram user ${input.userId}`,
+    );
+    const beforeFacts = card.managed.ownerFacts.length;
+    const beforeHistory = card.managed.factHistory.length;
+    const beforeMeetings = card.managed.meetings.length;
+    let deletedMeetingId: string | undefined;
+    if (input.selector.kind === "fact") {
+      const selector = input.selector;
+      card.managed.ownerFacts = card.managed.ownerFacts.filter(
+        (fact) =>
+          fact.field !== selector.field || fact.value !== selector.value,
+      );
+      card.managed.factHistory = card.managed.factHistory.filter(
+        (fact) =>
+          fact.field !== selector.field || fact.value !== selector.value,
+      );
+    } else {
+      const selector = input.selector;
+      const matches = card.managed.meetings.filter(
+        (item) =>
+          item.date === selector.date &&
+          item.title === selector.title &&
+          (selector.summary === undefined || item.summary === selector.summary),
+      );
+      if (matches.length > 1) return { deleted: false, ambiguous: true, file };
+      deletedMeetingId = matches[0]?.id;
+      card.managed.meetings = card.managed.meetings.filter(
+        (meeting) => meeting.id !== deletedMeetingId,
+      );
+      if (deletedMeetingId) {
+        const removedFields = new Set<ProfileFact["field"]>();
+        const removeOrigin = (fact: StoredFact): StoredFact | null => {
+          const origins = new Set([
+            ...(fact.originMeetingIds ?? []),
+            ...(fact.originMeetingId ? [fact.originMeetingId] : []),
+          ]);
+          if (!origins.delete(deletedMeetingId!)) return fact;
+          if (origins.size === 0) {
+            removedFields.add(fact.field);
+            return null;
+          }
+          const updated = { ...fact, originMeetingIds: [...origins] };
+          delete updated.originMeetingId;
+          return StoredFactSchema.parse(updated);
+        };
+        card.managed.ownerFacts = card.managed.ownerFacts
+          .map(removeOrigin)
+          .filter((fact): fact is StoredFact => fact !== null);
+        card.managed.factHistory = card.managed.factHistory
+          .map(removeOrigin)
+          .filter((fact): fact is StoredFact => fact !== null);
+        for (const field of removedFields) {
+          if (card.managed.ownerFacts.some((fact) => fact.field === field))
+            continue;
+          const previous = card.managed.factHistory
+            .filter((fact) => fact.field === field)
+            .sort((left, right) =>
+              right.updatedAt.localeCompare(left.updatedAt),
+            )
+            .at(0);
+          if (previous) {
+            card.managed.factHistory = card.managed.factHistory.filter(
+              (fact) => fact.id !== previous.id,
+            );
+            card.managed.ownerFacts.push(previous);
+            continue;
+          }
+          const predicate = OWNER_TO_OBSERVATION_FIELD[field];
+          if (
+            !predicate ||
+            card.managed.current.some((item) => item.predicate === predicate)
+          )
+            continue;
+          const previousObservation = card.managed.history
+            .filter((item) => item.predicate === predicate)
+            .sort((left, right) =>
+              newestEvidenceTimestamp(right).localeCompare(
+                newestEvidenceTimestamp(left),
+              ),
+            )
+            .at(0);
+          if (previousObservation) {
+            const previousId = observationId(previousObservation);
+            card.managed.history = card.managed.history.filter(
+              (item) => observationId(item) !== previousId,
+            );
+            card.managed.current.push(previousObservation);
+          }
+        }
+      }
+    }
+    const deleted =
+      beforeFacts !== card.managed.ownerFacts.length ||
+      beforeHistory !== card.managed.factHistory.length ||
+      beforeMeetings !== card.managed.meetings.length;
+    if (deleted) atomicWrite(file, renderCard(card));
+    return { deleted, file, ...(deletedMeetingId ? { deletedMeetingId } : {}) };
+  } finally {
+    release();
+  }
 }
 
 function replaceManaged(body: string, rendered: string): string {
@@ -338,9 +938,26 @@ function quotedTelegramIds(frontmatter: string): string {
   );
 }
 
+function withoutFrontmatterKeys(lines: string[], keys: Set<string>): string[] {
+  const output: string[] = [];
+  let dropping = false;
+  for (const line of lines) {
+    const indented = /^[ \t]/u.test(line);
+    if (dropping && indented) continue;
+    dropping = false;
+    const match = /^([^\s:#][^:]*):/u.exec(line);
+    if (match && keys.has(match[1].trim())) {
+      dropping = true;
+      continue;
+    }
+    output.push(line);
+  }
+  return output;
+}
+
 function renderCard(card: CardState): string {
   const parsed = parseFrontmatter(card.original ?? "");
-  const safeTitle = safeInline(card.title);
+  const safeTitle = safeInline(displayName(card));
   const defaults: FmFields =
     card.cardType === "contact"
       ? {
@@ -349,6 +966,7 @@ function renderCard(card: CardState): string {
           tags: ["telegram", "contact-analysis"],
           status: "active",
           telegram_user_id: String(card.numericId),
+          full_name: safeTitle,
         }
       : card.cardType === "note"
         ? {
@@ -368,14 +986,39 @@ function renderCard(card: CardState): string {
   for (const [key, value] of Object.entries(defaults)) {
     if (parsed.fields?.[key] === undefined) fields[key] = value;
   }
-  const frontmatter = quotedTelegramIds(writeFrontmatter(fields, parsed.lines));
+  if (card.cardType === "contact") {
+    const currentValue = (
+      predicate: Observation["predicate"],
+    ): string | undefined =>
+      card.managed.current.find(
+        (item) => item.predicate === predicate && item.value !== undefined,
+      )?.value;
+    const ownerValue = (field: ProfileFact["field"]): string | undefined =>
+      card.managed.ownerFacts.find((item) => item.field === field)?.value;
+    fields.full_name = ownerValue("full_name") ?? safeTitle;
+    const birthday = ownerValue("birthday") ?? currentValue("birthday");
+    const city = ownerValue("city") ?? currentValue("city");
+    const timezone = ownerValue("timezone") ?? currentValue("timezone");
+    if (birthday) fields.birthday = birthday;
+    if (city) fields.city = city;
+    if (timezone) fields.timezone = timezone;
+  }
+  const removable = new Set(["birthday", "city", "timezone"]);
+  for (const key of Object.keys(fields)) removable.delete(key);
+  const frontmatter = quotedTelegramIds(
+    writeFrontmatter(fields, withoutFrontmatterKeys(parsed.lines, removable)),
+  );
   const initialBody =
-    card.original === undefined ? `# ${safeTitle}\n` : parsed.body;
-  const body = replaceManaged(initialBody, renderManaged(card.managed));
+    card.original === undefined
+      ? `# ${safeTitle}\n`
+      : parsed.body.replace(/^# .+$/mu, `# ${safeTitle}`);
+  const body = replaceManaged(
+    initialBody,
+    renderManaged(card.managed, card.cardType),
+  );
   return `---\n${frontmatter}\n---\n${body.replace(/\s*$/u, "")}\n`;
 }
 
-// eslint-disable-next-line @typescript-eslint/require-await -- the reducer is synchronous inside its multi-file lock but implements the async pipeline boundary.
 export async function reduceBatch(
   input: ReduceBatchInput,
 ): Promise<ReduceResult> {
@@ -387,6 +1030,7 @@ export async function reduceBatch(
   const collective = ["group", "channel"].includes(input.dialog.kind);
   const files = new Set<string>();
   if (collective) files.add(chatCardPath(input.vault, input.dialog));
+  else files.add(contactCardPath(input.vault, input.dialog.id));
   for (const observation of batch.observations) {
     const userId = subjectUserId(observation.subjectId);
     if (userId !== null) files.add(contactCardPath(input.vault, userId));
@@ -403,6 +1047,11 @@ export async function reduceBatch(
   }
 
   const orderedFiles = [...files].sort();
+  if (!input.transactionLocked) {
+    return runContactMemoryTransaction(input.vault, orderedFiles, () =>
+      reduceBatch({ ...input, transactionLocked: true }),
+    );
+  }
   for (const file of orderedFiles)
     mkdirSync(dirname(file), { recursive: true });
   const releases = orderedFiles.map((file) => acquireLock(file));
