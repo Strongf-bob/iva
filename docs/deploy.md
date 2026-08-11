@@ -91,6 +91,33 @@ the restricted production endpoint as `deploy <40-character main SHA>`. Do not r
 bare `docker compose pull/up`: the release script supplies the required immutable
 `IVA_IMAGE`, activates the matching Compose bundle, and verifies health before promotion.
 
+The same forced endpoint exposes a deliberately narrow, owner-only contact-history
+operator after a successful release installs its reviewed entrypoint. It accepts only
+the fixed commands below; it resolves the active owner from the private registry,
+runs against that owner's isolated vault through the read-only Telegram API, chooses
+the private backup location itself, and prints aggregate JSON without Telegram IDs,
+names, message text, or server paths:
+
+```text
+contact-backfill dry-run
+contact-backfill apply <lowercase-run-id>
+contact-backfill status <same-run-id>
+contact-backfill rollback <same-run-id>
+```
+
+`apply` is foreground and resumable: keep the SSH connection alive, or repeat the
+same command and run ID after a transport interruption. The contact-analysis lock
+prevents two writers, and the shared release lock prevents a deploy from restarting
+the poller during dry-run, apply, or rollback; `status` remains available from a second
+connection. Long-running operator calls must use SSH keepalive, for example:
+
+```bash
+ssh -o ServerAliveInterval=20 -o ServerAliveCountMax=30 \
+  <deploy-user>@<deploy-host> "contact-backfill apply <same-run-id>"
+```
+
+Use `rollback` only for the exact reported run after reviewing its aggregate status.
+
 Keep exactly one `reminder-scheduler` replica for a data mount. Container health is the
 authoritative scheduler status; `data/control/reminder-scheduler-status.json` is the
 persisted diagnostic evidence shown by `/menu`. The forced release script requires the

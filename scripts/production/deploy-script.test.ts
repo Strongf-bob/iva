@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -51,9 +51,11 @@ function harness(): {
   executable(
     join(mockBin, "docker"),
     'printf "docker image=%s legacy=%s args=%s\\n" "${IVA_IMAGE:-}" "${IVA_CONTAINER_WORKERS_ALLOW_LEGACY:-}" "$*" >> "$MOCK_LOG"\n' +
-      'if [ "${1:-}" = "info" ]; then printf \'["name=rootless"]\\n\'; exit 0; fi\n' +
+      'if [ "${1:-}" = "info" ]; then printf "%s\\n" "${MOCK_DOCKER_INFO_STDERR:-}" >&2; printf \'["name=rootless"]\\n\'; exit 0; fi\n' +
       'if [ "${1:-}" = "image" ] && [ "${2:-}" = "inspect" ]; then printf "%s\\n" "${SSH_ORIGINAL_COMMAND#deploy }"; exit 0; fi\n' +
       'if [ "${1:-}" = "run" ]; then if printf "%s" "$*" | grep -q -- "--entrypoint /bin/sh"; then if printf "%s" "$*" | grep -q "routing-health.ts"; then case "$*" in *"${MOCK_INCOMPATIBLE_ROUTING_IMAGE:-__none__}"*) exit 1 ;; *) exit 0 ;; esac; fi; if printf "%s" "$*" | grep -q "reminder-scheduler"; then case "$*" in *"${MOCK_UNSUPPORTED_SCHEDULER_IMAGE:-never}"*) exit 1 ;; esac; [ "${MOCK_SCHEDULER_COMPAT:-1}" = "1" ]; exit; fi; if printf "%s" "$*" | grep -q "container-runtime.ts"; then case "$*" in *"${MOCK_UNSUPPORTED_CONTAINER_IMAGE:-never}"*) exit 1 ;; esac; [ "${MOCK_CONTAINER_COMPAT:-1}" = "1" ]; exit; fi; [ "${MOCK_CANDIDATE_COMPAT:-1}" = "1" ]; exit; fi; if printf "%s" "$*" | grep -q "users.every"; then [ "${MOCK_ROUTABLE_USERS:-0}" = "0" ]; exit; fi; last=""; for arg in "$@"; do last="$arg"; done; case "$last" in */deploy.sh) cat "$MOCK_REPO_ROOT/deploy/container/deploy.sh" ;; */compose.production.yml) cat "$MOCK_REPO_ROOT/deploy/container/compose.production.yml" ;; *) exit 1 ;; esac; exit 0; fi\n' +
+      'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "contact-backfill-operator.ts"; then if printf "%s" "$*" | grep -q "dry-run"; then printf "%s\\n" "$MOCK_DRY_RUN_OUTPUT"; else printf "%s\\n" "$MOCK_OPERATOR_OUTPUT"; fi; printf "%s\\n" "${MOCK_OPERATOR_STDERR:-}" >&2; [ "${MOCK_OPERATOR_SUCCESS:-1}" = "1" ]; exit; fi\n' +
+      'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "contact-backfill-output-validator"; then "$MOCK_NODE" "$MOCK_REPO_ROOT/scripts/production/contact-backfill-output-validator.ts"; exit; fi\n' +
       'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "up -d"; then printf "%s\\n" "$IVA_IMAGE" > "$MOCK_IMAGE_STATE"; if [ "${MOCK_CREATE_ROUTE:-0}" = "1" ] && printf "%s" "$*" | grep -q "telegram-poll"; then mkdir -p "$IVA_RUNTIME_ROOT/data/control"; printf "candidate route\\n" > "$IVA_RUNTIME_ROOT/data/control/legacy-owner-route.json"; fi; fi\n' +
       'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "ps -q iva"; then printf "iva-container\\n"; fi\n' +
       'if [ "${1:-}" = "compose" ] && printf "%s" "$*" | grep -q "ps -q telegram-poll"; then printf "poller-container\\n"; fi\n' +
@@ -84,9 +86,17 @@ printf '{"ok":true,"result":{"id":777}}\\n'
   );
   executable(
     join(mockBin, "flock"),
-    'printf "flock %s\\n" "$*" >> "$MOCK_LOG"\n',
+    'printf "flock %s\\n" "$*" >> "$MOCK_LOG"\n[ "${MOCK_FLOCK_SUCCESS:-1}" = "1" ]\n',
   );
   executable(join(mockBin, "sleep"), ":\n");
+  executable(
+    join(mockBin, "cp"),
+    'target=""\nfor arg in "$@"; do target="$arg"; done\ncase "$target" in *deploy.sh.tmp.*) [ "${MOCK_DEPLOY_COPY_SUCCESS:-1}" = "1" ] || exit 1 ;; esac\n/bin/cp "$@"\n',
+  );
+  executable(
+    join(mockBin, "mv"),
+    'target=""\nfor arg in "$@"; do target="$arg"; done\nif [ -n "${MOCK_FAIL_MV_TARGET:-}" ] && [ "$(basename "$target")" = "$MOCK_FAIL_MV_TARGET" ] && [ ! -f "$IVA_RUNTIME_ROOT/mv-failure-used" ]; then touch "$IVA_RUNTIME_ROOT/mv-failure-used"; exit 1; fi\n/bin/mv "$@"\n',
+  );
 
   return {
     root,
@@ -104,6 +114,11 @@ printf '{"ok":true,"result":{"id":777}}\\n'
       MOCK_LOG: log,
       MOCK_IMAGE_STATE: imageState,
       MOCK_REPO_ROOT: repoRoot,
+      MOCK_NODE: process.execPath,
+      MOCK_OPERATOR_OUTPUT:
+        '{"schema":"iva-contact-backfill-operator/v1","runId":"run-a","phase":"complete","backupReady":true,"backupVerified":true,"inventoryComplete":true,"incrementalHandoffComplete":true,"privateChats":1,"completedChats":1,"pendingChats":0,"failedChats":0,"processedMessages":1,"skippedMessages":0,"pendingBatches":0,"highWaterReachedChats":1,"errorCodes":[]}',
+      MOCK_DRY_RUN_OUTPUT:
+        '{"schema":"iva-contact-backfill-dry-run/v1","privateChats":1,"completedChats":0,"failedChats":0,"processedMessages":0,"skippedMessages":0}',
     },
   };
 }
@@ -111,18 +126,17 @@ printf '{"ok":true,"result":{"id":777}}\\n'
 function run(
   command: string,
   env: NodeJS.ProcessEnv,
-): { status: number; stderr: string } {
-  try {
-    execFileSync("bash", [deployScript], {
-      env: { ...env, SSH_ORIGINAL_COMMAND: command },
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return { status: 0, stderr: "" };
-  } catch (error) {
-    const failure = error as { status?: number; stderr?: string };
-    return { status: failure.status ?? -1, stderr: failure.stderr ?? "" };
-  }
+): { status: number; stdout: string; stderr: string } {
+  const result = spawnSync("bash", [deployScript], {
+    env: { ...env, SSH_ORIGINAL_COMMAND: command },
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return {
+    status: result.status ?? -1,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
 }
 
 void test("forced deployment rejects commands outside the exact SHA contract", () => {
@@ -137,6 +151,103 @@ void test("forced deployment rejects commands outside the exact SHA contract", (
     const result = run(command, env);
     assert.notEqual(result.status, 0, command || "empty command");
     assert.match(result.stderr, /invalid deployment command/u);
+  }
+});
+
+void test("forced deployment exposes only bounded contact backfill operations", () => {
+  const { env, log } = harness();
+  assert.equal(run(`deploy ${goodSha}`, env).status, 0);
+  const runId = "run-20260811-a1";
+  for (const command of [
+    "contact-backfill dry-run",
+    `contact-backfill apply ${runId}`,
+    `contact-backfill status ${runId}`,
+    `contact-backfill rollback ${runId}`,
+  ]) {
+    const result = run(command, env);
+    assert.equal(result.status, 0, `${command}: ${result.stderr}`);
+  }
+  for (const command of [
+    "contact-backfill",
+    "contact-backfill shell",
+    "contact-backfill dry-run extra",
+    "contact-backfill apply ../escape",
+    "contact-backfill status UPPERCASE",
+    `contact-backfill rollback ${runId}; id`,
+  ]) {
+    const result = run(command, env);
+    assert.notEqual(result.status, 0, command);
+    assert.match(result.stderr, /invalid deployment command/u);
+  }
+  assert.match(readFileSync(log, "utf8"), /contact-backfill-operator\.ts/u);
+});
+
+void test("mutating backfill operations share the deployment lock while status stays observable", () => {
+  const { env } = harness();
+  assert.equal(run(`deploy ${goodSha}`, env).status, 0);
+  const blocked = { ...env, MOCK_FLOCK_SUCCESS: "0" };
+  for (const action of ["dry-run", "apply run-a", "rollback run-a"]) {
+    const result = run(`contact-backfill ${action}`, blocked);
+    assert.notEqual(result.status, 0, action);
+    assert.match(result.stderr, /another deployment or backfill is running/u);
+  }
+  assert.equal(run("contact-backfill status run-a", blocked).status, 0);
+});
+
+void test("contact backfill returns only validated aggregate JSON", () => {
+  const { env } = harness();
+  assert.equal(run(`deploy ${goodSha}`, env).status, 0);
+
+  const success = run("contact-backfill status run-a", {
+    ...env,
+    MOCK_DOCKER_INFO_STDERR: "/run/user/1000/docker.sock",
+    MOCK_OPERATOR_STDERR: "/home/strongf/private docker warning",
+  });
+  assert.equal(success.status, 0, success.stderr);
+  assert.deepEqual(JSON.parse(success.stdout), {
+    schema: "iva-contact-backfill-operator/v1",
+    runId: "run-a",
+    phase: "complete",
+    backupReady: true,
+    backupVerified: true,
+    inventoryComplete: true,
+    incrementalHandoffComplete: true,
+    privateChats: 1,
+    completedChats: 1,
+    pendingChats: 0,
+    failedChats: 0,
+    processedMessages: 1,
+    skippedMessages: 0,
+    pendingBatches: 0,
+    highWaterReachedChats: 1,
+    errorCodes: [],
+  });
+  assert.doesNotMatch(success.stdout, /home\/strongf|private docker warning/u);
+  assert.equal(success.stderr, "");
+
+  const dryRun = run("contact-backfill dry-run", env);
+  assert.equal(dryRun.status, 0, dryRun.stderr);
+  assert.deepEqual(JSON.parse(dryRun.stdout), {
+    schema: "iva-contact-backfill-dry-run/v1",
+    privateChats: 1,
+    completedChats: 0,
+    failedChats: 0,
+    processedMessages: 0,
+    skippedMessages: 0,
+  });
+
+  for (const failureEnv of [
+    { MOCK_OPERATOR_SUCCESS: "0", MOCK_OPERATOR_STDERR: "/srv/secret.sock" },
+    { MOCK_OPERATOR_OUTPUT: '{"schema":"wrong","serverPath":"/srv/private"}' },
+  ]) {
+    const failure = run("contact-backfill status run-a", {
+      ...env,
+      ...failureEnv,
+    });
+    assert.notEqual(failure.status, 0);
+    assert.equal(failure.stdout, "");
+    assert.match(failure.stderr, /contact backfill operation failed/u);
+    assert.doesNotMatch(failure.stderr, /srv|secret|private|sock/u);
   }
 });
 
@@ -181,6 +292,105 @@ void test("a healthy candidate advances the current immutable image", () => {
     readFileSync(log, "utf8"),
     /up -d --remove-orphans iva telegram-poll telegram-userbot reminder-scheduler/u,
   );
+  assert.equal(
+    readFileSync(join(root, "deploy/deploy.sh"), "utf8"),
+    readFileSync(join(repoRoot, "deploy/container/deploy.sh"), "utf8"),
+  );
+});
+
+void test("entrypoint staging failure leaves release state unpromoted", () => {
+  const { root, env, imageState } = harness();
+  const oldImage = `ghcr.io/strongf-bob/iva:sha-${"c".repeat(40)}`;
+  writeFileSync(join(root, "deploy/current-image"), `${oldImage}\n`);
+  writeFileSync(join(root, "deploy/deploy.sh"), "old entrypoint\n");
+  writeFileSync(join(root, "compose.yml"), "name: old\n");
+  writeFileSync(imageState, `${oldImage}\n`);
+
+  const result = run(`deploy ${goodSha}`, {
+    ...env,
+    MOCK_DEPLOY_COPY_SUCCESS: "0",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.equal(
+    readFileSync(join(root, "deploy/current-image"), "utf8").trim(),
+    oldImage,
+  );
+  assert.equal(
+    readFileSync(join(root, "deploy/deploy.sh"), "utf8"),
+    "old entrypoint\n",
+  );
+  assert.equal(readFileSync(join(root, "compose.yml"), "utf8"), "name: old\n");
+  assert.equal(readFileSync(imageState, "utf8").trim(), oldImage);
+});
+
+void test("every release promotion failure restores controls, state, and runtime", () => {
+  for (const target of [
+    "deploy.sh",
+    "compose.yml",
+    "previous-image",
+    "current-image",
+  ]) {
+    const { root, env, imageState } = harness();
+    const oldImage = `ghcr.io/strongf-bob/iva:sha-${"c".repeat(40)}`;
+    const olderImage = `ghcr.io/strongf-bob/iva:sha-${"d".repeat(40)}`;
+    writeFileSync(join(root, "deploy/current-image"), `${oldImage}\n`);
+    writeFileSync(join(root, "deploy/previous-image"), `${olderImage}\n`);
+    writeFileSync(join(root, "deploy/deploy.sh"), "old entrypoint\n");
+    writeFileSync(join(root, "compose.yml"), "name: old\n");
+    const candidateCompose = join(root, "candidate-compose.yml");
+    writeFileSync(candidateCompose, "name: candidate\n");
+    writeFileSync(imageState, `${oldImage}\n`);
+
+    const result = run(`deploy ${goodSha}`, {
+      ...env,
+      MOCK_FAIL_MV_TARGET: target,
+      IVA_RELEASE_COMPOSE_FILE: candidateCompose,
+    });
+
+    assert.notEqual(result.status, 0, target);
+    assert.match(result.stderr, /previous release restored/u, target);
+    assert.equal(
+      readFileSync(join(root, "deploy/current-image"), "utf8").trim(),
+      oldImage,
+      target,
+    );
+    assert.equal(
+      readFileSync(join(root, "deploy/previous-image"), "utf8").trim(),
+      olderImage,
+      target,
+    );
+    assert.equal(
+      readFileSync(join(root, "deploy/deploy.sh"), "utf8"),
+      "old entrypoint\n",
+      target,
+    );
+    assert.equal(
+      readFileSync(join(root, "compose.yml"), "utf8"),
+      "name: old\n",
+      target,
+    );
+    assert.equal(readFileSync(imageState, "utf8").trim(), oldImage, target);
+  }
+});
+
+void test("same-image promotion failure does not stop the healthy poller", () => {
+  const { root, env, imageState, log } = harness();
+  const candidateImage = `ghcr.io/strongf-bob/iva:sha-${goodSha}`;
+  writeFileSync(join(root, "deploy/current-image"), `${candidateImage}\n`);
+  writeFileSync(join(root, "deploy/deploy.sh"), "old entrypoint\n");
+  writeFileSync(join(root, "compose.yml"), "name: old\n");
+  writeFileSync(imageState, `${candidateImage}\n`);
+
+  const result = run(`deploy ${goodSha}`, {
+    ...env,
+    MOCK_FAIL_MV_TARGET: "current-image",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /previous release restored/u);
+  assert.equal(readFileSync(imageState, "utf8").trim(), candidateImage);
+  assert.doesNotMatch(readFileSync(log, "utf8"), /stop telegram-poll/u);
 });
 
 void test("a candidate without the scheduler runtime is rejected", () => {

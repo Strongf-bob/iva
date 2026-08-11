@@ -278,6 +278,8 @@ void test("deployment waits for successful main CI and keeps least privilege", (
   assert.match(workflow, /cancel-in-progress: false/u);
   assert.match(workflow, /environment: production/u);
   assert.match(workflow, /ssh-keyscan .*?-t ed25519/u);
+  assert.match(workflow, /ServerAliveInterval=20/u);
+  assert.match(workflow, /ServerAliveCountMax=30/u);
   assert.match(
     workflow,
     /SHA256:gywKmHI7oSa5ZlF3idnKjKoWsB\+UpR4OgikvzbTooRI/u,
