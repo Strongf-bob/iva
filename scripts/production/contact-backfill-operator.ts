@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import "../lib/ts-esm-hooks.ts";
@@ -7,7 +7,11 @@ import type {
   BackfillManifest,
   BackfillState,
 } from "../contact-analysis/backfill-state.ts";
-import { readUserRegistry } from "../lib/user-registry.ts";
+import {
+  isLegacyOwnerRoute,
+  readRoutingUserRegistry,
+  type UserRecord,
+} from "../lib/user-registry.ts";
 import { prepareWorker, type PreparedWorker } from "../worker-entry.ts";
 
 export const CONTACT_BACKFILL_OPERATOR_SCHEMA =
@@ -138,7 +142,9 @@ async function summarizeVerifiedState(
 export type OperatorContext = {
   appRoot: string;
   globalDataDir: string;
-  prepared: PreparedWorker;
+  vaultDir: string;
+  backupRoot: string;
+  prepared: Pick<PreparedWorker, "user" | "cwd" | "env">;
 };
 
 export type ContactBackfillOperatorDependencies = {
@@ -169,7 +175,7 @@ export async function resolveContactBackfillOperatorContext(
   );
   const controlDir = join(globalDataDir, "control");
   const usersDir = join(globalDataDir, "users");
-  const registry = await readUserRegistry(controlDir);
+  const registry = await readRoutingUserRegistry(controlDir);
   const owners = registry.users.filter(
     (user) => user.role === "owner" && user.status === "active",
   );
@@ -177,27 +183,77 @@ export async function resolveContactBackfillOperatorContext(
     throw new Error("contact_backfill_operator_owner_unavailable");
   }
   const owner = owners[0];
-  const prepared = await prepareWorker({
-    userId: owner.id,
-    expectedPort: String(owner.port),
-    appRoot,
-    controlDir,
-    usersDir,
-    sourceEnv: env,
-  });
+  const legacyOwner = isLegacyOwnerRoute(owner);
+  const prepared = legacyOwner
+    ? prepareLegacyOwner(owner, appRoot, globalDataDir, controlDir, env)
+    : await prepareWorker({
+        userId: owner.id,
+        expectedPort: String(owner.port),
+        appRoot,
+        controlDir,
+        usersDir,
+        sourceEnv: env,
+      });
   if (prepared.env.TELEGRAM_EXPOSED_TOOLS !== "read-only") {
     throw new Error("telegram_contact_analysis_requires_read_only");
   }
-  return { appRoot, globalDataDir, prepared };
+  const vaultDir = resolve(
+    prepared.env.ASSISTANT_VAULT_DIR ?? join(prepared.cwd, "vault"),
+  );
+  const configuredLegacyBackup = env.IVA_CONTACT_BACKFILL_BACKUP_DIR;
+  if (legacyOwner && !configuredLegacyBackup) {
+    throw new Error("contact_backfill_operator_backup_unavailable");
+  }
+  const backupRoot = legacyOwner
+    ? resolve(configuredLegacyBackup!)
+    : resolve(globalDataDir, "private-backfill-backups");
+  if (isWithin(prepared.cwd, backupRoot) || isWithin(vaultDir, backupRoot)) {
+    throw new Error("contact_backfill_operator_backup_unavailable");
+  }
+  return { appRoot, globalDataDir, vaultDir, backupRoot, prepared };
+}
+
+function isWithin(base: string, target: string): boolean {
+  const normalizedBase = resolve(base);
+  const normalizedTarget = resolve(target);
+  return (
+    normalizedTarget === normalizedBase ||
+    normalizedTarget.startsWith(`${normalizedBase}${sep}`)
+  );
+}
+
+function prepareLegacyOwner(
+  owner: UserRecord,
+  appRoot: string,
+  globalDataDir: string,
+  controlDir: string,
+  sourceEnv: NodeJS.ProcessEnv,
+): Pick<PreparedWorker, "user" | "cwd" | "env"> {
+  return {
+    user: owner,
+    cwd: appRoot,
+    env: {
+      ...sourceEnv,
+      ASSISTANT_MULTI_USER: "0",
+      ASSISTANT_USER_ID: owner.id,
+      ASSISTANT_USER_ROLE: "owner",
+      ASSISTANT_ROLE: "owner",
+      IVA_USER_CONTROL_DIR: controlDir,
+      ASSISTANT_PERSONAL_ROOT: appRoot,
+      ASSISTANT_APP_DIR: appRoot,
+      ASSISTANT_RUNTIME_ROOT: appRoot,
+      ASSISTANT_DATA_DIR: globalDataDir,
+      ASSISTANT_VAULT_DIR: resolve(
+        sourceEnv.ASSISTANT_VAULT_DIR ?? join(appRoot, "vault"),
+      ),
+      TELEGRAM_ALLOWED_USER_IDS: owner.id,
+      TELEGRAM_DIGEST_CHAT_ID: owner.id,
+    },
+  };
 }
 
 function backupDirectory(context: OperatorContext, runId: string): string {
-  return join(
-    context.globalDataDir,
-    "private-backfill-backups",
-    context.prepared.user.id,
-    runId,
-  );
+  return join(context.backupRoot, context.prepared.user.id, runId);
 }
 
 async function runContactAnalysisCli(
@@ -260,7 +316,7 @@ async function loadSelectedState(
     throw new Error("contact_backfill_operator_run_not_found");
   }
   if (
-    state.vaultDir !== resolve(context.prepared.layout.vault) ||
+    state.vaultDir !== context.vaultDir ||
     state.backupDir !== resolve(backupDirectory(context, runId))
   ) {
     throw new Error("contact_backfill_operator_state_binding_mismatch");

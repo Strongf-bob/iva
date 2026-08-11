@@ -8,6 +8,7 @@ node_modules
 dist
 data
 memory
+private-backfill-backups
 vault
 .env
 .DS_Store
