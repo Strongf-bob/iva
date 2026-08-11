@@ -15,6 +15,7 @@ const EXPECTED_IGNORES = [
   ".eve/",
   "services/telegram-userbot/",
   "data/",
+  ".worktrees/",
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {

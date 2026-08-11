@@ -23,9 +23,11 @@
 ### Task 1: Repair the lock regression gate
 
 **Files:**
+
 - Modify: `scripts/review-fixes.test.ts`
 
 **Interfaces:**
+
 - Consumes: `acquireLock(file, timeoutMs): () => void` from `agent/lib/card-store.ts`.
 - Produces: a regression test compatible with process-owned stale-lock semantics.
 
@@ -46,10 +48,12 @@ Expected: 10 tests pass and typecheck exits 0.
 ### Task 2: Add typed durable backfill state and backup manifest
 
 **Files:**
+
 - Create: `scripts/contact-analysis/backfill-state.ts`
 - Create: `scripts/contact-analysis/backfill-state.test.ts`
 
 **Interfaces:**
+
 - Produces: `BackfillStateSchema`, `BackfillManifestSchema`, `backfillPaths(root, dataDir, accountId)`, `loadBackfillState`, `saveBackfillState`, `createBackfillBackup`, `verifyBackfillBackup`, and `restoreBackfillBackup`.
 
 - [ ] **Step 1: Write failing schema and lifecycle tests**
@@ -73,11 +77,13 @@ Expected: all state and backup tests pass.
 ### Task 3: Build the oldest-first private backfill coordinator
 
 **Files:**
+
 - Create: `scripts/contact-analysis/backfill.ts`
 - Create: `scripts/contact-analysis/backfill.test.ts`
 - Modify: `scripts/contact-analysis/analyzer.ts`
 
 **Interfaces:**
+
 - Consumes: `TelegramAnalysisClient.messages`, `messageWindow`, `analyzePage`, `reduceBatch`, `updateQuestionWorkbook`, and Task 2 state functions.
 - Produces: `runPrivateContactBackfill(options): Promise<PrivateBackfillReport>` and `boundedMessageChunks(messages,maxChars)`.
 
@@ -110,11 +116,13 @@ Expected: all tests pass with zero skipped backfill messages.
 ### Task 4: Expose dry-run, run, status, and rollback commands
 
 **Files:**
+
 - Modify: `scripts/contact-analysis.ts`
 - Modify: `scripts/contact-analysis-cli.test.ts`
 - Modify: `agent/skills/telegram-userbot/SKILL.md`
 
 **Interfaces:**
+
 - Consumes: `runPrivateContactBackfill` and Task 2 state/restore functions.
 - Produces CLI modes `rebuild-private --dry-run`, `rebuild-private`, `rebuild-status --json`, and `rebuild-rollback`.
 
@@ -139,9 +147,11 @@ Expected: all tests pass.
 ### Task 5: Verify the complete local change and review it
 
 **Files:**
+
 - Modify only files required by review findings.
 
 **Interfaces:**
+
 - Consumes: Tasks 1-4.
 - Produces: release-ready diff with fresh evidence.
 
@@ -171,10 +181,12 @@ Create Conventional Commits with descriptive bodies and included verification ev
 ### Task 6: Publish, deploy, and execute the live migration
 
 **Files:**
+
 - Audit: `README.md` through `beautify-github-readme` audit mode; edit only if documented behavior changed.
 - No tracked live data files.
 
 **Interfaces:**
+
 - Consumes: verified commits and repository production workflow.
 - Produces: merged protected-main SHA, matching healthy deployment, retained backup, and completed live report.
 

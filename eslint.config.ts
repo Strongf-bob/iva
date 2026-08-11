@@ -14,6 +14,7 @@ export default defineConfig([
     ".eve/",
     "services/telegram-userbot/",
     "data/",
+    ".worktrees/",
   ]),
   {
     name: "iva/javascript",
