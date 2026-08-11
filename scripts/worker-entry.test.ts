@@ -45,6 +45,7 @@ void test("bootstrap fixes personal cwd and filters the child environment", asyn
       RANDOM_PRIVATE_SECRET: "must-not-leak",
       ASSISTANT_DATA_DIR: "/wrong/shared/data",
       ASSISTANT_VAULT_DIR: "/wrong/shared/vault",
+      IVA_RUN_STATUS_DATA_DIR: "/shared/run-status/data",
     },
   });
 
@@ -57,6 +58,7 @@ void test("bootstrap fixes personal cwd and filters the child environment", asyn
   assert.equal(prepared.env.IVA_USER_CONTROL_DIR, paths.controlDir);
   assert.equal(prepared.env.ASSISTANT_APP_DIR, paths.appRoot);
   assert.equal(prepared.env.ASSISTANT_DATA_DIR, join(prepared.cwd, "data"));
+  assert.equal(prepared.env.IVA_RUN_STATUS_DATA_DIR, "/shared/run-status/data");
   assert.equal(
     prepared.env.ASSISTANT_VAULT_DIR,
     join(paths.usersDir, "123", "vault"),

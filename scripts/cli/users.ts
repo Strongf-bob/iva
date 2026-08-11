@@ -76,14 +76,17 @@ type CliRuntime = Pick<
   ReturnType<typeof createCliRuntime>,
   "ROOT" | "dataDirAbs" | "ok" | "readEnv"
 >;
-type WorkerLifecycle = {
-  startWorker: (user: UserRecord) => void;
-  stopWorker: (user: UserRecord) => void;
-  workerStatus: (user: UserRecord) => string;
-  retireLegacyService: () => void;
-  restoreLegacyService: () => void;
-  pauseGateway: () => void;
-  resumeGateway: () => void;
+type MaybePromise<T> = T | Promise<T>;
+
+export type WorkerLifecycle = {
+  supportsOwnerMigration?: boolean;
+  startWorker: (user: UserRecord) => MaybePromise<void>;
+  stopWorker: (user: UserRecord) => MaybePromise<void>;
+  workerStatus: (user: UserRecord) => MaybePromise<string>;
+  retireLegacyService: () => MaybePromise<void>;
+  restoreLegacyService: () => MaybePromise<void>;
+  pauseGateway: () => MaybePromise<void>;
+  resumeGateway: () => MaybePromise<void>;
 };
 
 const LIMIT_FLAGS: Readonly<
@@ -197,6 +200,35 @@ export function createUsersCommandDependencies(
   const dataDir = runtime.dataDirAbs();
   const env = runtime.readEnv();
   const quarantineDir = join(dataDir, "quarantine");
+  const migrateOwner =
+    lifecycle?.supportsOwnerMigration === false
+      ? undefined
+      : async (explicitOwner?: string): Promise<UserRecord> => {
+          const plan = await planOwnerMigration({
+            appRoot: runtime.ROOT,
+            dataDir,
+            controlDir: join(dataDir, "control"),
+            usersDir: join(dataDir, "users"),
+            vaultDir: env.ASSISTANT_VAULT_DIR?.startsWith("/")
+              ? env.ASSISTANT_VAULT_DIR
+              : join(runtime.ROOT, env.ASSISTANT_VAULT_DIR || "vault"),
+            homeDir: homedir(),
+            allowedUserIds: (env.TELEGRAM_ALLOWED_USER_IDS || "")
+              .split(/[,\s]+/u)
+              .filter(Boolean),
+            ownerId: explicitOwner,
+          });
+          try {
+            await applyOwnerMigration(plan);
+          } catch (error) {
+            await rollbackOwnerMigration(plan).catch(() => undefined);
+            throw error;
+          }
+          const registry = await defaultReadUserRegistry(
+            join(dataDir, "control"),
+          );
+          return registry.users.find((user) => user.id === plan.ownerId)!;
+        };
   return {
     appRoot: runtime.ROOT,
     controlDir: join(dataDir, "control"),
@@ -212,12 +244,12 @@ export function createUsersCommandDependencies(
     workerHealth: (user) =>
       probeEveHealth(`http://127.0.0.1:${user.port}/eve/v1/health`),
     startWorker: (user) => {
-      lifecycle?.startWorker(user);
-      return Promise.resolve();
+      return Promise.resolve(lifecycle?.startWorker(user)).then(
+        () => undefined,
+      );
     },
     stopWorker: (user) => {
-      lifecycle?.stopWorker(user);
-      return Promise.resolve();
+      return Promise.resolve(lifecycle?.stopWorker(user)).then(() => undefined);
     },
     workerStatus: (user) =>
       Promise.resolve(lifecycle?.workerStatus(user) ?? "not-managed"),
@@ -241,12 +273,14 @@ export function createUsersCommandDependencies(
         force: true,
       }),
     retireLegacyService: () => {
-      lifecycle?.retireLegacyService();
-      return Promise.resolve();
+      return Promise.resolve(lifecycle?.retireLegacyService()).then(
+        () => undefined,
+      );
     },
     restoreLegacyService: () => {
-      lifecycle?.restoreLegacyService();
-      return Promise.resolve();
+      return Promise.resolve(lifecycle?.restoreLegacyService()).then(
+        () => undefined,
+      );
     },
     legacyHealth: () => probeEveHealth("http://127.0.0.1:8723/eve/v1/health"),
     enableLegacyOwnerRoute: (user) =>
@@ -254,37 +288,12 @@ export function createUsersCommandDependencies(
     disableLegacyOwnerRoute: () =>
       defaultDisableLegacyOwnerRoute(join(dataDir, "control")),
     pauseGateway: () => {
-      lifecycle?.pauseGateway();
-      return Promise.resolve();
+      return Promise.resolve(lifecycle?.pauseGateway()).then(() => undefined);
     },
     resumeGateway: () => {
-      lifecycle?.resumeGateway();
-      return Promise.resolve();
+      return Promise.resolve(lifecycle?.resumeGateway()).then(() => undefined);
     },
-    migrateOwner: async (explicitOwner) => {
-      const plan = await planOwnerMigration({
-        appRoot: runtime.ROOT,
-        dataDir,
-        controlDir: join(dataDir, "control"),
-        usersDir: join(dataDir, "users"),
-        vaultDir: env.ASSISTANT_VAULT_DIR?.startsWith("/")
-          ? env.ASSISTANT_VAULT_DIR
-          : join(runtime.ROOT, env.ASSISTANT_VAULT_DIR || "vault"),
-        homeDir: homedir(),
-        allowedUserIds: (env.TELEGRAM_ALLOWED_USER_IDS || "")
-          .split(/[,\s]+/u)
-          .filter(Boolean),
-        ownerId: explicitOwner,
-      });
-      try {
-        await applyOwnerMigration(plan);
-      } catch (error) {
-        await rollbackOwnerMigration(plan).catch(() => undefined);
-        throw error;
-      }
-      const registry = await defaultReadUserRegistry(join(dataDir, "control"));
-      return registry.users.find((user) => user.id === plan.ownerId)!;
-    },
+    migrateOwner,
     print: runtime.ok,
   };
 }
