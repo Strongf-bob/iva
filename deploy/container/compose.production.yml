@@ -66,6 +66,10 @@ services:
       - ${IVA_ENV_FILE:-./.env}
     environment:
       IVA_RUNTIME: container
+      IVA_CONTAINER_RUNTIME: "1"
+      IVA_CONTAINER_WORKERS_ALLOW_LEGACY: ${IVA_CONTAINER_WORKERS_ALLOW_LEGACY:-0}
+      ASSISTANT_APP_DIR: /app
+      ASSISTANT_DATA_DIR: /app/data
       ASSISTANT_HOST: http://iva:8723
       IVA_PORT: "8723"
       PORT: "8723"
@@ -73,7 +77,16 @@ services:
       TELEGRAM_MCP_URL: http://telegram-userbot:8724/mcp
       TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE: /app/userbot-onboarding-auth/token
       NO_PROXY: ${NO_PROXY:-iva,127.0.0.1,localhost},telegram-userbot
-    command: ["npm", "run", "poll"]
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        if [ -f /app/scripts/container-runtime.ts ] &&
+        [ -f /app/scripts/lib/container-worker-control.ts ]; then
+        exec node --env-file=.env scripts/container-runtime.ts run;
+        elif [ "$${IVA_CONTAINER_WORKERS_ALLOW_LEGACY}" = "1" ]; then
+        exec npm run poll;
+        else echo "container worker runtime is missing" >&2; exit 78; fi
     depends_on:
       iva:
         condition: service_healthy
@@ -88,6 +101,17 @@ services:
       - telegram-userbot-onboarding-auth:/app/userbot-onboarding-auth:ro
     tmpfs:
       - /app/node_modules/.cache/eve:rw,noexec,nosuid,nodev,mode=0700
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          if [ -f /app/scripts/container-runtime.ts ]; then
+          node scripts/container-runtime.ts status --require-ready;
+          else [ "$${IVA_CONTAINER_WORKERS_ALLOW_LEGACY}" = "1" ]; fi
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
     security_opt:
       - no-new-privileges:true
     cap_drop:

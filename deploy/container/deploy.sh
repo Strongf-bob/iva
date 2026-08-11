@@ -23,6 +23,7 @@ REGISTRY_IMAGE="ghcr.io/strongf-bob/iva"
 HEALTH_ATTEMPTS="${IVA_DEPLOY_HEALTH_ATTEMPTS:-36}"
 HEALTH_DELAY="${IVA_DEPLOY_HEALTH_DELAY:-5}"
 POLLER_SETTLE_DELAY="${IVA_DEPLOY_POLLER_SETTLE_DELAY:-5}"
+CONTAINER_WORKERS_ALLOW_LEGACY=0
 
 fail() {
   printf 'deploy: %s\n' "$1" >&2
@@ -77,7 +78,8 @@ flock -n 9 || fail "another deployment is running"
 compose() {
   local image="$1" allow_inert="$2"
   shift 2
-  IVA_IMAGE="$image" TELEGRAM_USERBOT_ALLOW_INERT="$allow_inert" docker compose \
+  IVA_IMAGE="$image" TELEGRAM_USERBOT_ALLOW_INERT="$allow_inert" \
+    IVA_CONTAINER_WORKERS_ALLOW_LEGACY="$CONTAINER_WORKERS_ALLOW_LEGACY" docker compose \
     --project-directory "$RUNTIME_ROOT" \
     -f "$COMPOSE_FILE" \
     "$@"
@@ -96,6 +98,26 @@ image_supports_routing_health() {
 image_supports_scheduler() {
   docker run --rm --entrypoint /bin/sh "$1" -c \
     'test -f /app/scripts/reminder-scheduler.ts'
+}
+
+image_supports_container_workers() {
+  docker run --rm --entrypoint /bin/sh "$1" -c \
+    'test -f /app/scripts/container-runtime.ts && test -f /app/scripts/lib/container-worker-control.ts'
+}
+
+legacy_rollback_is_safe() {
+  docker run --rm --read-only \
+    -v "$RUNTIME_ROOT/data:/app/data:ro" \
+    --entrypoint node "$1" -e '
+      const fs = require("node:fs");
+      const path = "/app/data/control/users.json";
+      if (!fs.existsSync(path)) process.exit(0);
+      const registry = JSON.parse(fs.readFileSync(path, "utf8"));
+      process.exit(
+        Array.isArray(registry.users) &&
+        registry.users.every((user) => user?.status === "blocked") ? 0 : 1,
+      );
+    '
 }
 
 telegram_token() {
@@ -150,7 +172,7 @@ userbot_session_ok() {
 }
 
 runtime_ok() {
-  local image="$1" allow_inert="$2" scheduler_required="$3"
+  local image="$1" allow_inert="$2" scheduler_required="$3" container_workers_required="$4"
   local container_id health poller_id poller_state userbot_id userbot_state scheduler_id scheduler_state
   container_id="$(compose "$image" "$allow_inert" ps -q iva)" || return 1
   [ -n "$container_id" ] || return 1
@@ -162,6 +184,9 @@ runtime_ok() {
     docker inspect --format '{{.State.Status}} {{.RestartCount}}' "$poller_id"
   )" || return 1
   [ "$poller_state" = "running 0" ] || return 1
+  if [ "$container_workers_required" = "1" ]; then
+    docker exec "$poller_id" node scripts/container-runtime.ts status --require-ready || return 1
+  fi
   docker exec "$poller_id" node scripts/production/routing-health.ts || return 1
   userbot_id="$(compose "$image" "$allow_inert" ps -q telegram-userbot)" || return 1
   [ -n "$userbot_id" ] || return 1
@@ -184,9 +209,9 @@ runtime_ok() {
 }
 
 wait_healthy() {
-  local image="$1" allow_inert="$2" scheduler_required="$3" attempt=1
+  local image="$1" allow_inert="$2" scheduler_required="$3" container_workers_required="$4" attempt=1
   while [ "$attempt" -le "$HEALTH_ATTEMPTS" ]; do
-    if runtime_ok "$image" "$allow_inert" "$scheduler_required"; then
+    if runtime_ok "$image" "$allow_inert" "$scheduler_required" "$container_workers_required"; then
       return 0
     fi
     sleep "$HEALTH_DELAY"
@@ -196,7 +221,7 @@ wait_healthy() {
 }
 
 start_image() {
-  local image="$1" allow_inert="$2" scheduler_required="$3"
+  local image="$1" allow_inert="$2" scheduler_required="$3" container_workers_required="$4"
   if [ "$scheduler_required" = "1" ]; then
     compose "$image" "$allow_inert" up -d --remove-orphans \
       iva telegram-poll telegram-userbot reminder-scheduler || return 1
@@ -206,7 +231,7 @@ start_image() {
       iva telegram-poll telegram-userbot || return 1
   fi
   sleep "$POLLER_SETTLE_DELAY"
-  wait_healthy "$image" "$allow_inert" "$scheduler_required"
+  wait_healthy "$image" "$allow_inert" "$scheduler_required" "$container_workers_required"
 }
 
 write_state() {
@@ -225,6 +250,7 @@ fi
 image_supports_userbot "$candidate_image" || fail "candidate image lacks the userbot runtime"
 image_supports_routing_health "$candidate_image" || fail "candidate image lacks owner routing health support"
 image_supports_scheduler "$candidate_image" || fail "candidate image lacks the reminder scheduler"
+image_supports_container_workers "$candidate_image" || fail "candidate image lacks the container worker runtime"
 
 owner_route_backup="$DEPLOY_DIR/legacy-owner-route.rollback.$$"
 owner_route_existed=0
@@ -248,7 +274,7 @@ restore_owner_route() {
   fi
 }
 
-if ! start_image "$candidate_image" 0 1; then
+if ! start_image "$candidate_image" 0 1 1; then
   printf 'deploy: candidate failed health checks; rolling back\n' >&2
   compose "$candidate_image" 0 stop telegram-poll >/dev/null 2>&1 || true
   restore_owner_route || fail "owner routing state restoration failed; polling remains stopped"
@@ -267,7 +293,15 @@ if ! start_image "$candidate_image" 0 1; then
     if image_supports_scheduler "$previous_image"; then
       rollback_scheduler=1
     fi
-    if start_image "$previous_image" "$rollback_allow_inert" "$rollback_scheduler"; then
+    rollback_container_workers=1
+    if ! image_supports_container_workers "$previous_image"; then
+      if ! legacy_rollback_is_safe "$candidate_image"; then
+        fail "previous image lacks container worker support; polling remains stopped"
+      fi
+      rollback_container_workers=0
+      CONTAINER_WORKERS_ALLOW_LEGACY=1
+    fi
+    if start_image "$previous_image" "$rollback_allow_inert" "$rollback_scheduler" "$rollback_container_workers"; then
       printf 'deploy: previous image restored\n' >&2
     else
       fail "candidate and rollback image are unhealthy"

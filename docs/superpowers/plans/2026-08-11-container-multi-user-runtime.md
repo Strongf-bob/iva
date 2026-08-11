@@ -79,11 +79,19 @@
 void test("container commands accept only canonical lifecycle inputs", async (t) => {
   const control = fixture(t);
   await assert.rejects(
-    () => submitContainerCommand(control, { action: "start-worker", userId: "../7" }),
+    () =>
+      submitContainerCommand(control, {
+        action: "start-worker",
+        userId: "../7",
+      }),
     /canonical Telegram user id/u,
   );
   await assert.rejects(
-    () => submitContainerCommand(control, { action: "shell", userId: "7" } as never),
+    () =>
+      submitContainerCommand(control, {
+        action: "shell",
+        userId: "7",
+      } as never),
     /invalid container command/u,
   );
 });
@@ -109,10 +117,7 @@ Expected: FAIL because the module and exports do not exist.
 ```ts
 export const CONTAINER_COMMAND_SCHEMA = "iva-container-command/v1" as const;
 export type ContainerAction =
-  | "start-worker"
-  | "stop-worker"
-  | "pause-poller"
-  | "resume-poller";
+  "start-worker" | "stop-worker" | "pause-poller" | "resume-poller";
 
 export type ContainerCommandReceipt = {
   schema: "iva-container-receipt/v1";
@@ -128,13 +133,20 @@ export type ContainerRuntimeStatus = {
   schema: "iva-container-runtime-status/v1";
   supervisorPid: number;
   updatedAt: string;
-  poller: { state: "running" | "stopped" | "backoff"; pid: number | null; restarts: number };
-  workers: Record<string, {
+  poller: {
     state: "running" | "stopped" | "backoff";
     pid: number | null;
-    port: number;
     restarts: number;
-  }>;
+  };
+  workers: Record<
+    string,
+    {
+      state: "running" | "stopped" | "backoff";
+      pid: number | null;
+      port: number;
+      restarts: number;
+    }
+  >;
 };
 
 const ContainerCommandSchema = z.strictObject({
@@ -211,7 +223,10 @@ Verification: container worker control tests and typecheck pass.
 
 ```ts
 void test("startup launches the poller and each routable worker once", async () => {
-  const fixture = runtimeFixture([user("101", "active"), user("202", "provisioning")]);
+  const fixture = runtimeFixture([
+    user("101", "active"),
+    user("202", "provisioning"),
+  ]);
   await fixture.runtime.tick();
   assert.deepEqual(fixture.started, ["poller", "worker:101", "worker:202"]);
   await fixture.runtime.tick();
@@ -354,9 +369,13 @@ export function createContainerWorkerLifecycle(
         userId: user.id,
       }).then(requireSuccess),
     pauseGateway: () =>
-      submitContainerCommand(controlDir, { action: "pause-poller" }).then(requireSuccess),
+      submitContainerCommand(controlDir, { action: "pause-poller" }).then(
+        requireSuccess,
+      ),
     resumeGateway: () =>
-      submitContainerCommand(controlDir, { action: "resume-poller" }).then(requireSuccess),
+      submitContainerCommand(controlDir, { action: "resume-poller" }).then(
+        requireSuccess,
+      ),
     workerStatus: (user) => workerStatusFromRuntime(controlDir, user),
   };
 }
