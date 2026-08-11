@@ -84,6 +84,8 @@ iva users unblock 987654321
 iva users delete 987654321 --confirm 987654321
 ```
 
+`add`, `list`, `block`, `unblock`, `limits`, and `delete` work in both host-native systemd installations and the supported production Compose stack. In Compose, run them inside `telegram-poll`; its supervisor applies lifecycle changes through the shared private control directory without a Docker socket. `migrate-owner` remains a host/systemd migration command and deliberately fails before changing state in container mode.
+
 `migrate-owner` is explicit, idempotent and keeps a timestamped rollback backup. It copies and verifies the legacy vault, runtime data, sessions and Google configuration, stages a non-routable worker, and activates the owner only after its exact loopback health check passes. `block` stops access but retains data. `delete` first blocks the worker, pauses the shared gateway, moves the personal directory and tenant-scoped gateway state to `data/quarantine/`, removes the registry entry, then resumes the gateway; it does not erase the quarantine automatically.
 
 Each user has independent memory, history, personal settings files, persona, schedules, Google credentials and quota accounting under `data/users/<telegram-id>/`. The model provider, model selection, Telegram bot, Deepgram account and server are shared infrastructure configured and paid by the operator. The personal Telegram userbot remains owner-only.
