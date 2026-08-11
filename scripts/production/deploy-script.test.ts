@@ -276,7 +276,10 @@ void test("contact backfill returns only validated aggregate JSON", () => {
     });
     assert.notEqual(rejected.status, 0);
     assert.equal(rejected.stdout, "");
-    assert.equal(rejected.stderr, "deploy: contact backfill operation failed\n");
+    assert.equal(
+      rejected.stderr,
+      "deploy: contact backfill operation failed\n",
+    );
   }
 });
 
