@@ -2,6 +2,7 @@ import { createAccountCommands } from "./account.ts";
 import { createConfigCommand } from "./config.ts";
 import { createDoctorCommand } from "./doctor.ts";
 import { createCliRuntime } from "./runtime.ts";
+import { createContainerWorkerLifecycle } from "./container-workers.ts";
 import { createServiceCommands } from "./services.ts";
 import { createCliSystemd } from "./systemd.ts";
 import { createTreeRenderer } from "./tree.ts";
@@ -50,6 +51,10 @@ export function dispatchCli(
 export function createCliMain(root: string) {
   const runtime = createCliRuntime(root);
   const systemdLifecycle = createCliSystemd(runtime);
+  const usersLifecycle =
+    process.env.IVA_CONTAINER_RUNTIME === "1"
+      ? createContainerWorkerLifecycle(runtime)
+      : systemdLifecycle;
   const tree = createTreeRenderer(root);
   const userbot = createUserbotCommands(runtime, systemdLifecycle);
   const account = createAccountCommands(runtime, systemdLifecycle);
@@ -63,7 +68,7 @@ export function createCliMain(root: string) {
     restartUserbotIfActive: userbot.restartUserbotIfActive,
   });
   const users = createUsersCommands(
-    createUsersCommandDependencies(runtime, systemdLifecycle),
+    createUsersCommandDependencies(runtime, usersLifecycle),
   );
   const { C, TIMERS, bad, ok } = runtime;
 

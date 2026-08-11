@@ -121,6 +121,18 @@ void test("production Compose requires an immutable image and narrow mounts", ()
     compose.indexOf("\n  telegram-poll:\n"),
     userbotStart,
   );
+  assert.match(poll, /IVA_CONTAINER_RUNTIME: "1"/u);
+  assert.match(poll, /ASSISTANT_APP_DIR: \/app/u);
+  assert.match(poll, /ASSISTANT_DATA_DIR: \/app\/data/u);
+  assert.match(poll, /IVA_RUN_STATUS_DATA_DIR: \/app\/data/u);
+  assert.match(
+    poll,
+    /exec node --env-file=\.env scripts\/container-runtime\.ts run/u,
+  );
+  assert.match(
+    poll,
+    /node[\s\S]*scripts\/container-runtime\.ts[\s\S]*status[\s\S]*--require-ready/u,
+  );
   assert.doesNotMatch(iva, /TELEGRAM_USERBOT_ONBOARDING_TOKEN_FILE/u);
   assert.doesNotMatch(iva, /telegram-userbot-onboarding-auth/u);
   assert.match(
@@ -231,6 +243,12 @@ void test("production Compose requires an immutable image and narrow mounts", ()
   );
   assert.match(deployScript, /IVA_DEPLOY_RELEASE_BUNDLE/u);
   assert.match(deployScript, /image_supports_userbot/u);
+  assert.match(deployScript, /image_supports_container_workers/u);
+  assert.match(
+    deployScript,
+    /docker exec "\$poller_id" node scripts\/container-runtime\.ts status --require-pristine/u,
+  );
+  assert.match(deployScript, /legacy_rollback_is_safe/u);
   assert.match(deployScript, /TELEGRAM_USERBOT_ALLOW_INERT/u);
 });
 

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createUsersCommands, type UsersCommandDependencies } from "./users.ts";
+import {
+  createUsersCommandDependencies,
+  createUsersCommands,
+  type UsersCommandDependencies,
+} from "./users.ts";
 import {
   defaultUserLimits,
   parseTelegramUserId,
@@ -354,4 +358,68 @@ void test("list prints control-plane fields without personal paths", async () =>
   assert.equal(calls.length, 1);
   assert.match(calls[0], /123 owner active port=8800/u);
   assert.doesNotMatch(calls[0], /\/srv\/|vault|runtime/u);
+});
+
+void test("default dependencies await an asynchronous lifecycle acknowledgement", async () => {
+  let acknowledge!: () => void;
+  const acknowledged = new Promise<void>((resolve) => {
+    acknowledge = resolve;
+  });
+  const deps = createUsersCommandDependencies(
+    {
+      ROOT: "/srv/iva",
+      dataDirAbs: () => "/srv/iva/data",
+      ok: () => undefined,
+      readEnv: () => ({}),
+    },
+    {
+      startWorker: () => acknowledged,
+      stopWorker: () => undefined,
+      workerStatus: () => "running",
+      retireLegacyService: () => undefined,
+      restoreLegacyService: () => undefined,
+      pauseGateway: () => undefined,
+      resumeGateway: () => undefined,
+    },
+  );
+  let settled = false;
+  const starting = deps.startWorker(record()).then(() => {
+    settled = true;
+  });
+
+  await Promise.resolve();
+  assert.equal(settled, false);
+  acknowledge();
+  await starting;
+  assert.equal(settled, true);
+});
+
+void test("unsupported owner migration fails before pausing a container gateway", async () => {
+  let paused = false;
+  const deps = createUsersCommandDependencies(
+    {
+      ROOT: "/srv/iva",
+      dataDirAbs: () => "/srv/iva/data",
+      ok: () => undefined,
+      readEnv: () => ({}),
+    },
+    {
+      supportsOwnerMigration: false,
+      startWorker: () => undefined,
+      stopWorker: () => undefined,
+      workerStatus: () => "running",
+      retireLegacyService: () => undefined,
+      restoreLegacyService: () => undefined,
+      pauseGateway: () => {
+        paused = true;
+      },
+      resumeGateway: () => undefined,
+    },
+  );
+
+  await assert.rejects(
+    () => createUsersCommands(deps).cmdUsers(["migrate-owner", "123"]),
+    /owner migration is unavailable/u,
+  );
+  assert.equal(paused, false);
 });

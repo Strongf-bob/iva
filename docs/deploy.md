@@ -56,6 +56,32 @@ docker compose -f deploy/container/compose.production.yml exec iva gws --version
 docker compose -f deploy/container/compose.production.yml exec reminder-scheduler npm run scheduler:health
 ```
 
+`telegram-poll` is also the container-native process supervisor. It validates the
+user registry before consuming updates, starts one isolated worker for every `active`
+or `provisioning` record, and restarts an individual crashed worker with bounded
+backoff without disturbing the others. The CLI and supervisor communicate only through
+versioned `0600` records beneath `data/control/container-runtime/`; the container has no
+Docker socket. Operate users inside that service after supplying the same `IVA_IMAGE`
+used to render the stack:
+
+```bash
+export IVA_IMAGE="$(sed -n '1p' /home/strongf/iva-runtime/deploy/current-image)"
+docker compose -f deploy/container/compose.production.yml exec telegram-poll \
+  node bin/iva.mjs users add 987654321
+docker compose -f deploy/container/compose.production.yml exec telegram-poll \
+  node bin/iva.mjs users list
+docker compose -f deploy/container/compose.production.yml exec telegram-poll \
+  node scripts/container-runtime.ts status --require-ready
+```
+
+The poller health check and release gate require the supervisor, gateway child, and
+every non-blocked registry worker to be ready on its assigned port. An image without
+container-worker support can be used as an automatic rollback only while the registry
+is provably empty or contains blocked records exclusively. After the first routable
+user exists, an incompatible rollback leaves polling stopped instead of silently
+dropping that user's access. Owner migration remains a host-native systemd operation;
+container mode rejects `iva users migrate-owner` before changing state.
+
 In container mode `/menu` stores Google OAuth files beneath the selected user's private
 `HOME`, so users never share `~/.config/gws`. Maintenance runs doctor, vault cleanup,
 and memory work as attached per-user processes. It does not call systemd or control the
