@@ -292,12 +292,17 @@ export async function runContactAnalysisCommand(
         return 1;
       }
       const dataDir = env.ASSISTANT_DATA_DIR ?? "data";
-      await rollbackPrivateBackfillImpl({
-        root,
-        dataDir,
-        vault: env.ASSISTANT_VAULT_DIR ?? join(root, "vault"),
-        backupDir,
-      });
+      const resolvedDataDir = isAbsolute(dataDir)
+        ? dataDir
+        : join(root, dataDir);
+      await withLockImpl(resolvedDataDir, () =>
+        rollbackPrivateBackfillImpl({
+          root,
+          dataDir,
+          vault: env.ASSISTANT_VAULT_DIR ?? join(root, "vault"),
+          backupDir,
+        }),
+      );
       writeOutput("telegram_private_backfill_rolled_back");
       return 0;
     }

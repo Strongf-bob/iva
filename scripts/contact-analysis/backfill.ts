@@ -195,6 +195,18 @@ export async function runPrivateContactBackfill({
     job.status = "running";
     try {
       const skillText = await readSkillTextImpl(dialog);
+      await reduceBatchImpl({
+        vault,
+        ownerUserId: account.userId,
+        dialog,
+        batch: {
+          schemaVersion: 1,
+          chatId: dialog.id,
+          rollingSummary: job.contextSummary,
+          observations: [],
+          questions: [],
+        },
+      });
       const maxChars = messageCharacterBudget({
         contextTokens,
         skillChars: skillText.length,

@@ -308,6 +308,10 @@ test("rebuild-status is local-only and rollback requires an explicit verified ba
     rollbackPrivateBackfillImpl: async (options: unknown) => {
       events.push(`rollback:${JSON.stringify(options)}`);
     },
+    withLockImpl: async <T>(root: string, operation: () => Promise<T>) => {
+      events.push(`lock:${root}`);
+      return operation();
+    },
   };
 
   assert.equal(
@@ -337,4 +341,5 @@ test("rebuild-status is local-only and rollback requires an explicit verified ba
     events.at(-1),
     'rollback:{"root":"/srv/iva","dataDir":"/srv/state","vault":"/srv/vault","backupDir":"/srv/backups/run-1"}',
   );
+  assert.ok(events.includes("lock:/srv/state"));
 });

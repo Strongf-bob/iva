@@ -84,7 +84,7 @@ test("private backfill traverses oldest first to a fixed high-water without othe
   });
 
   assert.deepEqual(analyzed, [[1, 2], [3, 4], [5]]);
-  assert.equal(reduced.length, 3);
+  assert.equal(reduced.length, 4);
   assert.equal(pageCalls, 3);
   assert.equal(report.privateChats, 1);
   assert.equal(report.processedMessages, 5);
@@ -138,12 +138,12 @@ test("a failed durable reduction keeps the cursor and resumes the same page once
         questions: [],
       };
     },
-    reduceBatchImpl: async () => {
-      if (fail) {
+    reduceBatchImpl: async (input: { batch: { rollingSummary: string } }) => {
+      if (input.batch.rollingSummary === "through 2" && fail) {
         fail = false;
         throw new Error("injected_reduce_failure");
       }
-      reduced.push([1, 2]);
+      if (input.batch.rollingSummary === "through 2") reduced.push([1, 2]);
       return { writtenFiles: [], observationIds: [] };
     },
     updateQuestionWorkbookImpl: async () => ({
@@ -221,4 +221,48 @@ test("an API page is split into complete context-bounded model chunks", async ()
     readSkillTextImpl: async () => "skill",
   });
   assert.deepEqual(chunks, [[1], [2]]);
+});
+
+test("a private dialog with no messages still rerenders its legacy card", async () => {
+  const root = await mkdtemp(join(tmpdir(), "iva-private-backfill-"));
+  const dialog: TelegramDialog = {
+    id: 42,
+    kind: "private",
+    title: "Person",
+    username: null,
+  };
+  let reductions = 0;
+  const report = await runPrivateContactBackfill({
+    root,
+    vault: join(root, "vault"),
+    backupDir: join(root, "backup"),
+    client: {
+      account: async () => ({
+        userId: 7,
+        displayName: "Owner",
+        username: null,
+      }),
+      dialogs: async () => ({ dialogs: [dialog], nextOffset: null }),
+      messageWindow: async () => ({
+        messages: [],
+        latestMessageId: 0,
+        skippedMessages: 0,
+      }),
+      messages: async () => ({ messages: [], nextAfterId: 0 }),
+    },
+    analyzePageImpl: async () => {
+      throw new Error("model_must_not_run");
+    },
+    reduceBatchImpl: async () => {
+      reductions++;
+      return { writtenFiles: [], observationIds: [] };
+    },
+    updateQuestionWorkbookImpl: async () => ({
+      file: "questions",
+      questionIds: [],
+    }),
+    readSkillTextImpl: async () => "skill",
+  });
+  assert.equal(report.completedChats, 1);
+  assert.equal(reductions, 1);
 });
